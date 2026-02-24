@@ -1,0 +1,60 @@
+You are building an "Ad Video Creator" — a Next.js web app that lets users create video ads with timed text overlays and background music, then batch-render them using server-side FFmpeg.
+
+## Architecture
+
+- **Framework**: Next.js 14 (App Router) + TypeScript + Tailwind CSS
+- **Video processing**: FFmpeg via fluent-ffmpeg (server-side)
+- **File handling**: Uploads go to `public/uploads/`, music to `public/music/`, outputs to `public/outputs/`
+- **State**: React useState (no external state management needed)
+
+## Key Concepts
+
+### Text Overlay Format (based on real Facebook ad format)
+- Text boxes appear one at a time, stacked vertically from top
+- Each has: emoji + bold text inside a semi-transparent white rounded rectangle
+- They accumulate — once a box appears, it stays visible
+- Typical timing: each box appears ~2-3 seconds after the previous one
+- Final box is usually a CTA
+
+### FFmpeg Rendering
+- Uses `drawtext` filter with `enable='between(t,start,end)'` for timed appearance
+- Box backgrounds use `box=1` with `boxcolor` including alpha channel
+- Multiple drawtext filters are chained with commas
+- Music mixing uses `amix` filter with fade in/out via `afade`
+
+### Batch Processing
+- Users upload multiple background videos
+- Define text overlays + music once
+- App applies the same overlays to ALL uploaded videos
+- Outputs are individually downloadable
+
+## File Structure
+```
+src/
+  app/
+    page.tsx              — Main UI (orchestrates all components)
+    layout.tsx            — Root layout
+    globals.css           — Tailwind + custom styles
+    api/
+      upload/route.ts     — Video upload endpoint
+      upload-music/route.ts — Music upload endpoint
+      render/route.ts     — FFmpeg render endpoint
+  components/
+    VideoUploader.tsx     — Drag-and-drop multi-video upload
+    TextOverlayEditor.tsx — Add/edit/reorder text overlays with timing
+    MusicSelector.tsx     — Upload and configure background music
+    VideoPreview.tsx      — Real-time preview with overlay simulation
+  lib/
+    types.ts              — TypeScript types + presets
+    ffmpeg-renderer.ts    — Core FFmpeg rendering logic
+```
+
+## When making changes:
+1. The preview component simulates overlays with CSS — it won't perfectly match FFmpeg output but should be close
+2. FFmpeg drawtext doesn't support emoji natively — if emoji rendering fails, consider using the `ass` subtitle format instead
+3. For production, add a job queue (Bull/Redis) for rendering and WebSocket for progress updates
+4. Keep the UI dark-themed and clean — this is a productivity tool for marketers
+
+## Prerequisites
+- Node.js 18+
+- FFmpeg installed on the system (brew install ffmpeg / apt install ffmpeg)

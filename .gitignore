@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+
+# Uploads & outputs (user content)
+public/uploads/
+public/outputs/
+public/music/
+
+# Logs (app log files, not api/logs route)
+/logs/
+*.log
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
