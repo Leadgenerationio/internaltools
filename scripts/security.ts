@@ -1300,7 +1300,7 @@ function checkInputValidation(config: Config): Finding[] {
     }
 
     // Check for missing Content-Length / payload size limits
-    if (/POST/.test(content) && !/maxSize|MAX_SIZE|content-length|bodyParser/i.test(content)) {
+    if (/POST/.test(content) && !/maxSize|MAX_SIZE|content-length|bodyParser|rawBody\.length|MAX_PAYLOAD_SIZE|MAX_FILE_SIZE|MAX_MUSIC_SIZE/i.test(content)) {
       // Next.js has a default body size limit, but explicit is better
       findings.push({
         id: `IV-002-${path.basename(path.dirname(route))}`,
