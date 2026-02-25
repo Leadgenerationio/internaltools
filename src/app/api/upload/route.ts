@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { getVideoInfo } from '@/lib/get-video-info';
 import { logger } from '@/lib/logger';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export const maxDuration = 60;
 

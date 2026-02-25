@@ -3,10 +3,10 @@
  * Kept separate from ffmpeg-renderer to avoid pulling in @napi-rs/canvas
  * (used only for rendering, not for upload metadata).
  */
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 let ffmpegChecked = false;
 let ffmpegAvailable = false;
@@ -14,7 +14,7 @@ let ffmpegAvailable = false;
 export async function checkFfmpeg(): Promise<boolean> {
   if (ffmpegChecked) return ffmpegAvailable;
   try {
-    await execAsync('ffmpeg -version');
+    await execFileAsync('ffmpeg', ['-version']);
     ffmpegAvailable = true;
   } catch {
     ffmpegAvailable = false;
@@ -35,11 +35,15 @@ export async function getVideoInfo(filePath: string): Promise<{
     throw new Error('FFmpeg/FFprobe not found. Install FFmpeg to use this app.');
   }
 
-  const cmd = `ffprobe -v quiet -print_format json -show_format -show_streams "${filePath}"`;
-
   let stdout: string;
   try {
-    const result = await execAsync(cmd);
+    const result = await execFileAsync('ffprobe', [
+      '-v', 'quiet',
+      '-print_format', 'json',
+      '-show_format',
+      '-show_streams',
+      filePath,
+    ]);
     stdout = result.stdout;
   } catch (err: any) {
     throw new Error(`Failed to read video metadata: ${err.message}`);
