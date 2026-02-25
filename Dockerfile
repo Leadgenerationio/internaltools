@@ -25,6 +25,9 @@ RUN npm ci --force
 # Copy the rest of the source code
 COPY . .
 
+# Ensure public dir exists (contents are in .dockerignore)
+RUN mkdir -p public/uploads public/outputs public/music
+
 # Build the Next.js app
 RUN npm run build
 
