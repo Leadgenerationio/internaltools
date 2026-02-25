@@ -6,10 +6,10 @@ import crypto from 'crypto';
 import { GoogleGenAI } from '@google/genai';
 import { getVideoInfo } from '@/lib/get-video-info';
 import { logger } from '@/lib/logger';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export const maxDuration = 300; // 5 minutes — video generation can be slow
 

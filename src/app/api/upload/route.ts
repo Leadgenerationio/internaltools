@@ -78,9 +78,12 @@ export async function POST(request: NextRequest) {
       const thumbPath = path.join(UPLOAD_DIR, thumbFilename);
 
       try {
-        await execAsync(
-          `ffmpeg -y -i "${filepath}" -vframes 1 -ss 0 -vf "scale=180:-1" "${thumbPath}"`
-        );
+        await execFileAsync('ffmpeg', [
+          '-y', '-i', filepath,
+          '-vframes', '1', '-ss', '0',
+          '-vf', 'scale=180:-1',
+          thumbPath,
+        ]);
       } catch (e: any) {
         logger.warn('Thumbnail generation failed', { file: file.name, error: e.message });
       }
