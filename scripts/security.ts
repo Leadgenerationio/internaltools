@@ -1559,8 +1559,8 @@ function printFindings(findings: Finding[]): void {
     'secrets-in-history': 'Secrets in Git History',
   };
 
-  for (const [category, catFindings] of categories) {
-    console.log(`\n${c.bold}── ${categoryNames[category] || category} ──${c.reset}`);
+  categories.forEach((catFindings, category) => {
+    console.log(`\n${c.bold}── ${categoryNames[category as CheckCategory] || category} ──${c.reset}`);
 
     // Sort by severity
     const severityOrder: Record<Severity, number> = {
@@ -1570,7 +1570,7 @@ function printFindings(findings: Finding[]): void {
       low: 3,
       info: 4,
     };
-    catFindings.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+    catFindings.sort((a: Finding, b: Finding) => severityOrder[a.severity] - severityOrder[b.severity]);
 
     for (const f of catFindings) {
       const fixedStr = f.fixed ? ` ${fixTag()}` : '';
