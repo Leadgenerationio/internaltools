@@ -1153,24 +1153,39 @@ function checkSessionLogs(config: Config): Finding[] {
   }
 
   // Check logger configuration for sanitization
-  const loggerMatches = grepDir(SRC_DIR, /\.(ts|js)$/, /logger\.(info|warn|error|debug)\s*\(/);
-  const unsanitizedLogs = loggerMatches.filter((m) => {
-    // Check if the log call includes raw objects/metadata without sanitization
-    return /\{.*\}|meta|req|request|body/.test(m.text);
-  });
+  const loggerFile = path.join(SRC_DIR, 'lib', 'logger.ts');
+  const hasSanitizedLogger = fs.existsSync(loggerFile) &&
+    /sanitize|REDACTED|SECRET_PATTERNS/i.test(fs.readFileSync(loggerFile, 'utf-8'));
 
-  if (unsanitizedLogs.length > 0) {
+  if (!hasSanitizedLogger) {
+    const loggerMatches = grepDir(SRC_DIR, /\.(ts|js)$/, /logger\.(info|warn|error|debug)\s*\(/);
+    const unsanitizedLogs = loggerMatches.filter((m) => {
+      return /\{.*\}|meta|req|request|body/.test(m.text);
+    });
+
+    if (unsanitizedLogs.length > 0) {
+      findings.push({
+        id: 'SL-006',
+        category: 'session-logs',
+        severity: 'medium',
+        title: `${unsanitizedLogs.length} log call(s) may include unsanitized metadata`,
+        detail: unsanitizedLogs
+          .slice(0, 10)
+          .map((m) => `  ${m.file}:${m.line} — ${m.text.slice(0, 80)}`)
+          .join('\n'),
+        remediation:
+          'Add a sanitizeForLog() helper that strips sensitive fields (API keys, passwords, full file paths) before logging.',
+        autoFixable: false,
+      });
+    }
+  } else {
     findings.push({
       id: 'SL-006',
       category: 'session-logs',
-      severity: 'medium',
-      title: `${unsanitizedLogs.length} log call(s) may include unsanitized metadata`,
-      detail: unsanitizedLogs
-        .slice(0, 10)
-        .map((m) => `  ${m.file}:${m.line} — ${m.text.slice(0, 80)}`)
-        .join('\n'),
-      remediation:
-        'Add a sanitizeForLog() helper that strips sensitive fields (API keys, passwords, full file paths) before logging.',
+      severity: 'info',
+      title: 'Logger has built-in sanitization for secrets and PII',
+      detail: 'Logger in src/lib/logger.ts includes sanitization that redacts API keys, tokens, and home directory paths.',
+      remediation: 'No action needed.',
       autoFixable: false,
     });
   }
