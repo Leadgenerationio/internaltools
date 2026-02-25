@@ -185,18 +185,21 @@ function ensureFixtures(): void {
 
   if (!fs.existsSync(videoPath)) {
     console.log(`${c.dim}  Generating test video fixture...${c.reset}`);
-    execSync(
-      `ffmpeg -y -f lavfi -i color=c=black:s=320x240:d=2 -f lavfi -i anullsrc=r=44100:cl=mono -shortest -c:v libx264 -pix_fmt yuv420p -c:a aac "${videoPath}"`,
-      { stdio: 'pipe' },
-    );
+    execFileSync('ffmpeg', [
+      '-y', '-f', 'lavfi', '-i', 'color=c=black:s=320x240:d=2',
+      '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono',
+      '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac',
+      videoPath,
+    ], { stdio: 'pipe' });
   }
 
   if (!fs.existsSync(audioPath)) {
     console.log(`${c.dim}  Generating test audio fixture...${c.reset}`);
-    execSync(
-      `ffmpeg -y -f lavfi -i anullsrc=r=44100:cl=mono -t 3 -c:a libmp3lame -b:a 64k "${audioPath}"`,
-      { stdio: 'pipe' },
-    );
+    execFileSync('ffmpeg', [
+      '-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono',
+      '-t', '3', '-c:a', 'libmp3lame', '-b:a', '64k',
+      audioPath,
+    ], { stdio: 'pipe' });
   }
 }
 
