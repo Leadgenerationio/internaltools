@@ -6,7 +6,7 @@
  * Config: scripts/watchdog.config.json (all fields overridable via WATCHDOG_* env vars)
  */
 
-import { execSync, spawn } from 'child_process';
+import { execSync, execFileSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -1206,7 +1206,7 @@ async function runFileSystemChecks(
       'filesystem',
       async () => {
         try {
-          const output = execSync(`df -k "${PROJECT_ROOT}"`, {
+          const output = execFileSync('df', ['-k', PROJECT_ROOT], {
             encoding: 'utf-8',
           });
           const lines = output.trim().split('\n');

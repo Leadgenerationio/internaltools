@@ -185,6 +185,10 @@ export async function renderOverlayToPng(
   });
 
   const dir = path.dirname(outputPath);
+  const publicDir = path.resolve(path.join(process.cwd(), 'public'));
+  if (!path.resolve(outputPath).startsWith(publicDir)) {
+    throw new Error('Overlay output path must be within the public directory');
+  }
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
