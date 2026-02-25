@@ -31,7 +31,7 @@ export default function MusicSelector({ music, onChange }: Props) {
           id: data.id || crypto.randomUUID(),
           name: file.name,
           file: data.path,
-          volume: 0.3,
+          volume: 1,
           startTime: 0,
           fadeIn: 1,
           fadeOut: 2,

@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
+import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { renderVideo, batchRender } from '@/lib/ffmpeg-renderer';
 import type { TextOverlay, MusicTrack, UploadedVideo } from '@/lib/types';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
 const OUTPUT_DIR = path.join(process.cwd(), 'public', 'outputs');
+const PUBLIC_DIR = path.join(process.cwd(), 'public');
+
+function isPathSafe(resolvedPath: string, allowedDir: string): boolean {
+  const normalized = path.normalize(resolvedPath);
+  return normalized.startsWith(path.normalize(allowedDir));
+}
+
+export const maxDuration = 300; // 5 min for batch renders
 
 export async function POST(request: NextRequest) {
   try {
@@ -24,24 +33,42 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No text overlays defined' }, { status: 400 });
     }
 
-    // Prepare music file path (music.file is e.g. /music/xxx.mp3 - strip leading / for path.join)
+    // Prepare music file path - validate it stays within public
     let musicConfig: MusicTrack | null = null;
     if (music && music.file) {
       const filePath = music.file.startsWith('/') ? music.file.slice(1) : music.file;
-      musicConfig = {
-        ...music,
-        file: path.join(process.cwd(), 'public', filePath),
-      };
+      const resolvedMusic = path.join(process.cwd(), 'public', filePath);
+      if (!isPathSafe(resolvedMusic, PUBLIC_DIR)) {
+        return NextResponse.json({ error: 'Invalid music path' }, { status: 400 });
+      }
+      if (!fs.existsSync(resolvedMusic)) {
+        return NextResponse.json({ error: 'Music file not found' }, { status: 400 });
+      }
+      musicConfig = { ...music, file: resolvedMusic };
     }
 
-    // Batch render all videos
-    const videoPaths = videos.map((v) => ({
-      inputPath: path.join(process.cwd(), 'public', v.path),
-      outputPath: path.join(OUTPUT_DIR, `${uuidv4()}_output.mp4`),
-      width: v.width,
-      height: v.height,
-      duration: v.duration,
-    }));
+    // Prepare video paths - validate they stay within uploads
+    const videoPaths: { inputPath: string; outputPath: string; width: number; height: number; duration: number }[] = [];
+    for (const v of videos) {
+      const cleanPath = v.path.startsWith('/') ? v.path.slice(1) : v.path;
+      if (!cleanPath.startsWith('uploads/')) {
+        return NextResponse.json({ error: 'Invalid video path' }, { status: 400 });
+      }
+      const inputPath = path.join(process.cwd(), 'public', cleanPath);
+      if (!isPathSafe(inputPath, UPLOAD_DIR)) {
+        return NextResponse.json({ error: 'Invalid video path' }, { status: 400 });
+      }
+      if (!fs.existsSync(inputPath)) {
+        return NextResponse.json({ error: `Video not found: ${v.originalName}` }, { status: 400 });
+      }
+      videoPaths.push({
+        inputPath,
+        outputPath: path.join(OUTPUT_DIR, `${uuidv4()}_output.mp4`),
+        width: v.width,
+        height: v.height,
+        duration: v.duration,
+      });
+    }
 
     const outputPaths = await batchRender(videoPaths, overlays, musicConfig);
 

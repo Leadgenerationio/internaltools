@@ -109,8 +109,6 @@ export default function VideoUploader({ videos, onUpload, uploading, setUploadin
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-white">1. Upload Videos</h2>
-
       {/* Drop zone - use label to reliably trigger file input */}
       <label
         htmlFor="video-input"
@@ -136,7 +134,7 @@ export default function VideoUploader({ videos, onUpload, uploading, setUploadin
             <p className="text-gray-400">
               Drag & drop videos here, or <span className="text-blue-400 underline">browse</span>
             </p>
-            <p className="text-gray-500 text-sm mt-1">MP4, MOV, WebM supported. Upload multiple for batch processing.</p>
+            <p className="text-gray-500 text-sm mt-1">MP4, MOV, WebM supported. Max 500MB per file. Upload multiple for batch.</p>
           </>
         )}
       </label>

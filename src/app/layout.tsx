@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Ad Video Creator',
+  title: 'Andromedia Ad Maker',
   description: 'Create scroll-stopping video ads with timed text overlays',
 };
 

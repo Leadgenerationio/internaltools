@@ -14,6 +14,7 @@ const EMOJI_FONT_PATHS = [
 ];
 
 let emojiFontRegistered = false;
+let emojiFontWarned = false;
 
 function registerEmojiFont(): void {
   if (emojiFontRegistered) return;
@@ -22,12 +23,63 @@ function registerEmojiFont(): void {
       try {
         GlobalFonts.registerFromPath(fontPath, 'Emoji');
         emojiFontRegistered = true;
-        break;
+        return;
       } catch {
         // Try next font
       }
     }
   }
+  if (!emojiFontWarned) {
+    console.warn('[overlay-renderer] No emoji font found — emoji characters will render as boxes. Checked:', EMOJI_FONT_PATHS.join(', '));
+    emojiFontWarned = true;
+  }
+}
+
+/**
+ * Shared text wrapping logic — used by both renderOverlayToPng and getOverlayHeight
+ */
+function wrapText(
+  ctx: ReturnType<ReturnType<typeof createCanvas>['getContext']>,
+  text: string,
+  maxWidth: number
+): string[] {
+  const paragraphs = text.split('\n');
+  const wrapped: string[] = [];
+  for (const para of paragraphs) {
+    const words = para.split(/\s+/);
+    let line = '';
+    for (const word of words) {
+      const test = line ? `${line} ${word}` : word;
+      const m = ctx.measureText(test);
+      if (m.width > maxWidth && line) {
+        wrapped.push(line);
+        line = word;
+      } else if (m.width > maxWidth && !line) {
+        let chunk = '';
+        for (const ch of word) {
+          const t = chunk + ch;
+          if (ctx.measureText(t).width > maxWidth && chunk) {
+            wrapped.push(chunk);
+            chunk = ch;
+          } else {
+            chunk = t;
+          }
+        }
+        line = chunk;
+      } else {
+        line = test;
+      }
+    }
+    if (line) wrapped.push(line);
+  }
+  return wrapped.length ? wrapped : [''];
+}
+
+function buildFont(style: TextStyle, scale: number): string {
+  const fontSize = Math.round(style.fontSize * scale);
+  const fontWeight =
+    style.fontWeight === 'extrabold' ? '800' : style.fontWeight === 'bold' ? '700' : '400';
+  return `${fontWeight} ${fontSize}px Emoji, Arial, sans-serif`;
 }
 
 /**
@@ -50,62 +102,25 @@ export async function renderOverlayToPng(
   const padY = Math.round(style.paddingY * scale);
   const borderRadius = Math.round(style.borderRadius * scale);
 
-  const fontWeight =
-    style.fontWeight === 'extrabold' ? '800' : style.fontWeight === 'bold' ? '700' : '400';
-
   const maxBoxWidth = Math.round((videoWidth * style.maxWidth) / 100);
   const lineHeight = fontSize * 1.4;
   const textAreaWidth = maxBoxWidth - padX * 2;
 
+  const font = buildFont(style, scale);
+
   const canvas = createCanvas(maxBoxWidth, 1);
   const ctx = canvas.getContext('2d');
-  ctx.font = `${fontWeight} ${fontSize}px Emoji, Arial, sans-serif`;
+  ctx.font = font;
 
-  // Word-wrap text to fit width (matches preview behavior)
-  function wrapText(str: string): string[] {
-    const paragraphs = str.split('\n');
-    const wrapped: string[] = [];
-    for (const para of paragraphs) {
-      const words = para.split(/\s+/);
-      let line = '';
-      for (const word of words) {
-        const test = line ? `${line} ${word}` : word;
-        const m = ctx.measureText(test);
-        if (m.width > textAreaWidth && line) {
-          wrapped.push(line);
-          line = word;
-        } else if (m.width > textAreaWidth && !line) {
-          // Single word longer than width - wrap by character
-          let chunk = '';
-          for (const ch of word) {
-            const t = chunk + ch;
-            if (ctx.measureText(t).width > textAreaWidth && chunk) {
-              wrapped.push(chunk);
-              chunk = ch;
-            } else {
-              chunk = t;
-            }
-          }
-          line = chunk;
-        } else {
-          line = test;
-        }
-      }
-      if (line) wrapped.push(line);
-    }
-    return wrapped.length ? wrapped : [''];
-  }
-
-  const lines = wrapText(displayText);
+  const lines = wrapText(ctx, displayText, textAreaWidth);
   const boxHeight = lines.length * lineHeight + padY * 2;
 
   canvas.width = maxBoxWidth;
   canvas.height = boxHeight;
-  ctx.font = `${fontWeight} ${fontSize}px Emoji, Arial, sans-serif`;
+  ctx.font = font;
   ctx.textAlign = style.textAlign;
   ctx.textBaseline = 'top';
 
-  // Transparent background
   ctx.clearRect(0, 0, maxBoxWidth, boxHeight);
 
   // Draw rounded rect background
@@ -114,7 +129,7 @@ export async function renderOverlayToPng(
   ctx.roundRect(0, 0, maxBoxWidth, boxHeight, borderRadius);
   ctx.fill();
 
-  // Draw text - use proper x based on textAlign
+  // Draw text
   ctx.fillStyle = style.textColor;
   const textX =
     style.textAlign === 'center'
@@ -127,7 +142,6 @@ export async function renderOverlayToPng(
     ctx.fillText(line, textX, padY + i * lineHeight, textAreaWidth);
   });
 
-  // Ensure output directory exists
   const dir = path.dirname(outputPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -140,39 +154,24 @@ export async function renderOverlayToPng(
 }
 
 /**
- * Get the height of a rendered overlay (for stacking) - uses same wrap logic as render
+ * Get the height of a rendered overlay (for stacking) — uses shared wrap logic
  */
 export function getOverlayHeight(overlay: TextOverlay, videoWidth: number): number {
   const { text, emoji, style } = overlay;
   const displayText = emoji ? `${emoji} ${text}` : text;
   const scale = videoWidth / 360;
   const fontSize = Math.round(style.fontSize * scale);
-  const padX = Math.round(style.paddingX * scale);
   const padY = Math.round(style.paddingY * scale);
   const lineHeight = fontSize * 1.4;
   const maxBoxWidth = Math.round((videoWidth * style.maxWidth) / 100);
+  const padX = Math.round(style.paddingX * scale);
   const textAreaWidth = maxBoxWidth - padX * 2;
 
+  const font = buildFont(style, scale);
   const canvas = createCanvas(1, 1);
   const ctx = canvas.getContext('2d');
-  ctx.font = `${style.fontWeight === 'extrabold' ? '800' : style.fontWeight === 'bold' ? '700' : '400'} ${fontSize}px Emoji, Arial, sans-serif`;
+  ctx.font = font;
 
-  const paragraphs = displayText.split('\n');
-  let lineCount = 0;
-  for (const para of paragraphs) {
-    const words = para.split(/\s+/);
-    let line = '';
-    for (const word of words) {
-      const test = line ? `${line} ${word}` : word;
-      if (ctx.measureText(test).width > textAreaWidth && line) {
-        lineCount++;
-        line = word;
-      } else {
-        line = test;
-      }
-    }
-    if (line) lineCount++;
-  }
-  if (lineCount === 0) lineCount = 1;
-  return lineCount * lineHeight + padY * 2 + 10;
+  const lines = wrapText(ctx, displayText, textAreaWidth);
+  return lines.length * lineHeight + padY * 2 + 10;
 }

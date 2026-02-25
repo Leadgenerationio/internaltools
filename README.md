@@ -1,4 +1,4 @@
-# Ad Video Creator
+# Andromedia Ad Maker
 
 Create scroll-stopping video ads with timed text overlays and background music. Upload multiple videos and batch-process them with the same text + music configuration.
 

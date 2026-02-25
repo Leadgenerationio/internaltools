@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { getVideoInfo } from '@/lib/get-video-info';
 import { logger } from '@/lib/logger';
 
+const execAsync = promisify(exec);
+
 export const maxDuration = 60;
 
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
+const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
 
 export async function POST(request: NextRequest) {
   logger.info('Upload API called', { contentType: request.headers.get('content-type') });
@@ -22,11 +27,22 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const files = formData.getAll('videos') as File[];
 
-    logger.info('FormData parsed', { fileCount: files?.length ?? 0, keys: [...formData.keys()] });
+    logger.info('FormData parsed', { fileCount: files?.length ?? 0, keys: Array.from(formData.keys()) });
 
     if (!files || files.length === 0) {
-      logger.warn('No files in upload', { formDataKeys: [...formData.keys()] });
+      logger.warn('No files in upload', { formDataKeys: Array.from(formData.keys()) });
       return NextResponse.json({ error: 'No files uploaded' }, { status: 400 });
+    }
+
+    // Validate file sizes upfront
+    for (const file of files) {
+      if (file.size > MAX_FILE_SIZE) {
+        const sizeMB = Math.round(file.size / 1024 / 1024);
+        return NextResponse.json(
+          { error: `"${file.name}" is ${sizeMB}MB — max file size is ${MAX_FILE_SIZE / 1024 / 1024}MB.` },
+          { status: 413 }
+        );
+      }
     }
 
     const uploaded = [];
@@ -44,22 +60,29 @@ export async function POST(request: NextRequest) {
       await writeFile(filepath, Buffer.from(bytes));
       logger.debug('File written', { filepath });
 
-      const info = await getVideoInfo(filepath);
+      let info;
+      try {
+        info = await getVideoInfo(filepath);
+      } catch (err: any) {
+        logger.error('Video info failed', { file: file.name, error: err.message });
+        return NextResponse.json(
+          { error: `"${file.name}" could not be read — ${err.message}` },
+          { status: 400 }
+        );
+      }
+
       logger.debug('Video info', { info });
 
       // Generate thumbnail
       const thumbFilename = `${id}_thumb.jpg`;
       const thumbPath = path.join(UPLOAD_DIR, thumbFilename);
-      const { exec } = require('child_process');
-      const { promisify } = require('util');
-      const execAsync = promisify(exec);
 
       try {
         await execAsync(
           `ffmpeg -y -i "${filepath}" -vframes 1 -ss 0 -vf "scale=180:-1" "${thumbPath}"`
         );
-      } catch (e) {
-        console.error('Thumbnail generation failed:', e);
+      } catch (e: any) {
+        logger.warn('Thumbnail generation failed', { file: file.name, error: e.message });
       }
 
       uploaded.push({
@@ -70,7 +93,7 @@ export async function POST(request: NextRequest) {
         duration: info.duration,
         width: info.width,
         height: info.height,
-        thumbnail: `/uploads/${thumbFilename}`,
+        thumbnail: existsSync(thumbPath) ? `/uploads/${thumbFilename}` : '',
       });
     }
 

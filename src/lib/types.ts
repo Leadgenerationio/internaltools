@@ -32,15 +32,6 @@ export interface MusicTrack {
   fadeOut: number;        // seconds
 }
 
-export interface VideoProject {
-  id: string;
-  videos: UploadedVideo[];
-  overlays: TextOverlay[];
-  music: MusicTrack | null;
-  outputFormat: '9:16' | '1:1' | '16:9';
-  videoDuration: number;  // seconds (auto-detected from first video)
-}
-
 export interface UploadedVideo {
   id: string;
   filename: string;
@@ -50,15 +41,6 @@ export interface UploadedVideo {
   width: number;
   height: number;
   thumbnail: string;
-}
-
-export interface RenderJob {
-  id: string;
-  status: 'queued' | 'processing' | 'complete' | 'error';
-  progress: number;      // 0-100
-  videoId: string;
-  outputPath: string | null;
-  error: string | null;
 }
 
 // Default style matching the solar ad format (rounded white boxes, bold text, generous padding)
@@ -75,10 +57,43 @@ export const DEFAULT_TEXT_STYLE: TextStyle = {
   textAlign: 'center',
 };
 
+// === Ad Funnel Generation Types ===
+
+export interface AdBrief {
+  productService: string;
+  targetAudience: string;
+  sellingPoints: string;
+  adExamples: string;
+  toneStyle: string;
+  additionalContext: string;
+}
+
+export type FunnelStage = 'tofu' | 'mofu' | 'bofu';
+
+export const FUNNEL_LABELS: Record<FunnelStage, string> = {
+  tofu: 'Top of Funnel',
+  mofu: 'Middle of Funnel',
+  bofu: 'Bottom of Funnel',
+};
+
+export const FUNNEL_DESCRIPTIONS: Record<FunnelStage, string> = {
+  tofu: 'Awareness — hook attention, spark curiosity',
+  mofu: 'Consideration — build trust, educate, show value',
+  bofu: 'Conversion — drive action, create urgency',
+};
+
+export interface GeneratedAd {
+  id: string;
+  funnelStage: FunnelStage;
+  variationLabel: string; // e.g. "Variation 1"
+  textBoxes: { id: string; text: string }[];
+  approved: boolean;
+}
+
 // Preset templates
 export const OVERLAY_PRESETS = {
   'white-box': {
-    name: 'White Box (like your ad)',
+    name: 'White Box',
     style: { ...DEFAULT_TEXT_STYLE },
   },
   'dark-box': {

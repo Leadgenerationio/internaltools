@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 export default function LogViewer() {
   const [logs, setLogs] = useState<string[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
@@ -20,11 +21,19 @@ export default function LogViewer() {
     }
   }, []);
 
+  // Only poll when expanded
   useEffect(() => {
-    fetchLogs();
-    const id = setInterval(fetchLogs, 2000);
-    return () => clearInterval(id);
-  }, [fetchLogs]);
+    if (expanded) {
+      fetchLogs();
+      intervalRef.current = setInterval(fetchLogs, 3000);
+    } else if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [expanded, fetchLogs]);
 
   return (
     <div className="mt-8 rounded-xl border border-gray-800 bg-gray-900/50 overflow-hidden">
@@ -32,7 +41,7 @@ export default function LogViewer() {
         onClick={() => setExpanded(!expanded)}
         className="w-full px-4 py-2 flex items-center justify-between text-left text-xs text-gray-500 hover:text-gray-400 hover:bg-gray-800/50"
       >
-        <span>📋 Debug logs</span>
+        <span>Debug logs {expanded && logs.length > 0 ? `(${logs.length} lines)` : ''}</span>
         <span className="text-gray-600">{expanded ? '▼' : '▶'}</span>
       </button>
       {expanded && (

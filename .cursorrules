@@ -1,60 +1,98 @@
-You are building an "Ad Video Creator" — a Next.js web app that lets users create video ads with timed text overlays and background music, then batch-render them using server-side FFmpeg.
+You are building "Ad Maker" — a Next.js web app that generates funnel-based ad copy via AI, lets users review/edit it, then batch-renders video ads with timed text overlays and background music using server-side FFmpeg.
+
+## IMPORTANT: Keep Docs In Sync
+After any new feature or major change, always update `ARCHITECTURE.md`, `CLAUDE.md`, and `.cursorrules` to reflect the current state. Don't ask — just do it.
 
 ## Architecture
 
 - **Framework**: Next.js 14 (App Router) + TypeScript + Tailwind CSS
-- **Video processing**: FFmpeg via fluent-ffmpeg (server-side)
-- **File handling**: Uploads go to `public/uploads/`, music to `public/music/`, outputs to `public/outputs/`
-- **State**: React useState (no external state management needed)
+- **Video processing**: FFmpeg via shell exec (server-side), @napi-rs/canvas for emoji-supporting overlay PNGs
+- **AI ad copy**: Anthropic SDK (Claude Sonnet) for generating TOFU/MOFU/BOFU ad text
+- **AI video generation**: Google Veo 3.1 (optional — users can also upload their own videos)
+- **File handling**: Uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/`
+- **State**: React useState (no external state management)
+- **Logging**: Winston with daily-rotate-file, client-side logs forwarded via `/api/log`
+
+## App Flow (4 Steps)
+
+1. **Brief** — User fills in a rich ad brief (product, audience, selling points, ad examples, tone, context)
+2. **Review** — AI generates 10 ads (4 TOFU, 4 MOFU, 2 BOFU), each with 4-5 text boxes. User edits text, approves/rejects/regenerates individually.
+3. **Media** — Upload background videos (or generate via Veo), upload music, configure overlay style (presets + custom colours/fonts/timing)
+4. **Render** — Each approved ad is rendered against each uploaded video via FFmpeg. Results shown with progress bar and download all.
 
 ## Key Concepts
 
-### Text Overlay Format (based on real Facebook ad format)
-- Text boxes appear one at a time, stacked vertically from top
-- Each has: emoji + bold text inside a semi-transparent white rounded rectangle
-- They accumulate — once a box appears, it stays visible
-- Typical timing: each box appears ~2-3 seconds after the previous one
-- Final box is usually a CTA
+### Text Overlay Rendering
+- Overlays are rendered to PNG using @napi-rs/canvas (NOT FFmpeg drawtext) to support emoji
+- PNGs are composited onto video using FFmpeg's `overlay` filter with `enable='between(t,start,end)'`
+- Overlays stack vertically from top, each appearing at a staggered time (user-configurable)
+- Once a box appears, it stays visible until the video ends
+- Style is configurable: preset picker (White Box, Dark Box, Gradient, Minimal) + custom colours, font, opacity
 
-### FFmpeg Rendering
-- Uses `drawtext` filter with `enable='between(t,start,end)'` for timed appearance
-- Box backgrounds use `box=1` with `boxcolor` including alpha channel
-- Multiple drawtext filters are chained with commas
-- Music mixing uses `amix` filter with fade in/out via `afade`
+### Funnel Ad Generation
+- TOFU (Top of Funnel): Awareness — hooks, curiosity gaps, pain points
+- MOFU (Middle of Funnel): Consideration — trust, social proof, education
+- BOFU (Bottom of Funnel): Conversion — urgency, CTAs, offers
+- No branding is added — "Andro Media" refers to Meta's ad system, not a brand
 
 ### Batch Processing
 - Users upload multiple background videos
-- Define text overlays + music once
-- App applies the same overlays to ALL uploaded videos
-- Outputs are individually downloadable
+- All approved ads are rendered against all uploaded videos
+- E.g. 5 approved ads × 2 videos = 10 output videos
+- Partial failure handling — if one ad fails, the rest still render
 
 ## File Structure
 ```
 src/
   app/
-    page.tsx              — Main UI (orchestrates all components)
-    layout.tsx            — Root layout
-    globals.css           — Tailwind + custom styles
+    page.tsx                — Main 4-step flow controller
+    layout.tsx              — Root layout
+    globals.css             — Tailwind + custom styles
     api/
-      upload/route.ts     — Video upload endpoint
-      upload-music/route.ts — Music upload endpoint
-      render/route.ts     — FFmpeg render endpoint
+      generate-ads/route.ts — Claude API for ad copy generation
+      generate-video/route.ts — Google Veo API for video generation
+      upload/route.ts       — Video upload (validates size, extracts metadata via ffprobe)
+      upload-music/route.ts — Music upload (validates format + size)
+      render/route.ts       — FFmpeg batch render endpoint
+      log/route.ts          — Client-side log ingestion
+      logs/route.ts         — Log retrieval for debug viewer
   components/
-    VideoUploader.tsx     — Drag-and-drop multi-video upload
-    TextOverlayEditor.tsx — Add/edit/reorder text overlays with timing
-    MusicSelector.tsx     — Upload and configure background music
-    VideoPreview.tsx      — Real-time preview with overlay simulation
+    AdBriefForm.tsx         — Rich brief input form (6 fields)
+    FunnelReview.tsx        — Tabbed review UI (TOFU/MOFU/BOFU) with approve/edit/regenerate
+    StyleConfigurator.tsx   — Overlay style presets + custom colour/font/timing controls
+    VideoSourceTabs.tsx     — Tabbed upload vs AI generate
+    VideoUploader.tsx       — Drag-and-drop multi-video upload
+    VideoGenerator.tsx      — AI video generation via Veo
+    MusicSelector.tsx       — Upload and configure background music
+    VideoPreview.tsx        — Real-time 9:16 preview with overlay simulation + music sync
+    TextOverlayEditor.tsx   — Manual overlay editor (available for direct overlay editing)
+    LogViewer.tsx           — Expandable debug log viewer (only polls when open)
   lib/
-    types.ts              — TypeScript types + presets
-    ffmpeg-renderer.ts    — Core FFmpeg rendering logic
+    types.ts                — TypeScript interfaces, presets, funnel types
+    ffmpeg-renderer.ts      — Core FFmpeg rendering (overlay compositing + audio mixing)
+    overlay-renderer.ts     — Canvas-based PNG generation with emoji support
+    get-video-info.ts       — ffprobe metadata extraction + FFmpeg availability check
+    logger.ts               — Winston logger setup
 ```
 
 ## When making changes:
-1. The preview component simulates overlays with CSS — it won't perfectly match FFmpeg output but should be close
-2. FFmpeg drawtext doesn't support emoji natively — if emoji rendering fails, consider using the `ass` subtitle format instead
-3. For production, add a job queue (Bull/Redis) for rendering and WebSocket for progress updates
-4. Keep the UI dark-themed and clean — this is a productivity tool for marketers
+1. Preview component simulates overlays with CSS — won't perfectly match FFmpeg output but should be close
+2. Overlays use canvas PNG rendering (not drawtext) specifically for emoji support
+3. Always validate inputs at system boundaries: file sizes before upload, codec support before render, API keys before AI calls
+4. Handle partial failures — never throw away successful work because one item failed
+5. Show real progress during long operations (X of Y, not just a spinner)
+6. Keep the UI dark-themed (gray-950 bg, gray-800 cards, blue-500 accents, green-600 actions)
+7. No branding in generated ad copy — the ads are for the client's product only
+
+## Watchdog QA Agent
+- `npm run watchdog` — standalone script that continuously tests all endpoints, stress-tests, and auto-remediates
+- Config: `scripts/watchdog.config.json` (all overridable via `WATCHDOG_*` env vars)
+- Paid API tests disabled by default (`enableGenerateAds`, `enableGenerateVideo`)
+- Generates its own test fixtures via FFmpeg in `scripts/fixtures/` (gitignored)
+- Reports to `watchdog-report.json` (gitignored)
 
 ## Prerequisites
 - Node.js 18+
-- FFmpeg installed on the system (brew install ffmpeg / apt install ffmpeg)
+- FFmpeg installed (`brew install ffmpeg` / `apt install ffmpeg`)
+- `ANTHROPIC_API_KEY` in `.env.local` for ad copy generation
+- `GOOGLE_API_KEY` in `.env.local` for Veo video generation (optional)

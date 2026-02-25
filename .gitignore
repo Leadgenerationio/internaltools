@@ -30,6 +30,10 @@ public/music/
 *.swp
 *.swo
 
+# Watchdog
+scripts/fixtures/
+watchdog-report.json
+
 # OS
 .DS_Store
 Thumbs.db

@@ -152,10 +152,9 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
   } finally {
     // Clean up temp overlay PNGs
     try {
-      for (const p of overlayPaths) {
-        if (fs.existsSync(p)) fs.unlinkSync(p);
+      if (fs.existsSync(tempDir)) {
+        fs.rmSync(tempDir, { recursive: true });
       }
-      if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir);
     } catch (e) {
       console.warn('Failed to clean up temp overlay files:', e);
     }

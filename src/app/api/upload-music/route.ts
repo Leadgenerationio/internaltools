@@ -5,6 +5,8 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
 const MUSIC_DIR = path.join(process.cwd(), 'public', 'music');
+const MAX_MUSIC_SIZE = 50 * 1024 * 1024; // 50MB
+const ALLOWED_EXTENSIONS = ['.mp3', '.wav', '.aac', '.m4a', '.ogg', '.flac'];
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,8 +21,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
     }
 
+    if (file.size > MAX_MUSIC_SIZE) {
+      const sizeMB = Math.round(file.size / 1024 / 1024);
+      return NextResponse.json(
+        { error: `Music file is ${sizeMB}MB — max is ${MAX_MUSIC_SIZE / 1024 / 1024}MB.` },
+        { status: 413 }
+      );
+    }
+
+    const ext = path.extname(file.name).toLowerCase() || '.mp3';
+    if (!ALLOWED_EXTENSIONS.includes(ext)) {
+      return NextResponse.json(
+        { error: `Unsupported audio format "${ext}". Use: ${ALLOWED_EXTENSIONS.join(', ')}` },
+        { status: 400 }
+      );
+    }
+
     const id = uuidv4();
-    const ext = path.extname(file.name) || '.mp3';
     const filename = `${id}${ext}`;
     const filepath = path.join(MUSIC_DIR, filename);
 
