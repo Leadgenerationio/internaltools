@@ -45,9 +45,9 @@ function checkRateLimit(ip: string, routeKey: string): { allowed: boolean; retry
 // Clean up stale entries every 5 minutes
 setInterval(() => {
   const now = Date.now();
-  for (const [key, entry] of rateLimitStore) {
+  rateLimitStore.forEach((entry, key) => {
     if (now > entry.resetAt) rateLimitStore.delete(key);
-  }
+  });
 }, 5 * 60_000);
 
 // ─── Security Headers ───────────────────────────────────────────────────────
