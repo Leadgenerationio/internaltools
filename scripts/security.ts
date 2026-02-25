@@ -505,13 +505,15 @@ function checkBrowserControlExposure(config: Config): Finding[] {
     });
   }
 
-  // Check for Content-Security-Policy headers in next.config
+  // Check for Content-Security-Policy headers in next.config or middleware
   const nextConfigPath = path.join(PROJECT_ROOT, 'next.config.mjs');
   const nextConfigJsPath = path.join(PROJECT_ROOT, 'next.config.js');
   const nextConfigTsPath = path.join(PROJECT_ROOT, 'next.config.ts');
+  const middlewareTsPath = path.join(SRC_DIR, 'middleware.ts');
+  const rootMiddlewareTsPath = path.join(PROJECT_ROOT, 'middleware.ts');
   let hasCSP = false;
 
-  for (const cfgPath of [nextConfigPath, nextConfigJsPath, nextConfigTsPath]) {
+  for (const cfgPath of [nextConfigPath, nextConfigJsPath, nextConfigTsPath, middlewareTsPath, rootMiddlewareTsPath]) {
     if (fs.existsSync(cfgPath)) {
       const content = fs.readFileSync(cfgPath, 'utf-8');
       if (/Content-Security-Policy|contentSecurityPolicy/i.test(content)) {
