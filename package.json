@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "watchdog": "npx tsx scripts/watchdog.ts",
+    "security": "npx tsx scripts/security.ts",
+    "security:once": "npx tsx scripts/security.ts --once",
     "git-agent": "bash scripts/git-agent.sh"
   },
   "dependencies": {
