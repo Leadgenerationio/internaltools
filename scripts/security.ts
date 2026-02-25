@@ -1349,7 +1349,7 @@ function checkPathTraversal(config: Config): Finding[] {
         autoFixable: false,
       });
     }
-  }
+  });
 
   // Check for ../  in any URL parsing or query parameter handling
   const dotDotCheck = grepDir(SRC_DIR, /\.(ts|tsx|js)$/, /searchParams|query.*\.\.\//);
