@@ -172,6 +172,31 @@ ANTHROPIC_API_KEY=sk-ant-...    # Required for ad copy generation
 GOOGLE_API_KEY=...               # Optional for Veo video generation
 ```
 
+## Security
+
+### Middleware (`src/middleware.ts`)
+- **Rate limiting**: Per-IP rate limits on all API routes (configurable per-route)
+- **CORS**: Explicit `Access-Control-Allow-Origin` restricted to allowed origins
+- **Security headers**: X-Frame-Options, X-Content-Type-Options, Referrer-Policy, X-XSS-Protection, Permissions-Policy, Content-Security-Policy
+- **Preflight handling**: OPTIONS requests for CORS
+
+### Shell Command Safety
+- All FFmpeg/ffprobe calls use `execFile()` (no shell invocation) instead of `exec()`
+- Arguments passed as arrays, never interpolated into command strings
+- Prevents shell injection via crafted filenames or user input
+
+### Input Validation
+- All JSON API routes validate payload size before parsing
+- `/api/log`: message type/length validation, metadata key limiting, field sanitization
+- `/api/logs`: path traversal prevention with `isPathSafe()` boundary checks
+- Upload routes: file size limits, extension whitelists
+
+### Log Sanitization
+- Logger automatically redacts API keys, tokens, and secret patterns
+- Home directory paths replaced with `~` to prevent username leakage
+- Fields named password/secret/token/apikey automatically redacted
+- Production log level set to `warn` (suppresses debug/info)
+
 ## Validation
 
 - **Video upload**: File size (500MB max), ffprobe metadata extraction, codec detection
