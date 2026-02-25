@@ -33,6 +33,7 @@ public/music/
 # Watchdog
 scripts/fixtures/
 watchdog-report.json
+security-report.json
 
 # OS
 .DS_Store
