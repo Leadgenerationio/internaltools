@@ -6,6 +6,7 @@ import type { AdBrief } from '@/lib/types';
 interface Props {
   onGenerate: (brief: AdBrief) => void;
   generating: boolean;
+  initialBrief?: AdBrief | null;
 }
 
 const EMPTY_BRIEF: AdBrief = {
@@ -15,10 +16,11 @@ const EMPTY_BRIEF: AdBrief = {
   adExamples: '',
   toneStyle: '',
   additionalContext: '',
+  addEmojis: true,
 };
 
-export default function AdBriefForm({ onGenerate, generating }: Props) {
-  const [brief, setBrief] = useState<AdBrief>(EMPTY_BRIEF);
+export default function AdBriefForm({ onGenerate, generating, initialBrief }: Props) {
+  const [brief, setBrief] = useState<AdBrief>(initialBrief || EMPTY_BRIEF);
 
   const update = (field: keyof AdBrief, value: string) => {
     setBrief((prev) => ({ ...prev, [field]: value }));
@@ -120,6 +122,23 @@ export default function AdBriefForm({ onGenerate, generating }: Props) {
           />
         </div>
       </div>
+
+      {/* Emoji toggle */}
+      <label className="flex items-center gap-3 cursor-pointer group">
+        <div className="relative">
+          <input
+            type="checkbox"
+            checked={brief.addEmojis}
+            onChange={(e) => setBrief((prev) => ({ ...prev, addEmojis: e.target.checked }))}
+            className="sr-only peer"
+          />
+          <div className="w-10 h-6 bg-gray-700 rounded-full peer-checked:bg-blue-600 transition-colors" />
+          <div className="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4" />
+        </div>
+        <span className="text-sm text-gray-300 group-hover:text-white transition-colors">
+          Add emojis to start of text boxes
+        </span>
+      </label>
 
       {/* Generate button */}
       <button

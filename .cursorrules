@@ -76,7 +76,7 @@ src/
 ```
 
 ## When making changes:
-1. Preview component simulates overlays with CSS — won't perfectly match FFmpeg output but should be close
+1. Preview (VideoPreview.tsx) and renderer (overlay-renderer.ts) share scale constants (PREVIEW_WIDTH=320, FONT_SCALE=0.5, GEOM_SCALE=0.6) — keep them in sync when changing overlay sizing
 2. Overlays use canvas PNG rendering (not drawtext) specifically for emoji support
 3. Always validate inputs at system boundaries: file sizes before upload, codec support before render, API keys before AI calls
 4. Handle partial failures — never throw away successful work because one item failed

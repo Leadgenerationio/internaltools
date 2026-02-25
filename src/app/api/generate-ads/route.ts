@@ -11,10 +11,11 @@ Each ad consists of 4-5 text boxes that appear one at a time over a background v
 Rules:
 - Keep each text box SHORT — these are overlays on video, not paragraphs
 - Use curiosity gaps, pattern interrupts, and emotional hooks
-- Never include hashtags, emojis, or URLs in the text boxes
+- Never include hashtags or URLs in the text boxes
 - Never include any branding for the ad platform — only the advertiser's product/service
 - Each variation should feel genuinely different, not just rephrased
 - Match the tone/style requested in the brief
+- EMOJI RULE: Follow the emoji instruction in the user's brief exactly. If emojis are requested, start EVERY text box with a single relevant emoji. If emojis are not requested, do NOT include any emojis anywhere.
 
 Funnel stages:
 - TOFU (Top of Funnel): Awareness. Hook cold audiences. Spark curiosity. Make them stop scrolling. Use bold claims, surprising stats, relatable pain points, or provocative questions.
@@ -28,6 +29,11 @@ function buildBriefContext(brief: AdBrief): string {
   if (brief.adExamples) ctx += `**Examples of Ads That Have Worked:** ${brief.adExamples}\n`;
   if (brief.toneStyle) ctx += `**Tone & Style:** ${brief.toneStyle}\n`;
   if (brief.additionalContext) ctx += `**Additional Context:** ${brief.additionalContext}\n`;
+  if (brief.addEmojis) {
+    ctx += `**Emojis:** YES — start every text box with a single relevant emoji (e.g. "☀️ Save on energy bills")\n`;
+  } else {
+    ctx += `**Emojis:** NO — do not include any emojis in the text boxes\n`;
+  }
   return ctx;
 }
 

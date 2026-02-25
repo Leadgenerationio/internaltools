@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import AdBriefForm from '@/components/AdBriefForm';
 import FunnelReview from '@/components/FunnelReview';
@@ -84,9 +84,57 @@ export default function Home() {
 
   // Preview state
   const [previewAdId, setPreviewAdId] = useState<string | null>(null);
+  const [previewVideoIndex, setPreviewVideoIndex] = useState(0);
+
+  // Persist state to localStorage so user doesn't lose progress between refreshes
+  const [isRestored, setIsRestored] = useState(false);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('adMaker_state');
+      if (stored) {
+        const s = JSON.parse(stored);
+        if (s.brief) setBrief(s.brief);
+        if (s.ads?.length) setAds(s.ads);
+        if (s.step) setStep(s.step);
+        if (s.overlayStyle) setOverlayStyle(s.overlayStyle);
+        if (typeof s.staggerSeconds === 'number') setStaggerSeconds(s.staggerSeconds);
+        if (s.videos?.length) setVideos(s.videos);
+        if (s.music) setMusic(s.music);
+      }
+    } catch { /* ignore corrupt data */ }
+    setIsRestored(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isRestored) return;
+    try {
+      localStorage.setItem('adMaker_state', JSON.stringify({
+        brief, ads, step, overlayStyle, staggerSeconds, videos, music,
+      }));
+    } catch { /* storage full or unavailable */ }
+  }, [isRestored, brief, ads, step, overlayStyle, staggerSeconds, videos, music]);
+
+  const handleResetAll = () => {
+    localStorage.removeItem('adMaker_state');
+    setBrief(null);
+    setAds([]);
+    setStep('brief');
+    setOverlayStyle({ ...DEFAULT_TEXT_STYLE });
+    setStaggerSeconds(2);
+    setVideos([]);
+    setMusic(null);
+    setResults([]);
+    setRenderProgress('');
+    setRenderCurrent(0);
+    setRenderTotal(0);
+    setPreviewAdId(null);
+  };
 
   const approvedAds = ads.filter((a) => a.approved);
-  const videoDuration = videos.length > 0 ? videos[0].duration : 15;
+  const safeVideoIndex = Math.min(previewVideoIndex, Math.max(videos.length - 1, 0));
+  const previewVideo = videos[safeVideoIndex] || null;
+  const videoDuration = previewVideo ? previewVideo.duration : 15;
 
   // Preview overlays for the selected ad
   const previewAd = ads.find((a) => a.id === previewAdId) || approvedAds[0] || null;
@@ -197,41 +245,43 @@ export default function Home() {
     let completed = 0;
 
     for (const ad of approvedAds) {
-      const overlays = adsToOverlays(ad, videoDuration, overlayStyle, staggerSeconds);
+      for (const vid of videos) {
+        // Compute overlays per-video so timing matches each video's actual duration
+        const overlays = adsToOverlays(ad, vid.duration, overlayStyle, staggerSeconds);
 
-      setRenderProgress(`Rendering "${ad.variationLabel}" (${completed + 1} of ${totalCount})...`);
+        setRenderProgress(`Rendering "${ad.variationLabel}" — ${vid.originalName} (${completed + 1} of ${totalCount})...`);
 
-      try {
-        const res = await fetch('/api/render', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ videos, overlays, music }),
-        });
+        try {
+          const res = await fetch('/api/render', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ videos: [vid], overlays, music }),
+          });
 
-        const data = await res.json();
+          const data = await res.json();
 
-        if (data.error) {
-          setRenderProgress(`Error on "${ad.variationLabel}": ${data.error}`);
-          // Continue with remaining ads — don't lose completed work
-          completed += videos.length;
-          setRenderCurrent(completed);
-          continue;
-        }
+          if (data.error) {
+            setRenderProgress(`Error on "${ad.variationLabel}" — ${vid.originalName}: ${data.error}`);
+            completed++;
+            setRenderCurrent(completed);
+            continue;
+          }
 
-        for (const r of data.results) {
+          for (const r of data.results) {
+            completed++;
+            setRenderCurrent(completed);
+            allResults.push({
+              ...r,
+              adLabel: ad.variationLabel,
+            });
+          }
+
+          setRenderProgress(`Rendered ${completed} of ${totalCount}...`);
+        } catch (err: any) {
+          setRenderProgress(`Error on "${ad.variationLabel}" — ${vid.originalName}: ${err.message}`);
           completed++;
           setRenderCurrent(completed);
-          allResults.push({
-            ...r,
-            adLabel: ad.variationLabel,
-          });
         }
-
-        setRenderProgress(`Rendered ${completed} of ${totalCount}...`);
-      } catch (err: any) {
-        setRenderProgress(`Error on "${ad.variationLabel}": ${err.message}`);
-        completed += videos.length;
-        setRenderCurrent(completed);
       }
     }
 
@@ -298,6 +348,13 @@ export default function Home() {
                 {s.label}
               </button>
             ))}
+            <button
+              onClick={handleResetAll}
+              className="ml-2 px-3 py-1.5 rounded-lg text-sm font-medium text-red-400 hover:text-red-300 hover:bg-red-950/30 transition-all"
+              title="Clear all saved data and start fresh"
+            >
+              Reset
+            </button>
           </div>
         </div>
       </header>
@@ -307,7 +364,7 @@ export default function Home() {
         {/* Step 1: Brief */}
         {step === 'brief' && (
           <div className="max-w-2xl mx-auto">
-            <AdBriefForm onGenerate={handleGenerate} generating={generating} />
+            <AdBriefForm onGenerate={handleGenerate} generating={generating} initialBrief={brief} />
             {generateError && (
               <div className="mt-4 p-4 rounded-xl bg-red-950/50 border border-red-800">
                 <p className="text-sm text-red-300">{generateError}</p>
@@ -444,13 +501,17 @@ export default function Home() {
             <div className="lg:col-span-1">
               <div className="sticky top-6">
                 <VideoPreview
-                  video={videos[0] || null}
+                  video={previewVideo}
+                  videos={videos}
+                  activeIndex={safeVideoIndex}
+                  onVideoChange={setPreviewVideoIndex}
                   overlays={previewOverlays}
                   music={music}
                 />
                 {previewAd && (
                   <p className="text-xs text-gray-500 text-center mt-2">
                     Previewing: {previewAd.variationLabel}
+                    {previewVideo && videos.length > 1 ? ` on ${previewVideo.originalName}` : ''}
                   </p>
                 )}
               </div>
@@ -556,15 +617,7 @@ export default function Home() {
                 Back to Media
               </button>
               <button
-                onClick={() => {
-                  setStep('brief');
-                  setAds([]);
-                  setResults([]);
-                  setRenderProgress('');
-                  setRenderCurrent(0);
-                  setRenderTotal(0);
-                  setBrief(null);
-                }}
+                onClick={handleResetAll}
                 disabled={rendering}
                 className="px-4 py-2 text-sm text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50"
               >

@@ -1,0 +1,12 @@
+node_modules
+.next
+.env
+.env.local
+.env.*.local
+public/uploads
+public/outputs
+public/music
+logs
+*.log
+.DS_Store
+.git

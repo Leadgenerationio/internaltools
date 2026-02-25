@@ -66,6 +66,7 @@ export interface AdBrief {
   adExamples: string;
   toneStyle: string;
   additionalContext: string;
+  addEmojis: boolean;
 }
 
 export type FunnelStage = 'tofu' | 'mofu' | 'bofu';

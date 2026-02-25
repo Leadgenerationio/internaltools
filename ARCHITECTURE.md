@@ -100,7 +100,7 @@ src/
 │   ├── StyleConfigurator.tsx       # Overlay style presets + custom controls
 │   ├── VideoSourceTabs.tsx         # Upload vs AI generate tabs
 │   ├── VideoUploader.tsx           # Drag-drop video upload
-│   ├── VideoGenerator.tsx          # Veo video generation
+│   ├── VideoGenerator.tsx          # Veo video generation (multi-prompt, multi-batch)
 │   ├── MusicSelector.tsx           # Music upload + volume/fade
 │   ├── VideoPreview.tsx            # Real-time 9:16 preview
 │   ├── TextOverlayEditor.tsx       # Manual overlay editor
@@ -119,7 +119,9 @@ src/
 1. Sort overlays by startTime
 2. For each overlay:
    a. Render text to PNG via @napi-rs/canvas (supports emoji)
-   b. Calculate vertical stacking position
+   b. Use PREVIEW_* scale constants (matching VideoPreview.tsx CSS) to size
+      text, padding, border-radius, gaps, and fit-content box width
+   c. Calculate vertical stacking position (starting Y = 10% of output width)
 3. Build FFmpeg command:
    a. Scale/crop input video to 1080×1920 (9:16)
    b. Chain overlay filters with enable='between(t,start,end)'

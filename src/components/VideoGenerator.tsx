@@ -29,30 +29,39 @@ const ASPECT_OPTIONS = [
   { value: '16:9' as const, label: '16:9 Landscape' },
 ];
 
+interface GenerationBatch {
+  prompt: string;
+  count: number;
+  videoIds: string[];
+}
+
 export default function VideoGenerator({ videos, onUpload, generating, setGenerating }: Props) {
   const [prompt, setPrompt] = useState('');
-  const [count, setCount] = useState(1);
+  const [count, setCount] = useState(2);
   const [aspectRatio, setAspectRatio] = useState<'9:16' | '16:9'>('9:16');
   const [duration, setDuration] = useState<'4' | '6' | '8'>('6');
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState('');
+  const [batches, setBatches] = useState<GenerationBatch[]>([]);
 
   const canGenerate = prompt.trim().length > 0 && !generating;
+  const aiVideoCount = videos.filter((v) => v.originalName.startsWith('AI:')).length;
 
   const handleGenerate = async () => {
     if (!canGenerate) return;
 
+    const currentPrompt = prompt.trim();
     setGenerating(true);
     setError(null);
-    setStatusMessage(`Generating ${count} video${count > 1 ? 's' : ''}... This may take up to a few minutes.`);
+    setStatusMessage(`Generating ${count} video${count > 1 ? 's' : ''}... This can take a few minutes.`);
 
-    log('info', 'Starting AI video generation', { prompt: prompt.slice(0, 100), count, aspectRatio, duration });
+    log('info', 'Starting AI video generation', { prompt: currentPrompt.slice(0, 100), count, aspectRatio, duration });
 
     try {
       const res = await fetch('/api/generate-video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: prompt.trim(), count, aspectRatio, duration }),
+        body: JSON.stringify({ prompt: currentPrompt, count, aspectRatio, duration }),
       });
 
       let data: { videos?: UploadedVideo[]; error?: string };
@@ -71,8 +80,29 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
 
       if (data.videos && data.videos.length > 0) {
         log('info', 'Generation success', { count: data.videos.length });
-        onUpload([...videos, ...data.videos]);
-        setStatusMessage(`Done! ${data.videos.length} video${data.videos.length > 1 ? 's' : ''} generated.`);
+
+        // Label videos with prompt snippet
+        const promptLabel = currentPrompt.length > 40
+          ? currentPrompt.slice(0, 40) + '...'
+          : currentPrompt;
+        const labelledVideos = data.videos.map((v, i) => ({
+          ...v,
+          originalName: `AI: ${promptLabel}${data.videos!.length > 1 ? ` (${i + 1})` : ''}`,
+        }));
+
+        onUpload([...videos, ...labelledVideos]);
+
+        // Track batch
+        setBatches((prev) => [
+          ...prev,
+          {
+            prompt: currentPrompt,
+            count: labelledVideos.length,
+            videoIds: labelledVideos.map((v) => v.id),
+          },
+        ]);
+
+        setStatusMessage(`Generated ${data.videos.length} video${data.videos.length > 1 ? 's' : ''}. Enter a new prompt to generate more.`);
         setPrompt('');
       } else {
         log('warn', 'No videos in generation response', { data });
@@ -90,17 +120,32 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
 
   return (
     <div className="space-y-4">
+      {/* Show existing AI videos count */}
+      {aiVideoCount > 0 && !generating && (
+        <div className="p-3 rounded-lg bg-gray-800 border border-gray-700">
+          <p className="text-sm text-gray-300">
+            <span className="text-white font-medium">{aiVideoCount} AI video{aiVideoCount !== 1 ? 's' : ''}</span> generated
+            {batches.length > 0 && ` from ${batches.length} prompt${batches.length !== 1 ? 's' : ''}`}.
+            Add more below with a different prompt, or go back to upload to add your own.
+          </p>
+        </div>
+      )}
+
       {/* Prompt */}
       <div>
         <label htmlFor="ai-prompt" className="block text-sm font-medium text-gray-300 mb-1.5">
-          Describe your video
+          {aiVideoCount > 0 ? 'Next video prompt' : 'Describe your video'}
         </label>
         <textarea
           id="ai-prompt"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           disabled={generating}
-          placeholder="A drone shot of a modern house with solar panels at sunset, cinematic lighting..."
+          placeholder={
+            aiVideoCount > 0
+              ? 'Describe a different scene for your next batch of videos...'
+              : 'A drone shot of a modern house with solar panels at sunset, cinematic lighting...'
+          }
           rows={3}
           className="w-full rounded-lg bg-gray-800 border border-gray-700 text-white placeholder-gray-500 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 resize-none"
         />
@@ -110,7 +155,7 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {/* Count */}
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-1.5">Number of videos</label>
+          <label className="block text-sm font-medium text-gray-300 mb-1.5">Videos per prompt</label>
           <div className="flex gap-1.5">
             {COUNT_OPTIONS.map((n) => (
               <button
@@ -194,11 +239,29 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
 
       {/* Status message */}
       {statusMessage && (
-        <div className="flex items-center gap-3 p-3 rounded-lg bg-blue-900/30 border border-blue-700 text-blue-300 text-sm">
+        <div className={`flex items-center gap-3 p-3 rounded-lg text-sm ${
+          generating
+            ? 'bg-blue-900/30 border border-blue-700 text-blue-300'
+            : 'bg-green-900/30 border border-green-700 text-green-300'
+        }`}>
           {generating && (
             <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin shrink-0" />
           )}
           <span>{statusMessage}</span>
+        </div>
+      )}
+
+      {/* Previous batches */}
+      {batches.length > 0 && !generating && (
+        <div className="space-y-2">
+          <p className="text-xs text-gray-500 font-medium">Generation history</p>
+          {batches.map((batch, i) => (
+            <div key={i} className="flex items-center gap-2 text-xs text-gray-400">
+              <span className="text-gray-500 font-mono w-4">{i + 1}.</span>
+              <span className="truncate flex-1">{batch.prompt}</span>
+              <span className="shrink-0 text-gray-500">{batch.count} video{batch.count !== 1 ? 's' : ''}</span>
+            </div>
+          ))}
         </div>
       )}
 

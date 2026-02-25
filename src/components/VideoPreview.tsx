@@ -5,11 +5,14 @@ import type { TextOverlay, UploadedVideo, MusicTrack } from '@/lib/types';
 
 interface Props {
   video: UploadedVideo | null;
+  videos: UploadedVideo[];
+  activeIndex: number;
+  onVideoChange: (index: number) => void;
   overlays: TextOverlay[];
   music: MusicTrack | null;
 }
 
-export default function VideoPreview({ video, overlays, music }: Props) {
+export default function VideoPreview({ video, videos, activeIndex, onVideoChange, overlays, music }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
@@ -79,6 +82,57 @@ export default function VideoPreview({ video, overlays, music }: Props) {
   return (
     <div className="space-y-2">
       <h2 className="text-lg font-semibold text-white">Preview</h2>
+
+      {/* Video switcher — only when multiple videos uploaded */}
+      {videos.length > 1 && (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => onVideoChange(activeIndex - 1)}
+            disabled={activeIndex === 0}
+            className="p-1 text-gray-400 hover:text-white disabled:text-gray-600 disabled:cursor-not-allowed transition-colors shrink-0"
+            aria-label="Previous video"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+
+          <div className="flex-1 overflow-x-auto flex gap-1.5 py-1">
+            {videos.map((v, i) => (
+              <button
+                key={v.id}
+                onClick={() => onVideoChange(i)}
+                className={`shrink-0 rounded-md overflow-hidden transition-all ${
+                  i === activeIndex
+                    ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-950'
+                    : 'ring-1 ring-transparent hover:ring-gray-600'
+                }`}
+                title={v.originalName}
+              >
+                <img
+                  src={v.thumbnail}
+                  alt={v.originalName}
+                  className="w-[40px] h-[56px] object-cover"
+                />
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={() => onVideoChange(activeIndex + 1)}
+            disabled={activeIndex >= videos.length - 1}
+            className="p-1 text-gray-400 hover:text-white disabled:text-gray-600 disabled:cursor-not-allowed transition-colors shrink-0"
+            aria-label="Next video"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+
+          <span className="text-xs text-gray-500 shrink-0">{activeIndex + 1} / {videos.length}</span>
+        </div>
+      )}
+
       <div className="relative bg-black rounded-xl overflow-hidden aspect-[9/16] max-h-[70vh] mx-auto" style={{ maxWidth: '320px' }}>
         {/* Background music - plays in sync with video */}
         {music?.file && (
@@ -103,7 +157,8 @@ export default function VideoPreview({ video, overlays, music }: Props) {
           onError={(e) => console.error('Video load error:', video.path, e)}
         />
 
-        {/* Text overlay previews - stacked layout matching example */}
+        {/* Text overlay previews — scale constants here (0.5, 0.6, 10%, 0.9em, 1.5 line-height)
+            MUST stay in sync with overlay-renderer.ts PREVIEW_* constants */}
         <div className="absolute inset-0 flex flex-col items-center pointer-events-none" style={{ paddingTop: '10%' }}>
           {overlays.map((overlay, i) => {
             const isVisible = currentTime >= overlay.startTime && currentTime <= overlay.endTime;

@@ -118,10 +118,31 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    const videos = await Promise.all(generatePromises);
+    const results = await Promise.allSettled(generatePromises);
 
-    logger.info('All generations complete', { count: videos.length });
-    return NextResponse.json({ videos });
+    const videos = results
+      .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+      .map((r) => r.value);
+
+    const failures = results.filter((r) => r.status === 'rejected');
+    if (failures.length > 0) {
+      logger.warn('Some generations failed', {
+        succeeded: videos.length,
+        failed: failures.length,
+        errors: failures.map((f) => (f as PromiseRejectedResult).reason?.message),
+      });
+    }
+
+    if (videos.length === 0) {
+      const firstError = (failures[0] as PromiseRejectedResult)?.reason?.message || 'All generations failed';
+      return NextResponse.json({ error: firstError }, { status: 500 });
+    }
+
+    logger.info('Generations complete', { succeeded: videos.length, failed: failures.length });
+    return NextResponse.json({
+      videos,
+      ...(failures.length > 0 && { warning: `${failures.length} of ${videoCount} videos failed to generate` }),
+    });
   } catch (error: any) {
     logger.error('Generate-video error', { error: error.message, stack: error.stack });
     return NextResponse.json({ error: error.message }, { status: 500 });

@@ -84,7 +84,8 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
 
     sorted.forEach((overlay, index) => {
       const inputIndex = firstOverlayIndex + index;
-      let yPos = Math.round(OUTPUT_HEIGHT * 0.08);
+      // CSS paddingTop: 10% is relative to element *width*, not height
+      let yPos = Math.round(OUTPUT_WIDTH * 0.10);
       for (let j = 0; j < index; j++) {
         yPos += getOverlayHeight(sorted[j], OUTPUT_WIDTH);
       }

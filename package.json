@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "watchdog": "npx tsx scripts/watchdog.ts"
+    "watchdog": "npx tsx scripts/watchdog.ts",
+    "git-agent": "bash scripts/git-agent.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
