@@ -91,6 +91,12 @@ src/
 - Generates its own test fixtures via FFmpeg in `scripts/fixtures/` (gitignored)
 - Reports to `watchdog-report.json` (gitignored)
 
+## Security Agent
+- `npm run security` — continuous security audit across 12 categories (blast radius, network, browser, disk, deps, credentials, proxy headers, logs, shell injection, input validation, path traversal, git secrets)
+- `npm run security:once` — single scan with exit codes (0=clean, 1=high, 2=critical) for CI
+- Config: `scripts/security.config.json` (toggle checks, set thresholds, auto-remediate)
+- Reports to `security-report.json` (gitignored, last 50 scans)
+
 ## Prerequisites
 - Node.js 18+
 - FFmpeg installed (`brew install ffmpeg` / `apt install ffmpeg`)
