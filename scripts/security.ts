@@ -272,17 +272,36 @@ function formatBytes(bytes: number): string {
 function checkBlastRadius(config: Config): Finding[] {
   const findings: Finding[] = [];
 
-  // Check for exec/execSync usage (arbitrary command execution capability)
-  const execUsage = grepDir(SRC_DIR, /\.(ts|tsx|js)$/, /\bexec(Sync)?\s*\(|child_process/);
-  if (execUsage.length > 0) {
+  // Check for unsafe exec/execSync usage (shell invocation — NOT execFile which is safe)
+  const unsafeExecUsage = grepDir(SRC_DIR, /\.(ts|tsx|js)$/, /\bexec(Sync)?\s*\(/)
+    .filter((m) => !/execFile/.test(m.text)); // execFile is the safe alternative
+  const childProcessImports = grepDir(SRC_DIR, /\.(ts|tsx|js)$/, /child_process/)
+    .filter((m) => /\bexec\b/.test(m.text) && !/execFile/.test(m.text)); // Only flag if importing unsafe exec
+
+  const allUnsafe = [...unsafeExecUsage, ...childProcessImports];
+  if (allUnsafe.length > 0) {
     findings.push({
       id: 'BR-001',
       category: 'blast-radius',
       severity: 'high',
-      title: 'Shell execution capability in application code',
-      detail: `Found ${execUsage.length} file(s) with shell exec:\n${execUsage.map((m) => `  ${m.file}:${m.line} — ${m.text.slice(0, 80)}`).join('\n')}`,
+      title: 'Unsafe shell execution (exec/execSync) in application code',
+      detail: `Found ${allUnsafe.length} file(s) with unsafe shell exec:\n${allUnsafe.map((m) => `  ${m.file}:${m.line} — ${m.text.slice(0, 80)}`).join('\n')}`,
       remediation:
         'Replace exec() with execFile() which does not invoke a shell. Pass arguments as an array to prevent injection.',
+      autoFixable: false,
+    });
+  }
+
+  // Note: execFile usage is safe (no shell invocation) — log as info
+  const safeExecUsage = grepDir(SRC_DIR, /\.(ts|tsx|js)$/, /execFile(Sync)?\s*\(/);
+  if (safeExecUsage.length > 0) {
+    findings.push({
+      id: 'BR-001-safe',
+      category: 'blast-radius',
+      severity: 'info',
+      title: `${safeExecUsage.length} file(s) use execFile (safe, no shell invocation)`,
+      detail: safeExecUsage.map((m) => `  ${m.file}:${m.line}`).join('\n'),
+      remediation: 'No action needed — execFile does not invoke a shell.',
       autoFixable: false,
     });
   }
