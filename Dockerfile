@@ -1,16 +1,26 @@
 # --- Stage 1: Install dependencies and build ---
 FROM node:20-slim AS builder
 
-# Install FFmpeg (needed for video processing)
-RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+# Install FFmpeg + system libs needed by @napi-rs/canvas
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    build-essential \
+    python3 \
+    libcairo2-dev \
+    libpango1.0-dev \
+    libjpeg62-turbo-dev \
+    libgif-dev \
+    librsvg2-dev \
+    libfontconfig1-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Copy package files first (better Docker caching)
 COPY package.json package-lock.json* ./
 
-# Install all dependencies (including devDependencies for the build step)
-RUN npm install
+# Install dependencies — force linux platform for native modules
+RUN npm ci --force
 
 # Copy the rest of the source code
 COPY . .
@@ -21,8 +31,17 @@ RUN npm run build
 # --- Stage 2: Production image ---
 FROM node:20-slim AS runner
 
-# Install FFmpeg in the production image too
-RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+# Install FFmpeg + runtime libs needed by @napi-rs/canvas
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    libcairo2 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libjpeg62-turbo \
+    libgif7 \
+    librsvg2-2 \
+    libfontconfig1 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
