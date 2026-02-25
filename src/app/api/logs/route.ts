@@ -4,17 +4,29 @@ import path from 'path';
 
 const LOG_DIR = path.join(process.cwd(), 'logs');
 
+function isPathSafe(resolvedPath: string, allowedDir: string): boolean {
+  const normalized = path.resolve(resolvedPath);
+  return normalized.startsWith(path.resolve(allowedDir));
+}
+
 export async function GET() {
   try {
     if (!fs.existsSync(LOG_DIR)) {
       return NextResponse.json({ logs: [], message: 'No logs yet' });
     }
     const files = fs.readdirSync(LOG_DIR)
-      .filter((f) => f.endsWith('.log'))
-      .map((f) => ({
-        name: f,
-        mtime: fs.statSync(path.join(LOG_DIR, f)).mtime.getTime(),
-      }))
+      .filter((f) => f.endsWith('.log') && !f.includes('..') && !path.isAbsolute(f))
+      .map((f) => {
+        const fullPath = path.join(LOG_DIR, f);
+        // Validate path stays within LOG_DIR
+        if (!isPathSafe(fullPath, LOG_DIR)) return null;
+        try {
+          return { name: f, mtime: fs.statSync(fullPath).mtime.getTime() };
+        } catch {
+          return null;
+        }
+      })
+      .filter((f): f is { name: string; mtime: number } => f !== null)
       .sort((a, b) => b.mtime - a.mtime);
 
     const today = new Date().toISOString().slice(0, 10);
@@ -22,12 +34,18 @@ export async function GET() {
     const logPath = path.join(LOG_DIR, todayFile);
 
     let content = '';
-    if (fs.existsSync(logPath)) {
+
+    // Read today's log if it exists and path is safe
+    if (isPathSafe(logPath, LOG_DIR) && fs.existsSync(logPath)) {
       content = fs.readFileSync(logPath, 'utf-8');
     }
-    // Also append from any other recent files if today is empty
+
+    // Fall back to most recent log file if today is empty
     if (!content && files[0]) {
-      content = fs.readFileSync(path.join(LOG_DIR, files[0].name), 'utf-8');
+      const fallbackPath = path.join(LOG_DIR, files[0].name);
+      if (isPathSafe(fallbackPath, LOG_DIR)) {
+        content = fs.readFileSync(fallbackPath, 'utf-8');
+      }
     }
 
     const lines = content.trim().split('\n').filter(Boolean);
@@ -38,6 +56,6 @@ export async function GET() {
       files: files.map((f) => f.name),
     });
   } catch (e) {
-    return NextResponse.json({ logs: [], error: String(e) }, { status: 500 });
+    return NextResponse.json({ logs: [], error: 'Failed to read logs' }, { status: 500 });
   }
 }
