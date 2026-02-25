@@ -1315,10 +1315,15 @@ function checkInputValidation(config: Config): Finding[] {
       });
     }
 
-    // Check for rate limiting
+    // Check for rate limiting (skip if middleware.ts exists with rate limiting)
+    const middlewarePath = path.join(SRC_DIR, 'middleware.ts');
+    const hasMiddlewareRateLimit = fs.existsSync(middlewarePath) &&
+      /rateLimit|rate.limit|RATE_LIMITS|checkRateLimit/i.test(fs.readFileSync(middlewarePath, 'utf-8'));
+
     if (
       /generate|render|upload/i.test(relPath) &&
-      !/rateLimit|rate.limit|throttle|debounce/i.test(content)
+      !/rateLimit|rate.limit|throttle|debounce/i.test(content) &&
+      !hasMiddlewareRateLimit
     ) {
       findings.push({
         id: `IV-003-${path.basename(path.dirname(route))}`,
