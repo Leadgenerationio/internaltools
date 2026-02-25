@@ -213,6 +213,45 @@ scripts/
 └── fixtures/              # Auto-generated test video + audio (gitignored)
 ```
 
+## Security Agent
+
+A standalone TypeScript script (`scripts/security.ts`) that performs continuous security auditing of the codebase, configuration, and runtime environment.
+
+### Run
+```bash
+npm run security          # Continuous mode (every 30 minutes)
+npm run security:once     # Single scan, exit with code: 0=clean, 1=high, 2=critical
+```
+
+### What it checks (12 categories)
+1. **Blast Radius** — exec() usage, fs write/delete operations, env var access surface
+2. **Network Exposure** — open ports, wildcard binds, missing CORS, missing middleware
+3. **Browser Control** — dangerouslySetInnerHTML, eval(), CSP headers, localStorage usage
+4. **Local Disk Hygiene** — dir sizes, temp files, core dumps, world-readable dirs, orphaned ffmpeg
+5. **Plugin/Model Hygiene** — npm audit, outdated packages, known-risky deps, API key scope
+6. **Credential Storage** — .env permissions, gitignore coverage, hardcoded secrets, git history leaks
+7. **Reverse Proxy Config** — security headers (X-Frame-Options, HSTS, etc.), poweredBy, HTTPS
+8. **Session Logs** — log size/age, secrets in logs, PII leaks, unsanitized metadata, unauthenticated log endpoints
+9. **Shell Injection** — exec() with template interpolation, user input in shell commands
+10. **Input Validation** — unvalidated JSON bodies, missing payload size limits, missing rate limiting
+11. **Path Traversal** — file ops without isPathSafe() boundary checks
+12. **Secrets in Git History** — env files in commits, API keys in diffs, large blobs
+
+### Config
+`scripts/security.config.json` — toggle individual checks, set thresholds, enable auto-remediation. All fields overridable via `SECURITY_*` env vars.
+
+### Output
+- Color-coded terminal output with severity tags: `CRITICAL`, `[HIGH]`, `[MEDIUM]`, `[LOW]`, `[INFO]`
+- JSON report at `security-report.json` (last 50 scans, gitignored)
+- Exit codes for CI integration
+
+### Files
+```
+scripts/
+├── security.ts            # Main security agent script
+└── security.config.json   # Config with defaults + thresholds
+```
+
 ## Prerequisites
 
 - Node.js 18+
