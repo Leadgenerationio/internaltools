@@ -330,7 +330,7 @@ function checkBlastRadius(config: Config): Finding[] {
       category: 'blast-radius',
       severity: 'info',
       title: 'Environment variables accessed by application',
-      detail: `App reads ${envKeys.size} env var(s): ${[...envKeys].join(', ')}`,
+      detail: `App reads ${envKeys.size} env var(s): ${Array.from(envKeys).join(', ')}`,
       remediation: 'Audit each env var. Ensure API keys have minimal required permissions. Use read-only API keys where possible.',
       autoFixable: false,
     });
@@ -1335,7 +1335,7 @@ function checkPathTraversal(config: Config): Finding[] {
   const routesWithFileOps = new Set(fileOps.map((m) => m.file));
   const routesWithPathSafe = new Set(hasPathSafe.map((m) => m.file));
 
-  for (const route of routesWithFileOps) {
+  routesWithFileOps.forEach((route) => {
     if (!routesWithPathSafe.has(route)) {
       findings.push({
         id: `PT-001-${route.replace(/\//g, '-')}`,
