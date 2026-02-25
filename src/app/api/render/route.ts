@@ -18,7 +18,19 @@ export const maxDuration = 300; // 5 min for batch renders
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    // Validate payload size
+    const rawBody = await request.text();
+    if (rawBody.length > 500_000) {
+      return NextResponse.json({ error: 'Request payload too large' }, { status: 413 });
+    }
+
+    let body: any;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+    }
+
     const { videos, overlays, music } = body as {
       videos: UploadedVideo[];
       overlays: TextOverlay[];
