@@ -75,3 +75,4 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **Dark themed UI**: gray-950 background, gray-800 cards, blue-500 accents, green-600 action buttons
 - **No branding in ads**: "Andro Media" = Meta's ad system, not a brand to put in generated copy
 - **Watchdog QA**: `npm run watchdog` — standalone script that continuously tests all endpoints, checks health, stress-tests, and auto-remediates (restart server, create dirs, clean old files). Config in `scripts/watchdog.config.json`
+- **Security Agent**: `npm run security` — continuous security audit (blast radius, network exposure, browser control, disk hygiene, plugin hygiene, credentials, reverse proxy, session logs, shell injection, input validation, path traversal, secrets in git history). Config in `scripts/security.config.json`. `npm run security:once` for single scan with CI-friendly exit codes.
