@@ -1,16 +1,31 @@
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import type { TextOverlay, MusicTrack } from './types';
 import { renderOverlayToPng, getOverlayHeight } from './overlay-renderer';
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+const ALLOWED_DIRS = [
+  path.join(process.cwd(), 'public'),
+  path.join(process.cwd(), 'logs'),
+];
+
+function isPathSafe(filePath: string): boolean {
+  const resolved = path.resolve(filePath);
+  return ALLOWED_DIRS.some((dir) => resolved.startsWith(path.resolve(dir)));
+}
 
 async function hasAudioStream(filePath: string): Promise<boolean> {
   try {
-    const cmd = `ffprobe -v quiet -select_streams a -show_entries stream=codec_type -of csv=p=0 "${filePath}"`;
-    const { stdout } = await execAsync(cmd);
+    const { stdout } = await execFileAsync('ffprobe', [
+      '-v', 'quiet',
+      '-select_streams', 'a',
+      '-show_entries', 'stream=codec_type',
+      '-of', 'csv=p=0',
+      filePath,
+    ]);
     return stdout.trim().length > 0;
   } catch {
     return false;
@@ -76,7 +91,6 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
     }
 
     // Build overlay filter chain
-    const overlayInputs = overlayPaths.map((p) => `-i "${p}"`).join(' ');
     const firstOverlayIndex = music && fs.existsSync(music.file) ? 2 : 1;
 
     const overlayFilterParts: string[] = [];
@@ -101,7 +115,19 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
         ? `[0:v]${scaleCrop}[base];` + overlayFilterParts.join(';')
         : `[0:v]${scaleCrop}[outv]`;
 
-    let cmd: string;
+    // Build FFmpeg args as an array (no shell interpolation)
+    const args: string[] = ['-y'];
+
+    // Input files
+    args.push('-i', inputVideoPath);
+
+    if (music && fs.existsSync(music.file)) {
+      args.push('-i', music.file);
+    }
+
+    for (const p of overlayPaths) {
+      args.push('-i', p);
+    }
 
     if (music && fs.existsSync(music.file)) {
       const musicVolume = music.volume ?? 1;
@@ -114,46 +140,34 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
         ? `[0:a][musicout]amix=inputs=2:duration=first:dropout_transition=2[outa]`
         : `[musicout]atrim=duration=${videoDuration},apad=whole_dur=${videoDuration}[outa]`;
 
-      cmd = [
-        `ffmpeg -y`,
-        `-i "${inputVideoPath}"`,
-        `-i "${music.file}"`,
-        overlayInputs,
-        `-filter_complex "`,
-        videoFilter + ';',
-        musicFilter + ';',
-        audioMixFilter + '"',
-        `-map "[outv]" -map "[outa]"`,
-        `-c:v libx264 -preset fast -crf 23`,
-        `-c:a aac -b:a 192k`,
-        `-movflags +faststart`,
-        `-t ${videoDuration}`,
-        `"${outputPath}"`,
-      ].join(' ');
+      const filterComplex = [videoFilter, musicFilter, audioMixFilter].join(';');
+
+      args.push('-filter_complex', filterComplex);
+      args.push('-map', '[outv]', '-map', '[outa]');
+      args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '23');
+      args.push('-c:a', 'aac', '-b:a', '192k');
+      args.push('-movflags', '+faststart');
+      args.push('-t', String(videoDuration));
     } else {
-      cmd = [
-        `ffmpeg -y`,
-        `-i "${inputVideoPath}"`,
-        overlayInputs,
-        `-filter_complex "${videoFilter}"`,
-        `-map "[outv]"`,
-        `-c:v libx264 -preset fast -crf 23`,
-        `-c:a copy`,
-        `-movflags +faststart`,
-        `"${outputPath}"`,
-      ].join(' ');
+      args.push('-filter_complex', videoFilter);
+      args.push('-map', '[outv]');
+      args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '23');
+      args.push('-c:a', 'copy');
+      args.push('-movflags', '+faststart');
     }
 
-    console.log('FFmpeg command:', cmd);
+    args.push(outputPath);
 
-    const { stdout, stderr } = await execAsync(cmd, { maxBuffer: 1024 * 1024 * 50 });
+    console.log('FFmpeg args:', args.join(' '));
+
+    const { stdout, stderr } = await execFileAsync('ffmpeg', args, { maxBuffer: 1024 * 1024 * 50 });
     console.log('FFmpeg stdout:', stdout);
     if (stderr) console.log('FFmpeg stderr:', stderr);
     return outputPath;
   } finally {
-    // Clean up temp overlay PNGs
+    // Clean up temp overlay PNGs — validate path is within allowed dirs
     try {
-      if (fs.existsSync(tempDir)) {
+      if (fs.existsSync(tempDir) && isPathSafe(tempDir)) {
         fs.rmSync(tempDir, { recursive: true });
       }
     } catch (e) {
@@ -190,4 +204,3 @@ export async function batchRender(
 
   return results;
 }
-
