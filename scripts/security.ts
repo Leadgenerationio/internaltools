@@ -1584,7 +1584,7 @@ function printFindings(findings: Finding[]): void {
         console.log(`    ${c.cyan}Fix: ${f.remediation.slice(0, 120)}${c.reset}`);
       }
     }
-  }
+  });
 }
 
 function printSummary(report: ScanReport): void {
