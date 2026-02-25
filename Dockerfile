@@ -49,10 +49,9 @@ WORKDIR /app
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/public ./public
 COPY --from=builder /app/next.config.js ./next.config.js
 
-# Create the directories the app needs for file storage
+# Create the public directory and subdirectories the app needs
 RUN mkdir -p public/uploads public/outputs public/music
 
 # Railway sets the PORT env var automatically
