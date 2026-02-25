@@ -1,0 +1,33 @@
+{
+  "baseUrl": "http://localhost:3000",
+  "intervalSeconds": 1800,
+  "port": 3000,
+  "autoRemediate": false,
+  "verbose": false,
+  "checks": {
+    "blastRadius": true,
+    "networkExposure": true,
+    "browserControlExposure": true,
+    "localDiskHygiene": true,
+    "pluginModelHygiene": true,
+    "credentialStorage": true,
+    "reverseProxyConfig": true,
+    "sessionLogs": true,
+    "shellInjection": true,
+    "dependencyAudit": true,
+    "filePermissions": true,
+    "inputValidation": true,
+    "rateLimiting": true,
+    "corsHeaders": true,
+    "pathTraversal": true,
+    "secretsInHistory": true
+  },
+  "thresholds": {
+    "maxLogFileSizeMb": 50,
+    "maxLogFileAgeDays": 14,
+    "maxUploadDirSizeMb": 2000,
+    "maxOutputDirSizeMb": 5000,
+    "maxOpenPorts": 5,
+    "maxEnvFilePermissions": "600"
+  }
+}
