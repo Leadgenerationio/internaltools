@@ -1196,9 +1196,11 @@ function checkSessionLogs(config: Config): Finding[] {
 function checkShellInjection(config: Config): Finding[] {
   const findings: Finding[] = [];
 
-  // Find all exec/execSync calls
-  const execCalls = grepDir(SRC_DIR, /\.(ts|tsx|js)$/, /\bexec(Sync)?\s*\(\s*[`'"]/);
-  const execAsyncCalls = grepDir(SRC_DIR, /\.(ts|tsx|js)$/, /execAsync\s*\(\s*[`'"]/);
+  // Find unsafe exec/execSync calls (NOT execFile/execFileSync which are safe)
+  const execCalls = grepDir(SRC_DIR, /\.(ts|tsx|js)$/, /\bexec(Sync)?\s*\(\s*[`'"]/)
+    .filter((m) => !/execFile/.test(m.text));
+  const execAsyncCalls = grepDir(SRC_DIR, /\.(ts|tsx|js)$/, /execAsync\s*\(\s*[`'"]/)
+    .filter((m) => !/execFileAsync/.test(m.text));
   const allExecCalls = [...execCalls, ...execAsyncCalls];
 
   // Check each for template literal interpolation (injection risk)
@@ -1271,8 +1273,10 @@ function checkInputValidation(config: Config): Finding[] {
     const content = fs.readFileSync(route, 'utf-8');
     const relPath = path.relative(PROJECT_ROOT, route);
 
-    // Check for request.json() without validation
-    if (/request\.json\(\)/.test(content)) {
+    // Check for request.json() without validation (request.text() with manual parse is considered validated)
+    const usesRequestJson = /request\.json\(\)/.test(content);
+    const usesRequestText = /request\.text\(\)/.test(content);
+    if (usesRequestJson && !usesRequestText) {
       // Does it validate the body?
       const hasValidation =
         /typeof\s+\w+\s*[!=]==?\s*['"]string['"]/.test(content) ||
