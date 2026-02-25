@@ -1306,13 +1306,17 @@ async function runRemediation(
         async () => {
           // Try to kill anything on the port first
           try {
-            const pid = execSync(`lsof -ti:${config.port}`, {
+            // Validate port is numeric to prevent injection
+            const safePort = String(Math.abs(Math.floor(Number(config.port))));
+            if (!/^\d{1,5}$/.test(safePort)) throw new Error('Invalid port number');
+            const pid = execFileSync('lsof', ['-ti:' + safePort], {
               encoding: 'utf-8',
             }).trim();
             if (pid) {
               for (const p of pid.split('\n')) {
-                if (p.trim()) {
-                  execSync(`kill ${p.trim()}`, { stdio: 'pipe' });
+                const trimmedPid = p.trim();
+                if (trimmedPid && /^\d+$/.test(trimmedPid)) {
+                  execFileSync('kill', [trimmedPid], { stdio: 'pipe' });
                 }
               }
               ctx.remediations.push(
