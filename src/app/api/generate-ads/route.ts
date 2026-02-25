@@ -135,7 +135,19 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const body = await request.json();
+    // Validate payload size (prevent oversized prompt injection attempts)
+    const rawBody = await request.text();
+    if (rawBody.length > 50_000) {
+      return NextResponse.json({ error: 'Request payload too large' }, { status: 413 });
+    }
+
+    let body: any;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+    }
+
     const { brief, regenerateStage } = body as {
       brief: AdBrief;
       regenerateStage?: FunnelStage;
