@@ -99,6 +99,16 @@ export default function Home() {
   const [isRestored, setIsRestored] = useState(false);
 
   useEffect(() => {
+    // Migrate old direct file URLs (/uploads/xxx) to API-served URLs (/api/files?path=xxx)
+    function migrateUrl(url: string | undefined): string | undefined {
+      if (!url) return url;
+      if (url.startsWith('/api/files')) return url; // already migrated
+      // Match /uploads/xxx, /outputs/xxx, /music/xxx
+      const match = url.match(/^\/(uploads|outputs|music)\//);
+      if (match) return `/api/files?path=${encodeURIComponent(url.slice(1))}`;
+      return url;
+    }
+
     try {
       const stored = localStorage.getItem('adMaker_state');
       if (stored) {
@@ -109,8 +119,16 @@ export default function Home() {
         if (s.overlayStyle) setOverlayStyle(s.overlayStyle);
         if (typeof s.staggerSeconds === 'number') setStaggerSeconds(s.staggerSeconds);
         if (s.renderQuality) setRenderQuality(s.renderQuality);
-        if (s.videos?.length) setVideos(s.videos);
-        if (s.music) setMusic(s.music);
+        if (s.videos?.length) {
+          setVideos(s.videos.map((v: any) => ({
+            ...v,
+            path: migrateUrl(v.path) ?? v.path,
+            thumbnail: migrateUrl(v.thumbnail) ?? v.thumbnail,
+          })));
+        }
+        if (s.music) {
+          setMusic({ ...s.music, file: migrateUrl(s.music.file) ?? s.music.file });
+        }
       }
     } catch { /* ignore corrupt data */ }
     setIsRestored(true);
