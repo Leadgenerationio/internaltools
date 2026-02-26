@@ -74,6 +74,13 @@ export default function UserMenu() {
                 >
                   Settings & Users
                 </Link>
+                <Link
+                  href="/billing"
+                  onClick={() => setOpen(false)}
+                  className="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
+                >
+                  Billing & Plans
+                </Link>
               </>
             )}
             <button

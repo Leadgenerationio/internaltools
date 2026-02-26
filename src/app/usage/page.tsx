@@ -49,6 +49,9 @@ export default function UsagePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [days, setDays] = useState(30);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (status === 'unauthenticated') {
@@ -64,15 +67,18 @@ export default function UsagePage() {
     }
 
     setLoading(true);
-    fetch(`/api/usage?days=${days}`)
+    fetch(`/api/usage?days=${days}&page=${page}&pageSize=50`)
       .then((r) => r.json())
       .then((d) => {
         if (d.error) setError(d.error);
-        else setData(d);
+        else {
+          setData(d);
+          if (d.pagination) setTotalPages(d.pagination.totalPages);
+        }
       })
       .catch(() => setError('Failed to load usage data'))
       .finally(() => setLoading(false));
-  }, [status, session, router, days]);
+  }, [status, session, router, days, page]);
 
   if (status === 'loading' || loading) {
     return (
@@ -143,21 +149,49 @@ export default function UsagePage() {
           </div>
         </div>
 
-        {/* Time Period Selector */}
-        <div className="flex gap-2">
-          {[7, 30, 90].map((d) => (
-            <button
-              key={d}
-              onClick={() => setDays(d)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                days === d
-                  ? 'bg-blue-600 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-800'
-              }`}
-            >
-              {d}d
-            </button>
-          ))}
+        {/* Time Period Selector + Export */}
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div className="flex gap-2">
+            {[7, 30, 90].map((d) => (
+              <button
+                key={d}
+                onClick={() => { setDays(d); setPage(1); }}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                  days === d
+                    ? 'bg-blue-600 text-white'
+                    : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                }`}
+              >
+                {d}d
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={async () => {
+              setExporting(true);
+              try {
+                const res = await fetch(`/api/usage/export?days=${days}`);
+                if (!res.ok) throw new Error('Export failed');
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `usage-${days}d.csv`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              } catch (err) {
+                console.error('Export error:', err);
+              } finally {
+                setExporting(false);
+              }
+            }}
+            disabled={exporting}
+            className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-300 text-sm rounded-lg border border-gray-700 transition-colors"
+          >
+            {exporting ? 'Exporting...' : 'Export CSV'}
+          </button>
         </div>
 
         {/* By User */}
@@ -227,6 +261,29 @@ export default function UsagePage() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between mt-3">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed text-gray-300 text-sm rounded-lg border border-gray-700 transition-colors"
+              >
+                Previous
+              </button>
+              <span className="text-sm text-gray-400">
+                Page {page} of {totalPages}
+              </span>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed text-gray-300 text-sm rounded-lg border border-gray-700 transition-colors"
+              >
+                Next
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </main>

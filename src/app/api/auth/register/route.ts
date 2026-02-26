@@ -4,7 +4,29 @@ import { prisma } from '@/lib/prisma';
 
 export async function POST(request: NextRequest) {
   try {
-    const { companyName, email, password, name } = await request.json();
+    // Validate payload size
+    const rawBody = await request.text();
+    if (rawBody.length > 10_000) {
+      return NextResponse.json({ error: 'Request payload too large' }, { status: 413 });
+    }
+
+    let body: any;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+    }
+
+    const { companyName, email, password, name } = body;
+
+    // Input validation
+    if (typeof companyName !== 'string' || typeof email !== 'string' || typeof password !== 'string') {
+      return NextResponse.json({ error: 'Invalid input types' }, { status: 400 });
+    }
+
+    if (companyName.length > 200 || email.length > 254 || password.length > 128) {
+      return NextResponse.json({ error: 'Input exceeds maximum length' }, { status: 400 });
+    }
 
     if (!companyName || !email || !password) {
       return NextResponse.json(

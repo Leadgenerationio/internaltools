@@ -14,6 +14,12 @@
 import fs from 'fs';
 import path from 'path';
 
+const PUBLIC_DIR = path.resolve(path.join(process.cwd(), 'public'));
+
+function isPathSafe(filePath: string): boolean {
+  return path.resolve(filePath).startsWith(PUBLIC_DIR);
+}
+
 const S3_BUCKET = process.env.S3_BUCKET;
 const S3_ENDPOINT = process.env.S3_ENDPOINT;
 const S3_ACCESS_KEY_ID = process.env.S3_ACCESS_KEY_ID;
@@ -63,8 +69,10 @@ export async function uploadFile(localPath: string, storagePath: string): Promis
     ContentType: getContentType(storagePath),
   }));
 
-  // Clean up local file after upload
-  try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+  // Clean up local file after upload (only if within public directory)
+  if (isPathSafe(localPath)) {
+    try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+  }
 
   return S3_PUBLIC_URL
     ? `${S3_PUBLIC_URL}/${storagePath}`
@@ -98,6 +106,7 @@ export async function fileExists(storagePath: string): Promise<boolean> {
 export async function deleteFile(storagePath: string): Promise<void> {
   if (!isCloudStorage) {
     const fullPath = path.join(process.cwd(), 'public', storagePath);
+    if (!isPathSafe(fullPath)) return; // Reject paths outside public directory
     try { fs.unlinkSync(fullPath); } catch { /* ignore */ }
     return;
   }

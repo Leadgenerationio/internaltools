@@ -76,7 +76,7 @@ const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'http://localhost:3000';
 
 // ─── Public Routes (no auth required) ───────────────────────────────────────
 
-const PUBLIC_ROUTES = ['/login', '/register', '/api/auth'];
+const PUBLIC_ROUTES = ['/login', '/register', '/welcome', '/reset-password', '/api/auth', '/api/health'];
 
 function isPublicRoute(pathname: string): boolean {
   return PUBLIC_ROUTES.some((route) => pathname.startsWith(route));
@@ -96,8 +96,8 @@ export async function middleware(request: NextRequest) {
   if (!isPublicRoute(pathname)) {
     const token = await getToken({ req: request });
     if (!token) {
-      const loginUrl = new URL('/login', request.url);
-      return NextResponse.redirect(loginUrl);
+      const welcomeUrl = new URL('/welcome', request.url);
+      return NextResponse.redirect(welcomeUrl);
     }
   }
 

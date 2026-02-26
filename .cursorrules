@@ -54,6 +54,8 @@ src/
     page.tsx                      — Main 4-step flow controller (requires auth)
     layout.tsx                    — Root layout
     globals.css                   — Tailwind + custom styles
+    welcome/
+      page.tsx                    — Public landing page (hero, features, pricing)
     login/
       page.tsx                    — NextAuth login page
     register/
@@ -62,6 +64,8 @@ src/
       page.tsx                    — Usage dashboard (monthly spend, per-service)
     settings/
       page.tsx                    — Company settings (users, invitations, limits)
+    admin/
+      page.tsx                    — Super admin dashboard (all companies, revenue, API calls)
     api/
       auth/[...nextauth]/
         route.ts                  — NextAuth v5 credentials provider
@@ -69,6 +73,7 @@ src/
       company/users/route.ts      — List, add, remove users
       company/invite/route.ts     — Send email invitations
       usage/route.ts              — Get monthly spend + breakdown
+      admin/route.ts              — Super admin platform-wide stats + company breakdown
       generate-ads/route.ts       — Claude API for ad copy (+ cost tracking)
       generate-video/route.ts     — Google Veo API (+ cost tracking)
       upload/route.ts             — Video upload (validates size, extracts metadata)

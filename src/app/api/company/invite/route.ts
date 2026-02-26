@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { getAuthContext } from '@/lib/api-auth';
 import { prisma } from '@/lib/prisma';
+import { checkUserLimit } from '@/lib/check-limits';
 
 export async function POST(request: NextRequest) {
   const authResult = await getAuthContext();
@@ -12,8 +13,34 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 });
   }
 
+  // Plan user limit check
+  const limitError = await checkUserLimit(companyId);
+  if (limitError) return limitError;
+
   try {
-    const { email, name, password, userRole } = await request.json();
+    // Validate payload size
+    const rawBody = await request.text();
+    if (rawBody.length > 10_000) {
+      return NextResponse.json({ error: 'Request payload too large' }, { status: 413 });
+    }
+
+    let body: any;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+    }
+
+    const { email, name, password, userRole } = body;
+
+    // Input validation
+    if (typeof email !== 'string' || typeof password !== 'string') {
+      return NextResponse.json({ error: 'Invalid input types' }, { status: 400 });
+    }
+
+    if (email.length > 254 || password.length > 128) {
+      return NextResponse.json({ error: 'Input exceeds maximum length' }, { status: 400 });
+    }
 
     if (!email || !password) {
       return NextResponse.json(

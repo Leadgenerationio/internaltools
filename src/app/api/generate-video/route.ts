@@ -8,6 +8,7 @@ import { getVideoInfo } from '@/lib/get-video-info';
 import { logger } from '@/lib/logger';
 import { getAuthContext } from '@/lib/api-auth';
 import { trackVeoUsage } from '@/lib/track-usage';
+import { checkGenerationLimit } from '@/lib/check-limits';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
@@ -24,6 +25,10 @@ export async function POST(request: NextRequest) {
   const authResult = await getAuthContext();
   if (authResult.error) return authResult.error;
   const { userId, companyId } = authResult.auth;
+
+  // Plan limit check
+  const limitError = await checkGenerationLimit(companyId);
+  if (limitError) return limitError;
 
   logger.info('Generate-video API called');
 

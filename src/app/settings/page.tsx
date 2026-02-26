@@ -22,6 +22,11 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // Company settings
+  const [budgetPounds, setBudgetPounds] = useState('');
+  const [savingBudget, setSavingBudget] = useState(false);
+  const [budgetMessage, setBudgetMessage] = useState('');
+
   // Invite form
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -59,6 +64,16 @@ export default function SettingsPage() {
     }
 
     loadUsers();
+
+    // Load company settings
+    fetch('/api/company/settings')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.company?.monthlyBudgetCents) {
+          setBudgetPounds((d.company.monthlyBudgetCents / 100).toFixed(2));
+        }
+      })
+      .catch(() => {});
   }, [status, session, router, loadUsers]);
 
   const handleInvite = async (e: React.FormEvent) => {
@@ -147,6 +162,65 @@ export default function SettingsPage() {
           <h2 className="text-lg font-semibold text-white mb-2">{session?.user?.companyName}</h2>
           <p className="text-sm text-gray-400">{users.length} team member{users.length !== 1 ? 's' : ''}</p>
         </div>
+
+        {/* Monthly Budget */}
+        {isOwner && (
+          <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
+            <h2 className="text-lg font-semibold text-white mb-3">Monthly Budget</h2>
+            <p className="text-sm text-gray-400 mb-3">
+              Set a spending cap for API calls. Generation requests will be blocked once the budget is reached.
+            </p>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setSavingBudget(true);
+                setBudgetMessage('');
+                try {
+                  const pence = budgetPounds ? Math.round(parseFloat(budgetPounds) * 100) : null;
+                  const res = await fetch('/api/company/settings', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ monthlyBudgetCents: pence }),
+                  });
+                  const data = await res.json();
+                  if (!res.ok) setBudgetMessage(data.error || 'Failed to save');
+                  else setBudgetMessage('Budget saved');
+                } catch {
+                  setBudgetMessage('Failed to save');
+                } finally {
+                  setSavingBudget(false);
+                  setTimeout(() => setBudgetMessage(''), 5000);
+                }
+              }}
+              className="flex items-center gap-3"
+            >
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">&pound;</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={budgetPounds}
+                  onChange={(e) => setBudgetPounds(e.target.value)}
+                  placeholder="No limit"
+                  className="w-40 bg-gray-900 border border-gray-700 rounded-lg pl-7 pr-3 py-2 text-white text-sm placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={savingBudget}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded-lg font-medium transition-colors"
+              >
+                {savingBudget ? 'Saving...' : 'Save'}
+              </button>
+              {budgetMessage && (
+                <span className={`text-sm ${budgetMessage.includes('Failed') ? 'text-red-400' : 'text-green-400'}`}>
+                  {budgetMessage}
+                </span>
+              )}
+            </form>
+          </div>
+        )}
 
         {error && <p className="text-red-400 text-sm">{error}</p>}
 

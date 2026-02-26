@@ -12,10 +12,15 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 ┌────────────────────────────────────────────────────────────────────────┐
 │                          Browser (React)                                │
 │                                                                         │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
-│  │ /login   │  │ /register│  │ /usage   │  │ /settings│              │
-│  │ /company │  │ /users   │  │ (sidebar)│  │ (sidebar)│              │
-│  └──────────┘  └──────────┘  └──────────┘  └──────────┘              │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐│
+│  │ /welcome │  │ /login   │  │ /register│  │ /usage   │  │ /settings││
+│  │ (landing)│  │ /company │  │ /users   │  │ (sidebar)│  │ (sidebar)││
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘│
+│  ┌──────────┐                                                         │
+│  │ /admin   │ ← Super admin only (SUPER_ADMIN_EMAILS env var)        │
+│  │ (platform│                                                         │
+│  │  health) │                                                         │
+│  └──────────┘                                                         │
 │                                                                         │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
 │  │ 1. Brief │→│ 2. Review │→│ 3. Media  │→│ 4. Render │              │
@@ -58,10 +63,11 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 ## Authentication & Multi-Tenancy
 
 ### User Registration & Login
+- `/welcome` — Public marketing landing page (hero, features grid, pricing tiers, footer)
 - `/register` — New user registration with email, password, company name
 - `/login` — Email + password authentication via NextAuth credentials provider
 - JWT sessions stored in httpOnly cookies
-- Middleware verifies JWT on every request, redirects unauthenticated users to `/login`
+- Middleware verifies JWT on every request, redirects unauthenticated users to `/login` (or `/welcome` for first-time visitors)
 
 ### Multi-Tenant Structure
 - **Company** record owns users, projects, API usage
@@ -129,6 +135,8 @@ src/
 │   ├── page.tsx                      # Main 4-step flow controller (requires auth)
 │   ├── layout.tsx                    # Root layout + metadata
 │   ├── globals.css                   # Tailwind + custom styles
+│   ├── welcome/
+│   │   └── page.tsx                  # Public landing page (hero, features, pricing)
 │   ├── login/
 │   │   └── page.tsx                  # NextAuth login page (email + password)
 │   ├── register/
@@ -137,6 +145,8 @@ src/
 │   │   └── page.tsx                  # Dashboard: monthly spend, per-service breakdown
 │   ├── settings/
 │   │   └── page.tsx                  # Company settings: users, invitations, spend limits
+│   ├── admin/
+│   │   └── page.tsx                  # Super admin dashboard: all companies, revenue, API calls
 │   └── api/
 │       ├── auth/[...nextauth]/
 │       │   └── route.ts              # NextAuth v5 credentials provider
@@ -144,6 +154,7 @@ src/
 │       ├── company/users/route.ts    # List, add, remove users from company
 │       ├── company/invite/route.ts   # Send email invitations to join company
 │       ├── usage/route.ts            # Get monthly spend + service breakdown
+│       ├── admin/route.ts            # Super admin: platform-wide stats + company breakdown
 │       ├── generate-ads/route.ts     # Claude API → ad copy (+ cost tracking)
 │       ├── generate-video/route.ts   # Google Veo → AI videos (+ cost tracking)
 │       ├── render/route.ts           # FFmpeg batch render + cloud storage (+ cost tracking)
@@ -234,6 +245,7 @@ FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to 
 | `/api/company/users` | GET/POST | List/add users to company | default | required (OWNER/ADMIN) |
 | `/api/company/invite` | POST | Send email invitation to join company | default | required (OWNER/ADMIN) |
 | `/api/usage` | GET | Get monthly spend + service breakdown | default | required |
+| `/api/admin` | GET | Platform-wide stats, company breakdown, recent calls | default | required (super admin) |
 | `/api/generate-ads` | POST | Generate ad copy via Claude | 60s | required + cost tracking |
 | `/api/generate-video` | POST | Generate video via Veo | 300s | required + cost tracking |
 | `/api/upload` | POST | Upload video files (max 500MB each) | 60s | required |
@@ -256,6 +268,9 @@ NEXTAUTH_URL=http://localhost:3000  # Required — Base URL for NextAuth callbac
 # API Keys
 ANTHROPIC_API_KEY=sk-ant-...     # Required for ad copy generation
 GOOGLE_API_KEY=...               # Optional for Veo video generation
+
+# Super Admin
+SUPER_ADMIN_EMAILS=admin@example.com  # Comma-separated list of super admin emails
 
 # Cloud Storage (optional)
 S3_BUCKET=your-bucket            # Optional — enable cloud storage (S3/R2)

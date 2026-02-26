@@ -69,4 +69,4 @@ ENV HOSTNAME=0.0.0.0
 EXPOSE 3000
 
 # Run Prisma migrations then start the app
-CMD ["sh", "-c", "npx prisma migrate deploy 2>/dev/null; node server.js"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node server.js"]

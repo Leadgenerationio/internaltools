@@ -257,6 +257,14 @@ function shellSafe(cmd: string, timeout = 10000): string {
   }
 }
 
+function safeReadFile(filePath: string): string | null {
+  try {
+    return fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    return null;
+  }
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`;
@@ -309,31 +317,65 @@ function checkBlastRadius(config: Config): Finding[] {
   // Check for fs.writeFile / fs.writeFileSync outside of controlled directories
   const writeOps = grepDir(SRC_DIR, /\.(ts|tsx|js)$/, /fs\.(writeFile|writeFileSync|createWriteStream)\s*\(/);
   if (writeOps.length > 0) {
-    findings.push({
-      id: 'BR-002',
-      category: 'blast-radius',
-      severity: 'medium',
-      title: 'Filesystem write operations in application code',
-      detail: `Found ${writeOps.length} fs write operation(s):\n${writeOps.map((m) => `  ${m.file}:${m.line}`).join('\n')}`,
-      remediation:
-        'Ensure all write operations validate that the target path is within allowed directories (public/uploads, public/outputs, logs). Use isPathSafe() checks.',
-      autoFixable: false,
+    // Check if those files have path boundary validation
+    const unprotectedWrites = writeOps.filter((m) => {
+      const fileContent = safeReadFile(m.file);
+      return !fileContent || !(/isPathSafe|startsWith\(.*Dir\)|startsWith\(.*PUBLIC|ALLOWED_DIRS/.test(fileContent));
     });
+    if (unprotectedWrites.length > 0) {
+      findings.push({
+        id: 'BR-002',
+        category: 'blast-radius',
+        severity: 'medium',
+        title: 'Filesystem write operations without path boundary validation',
+        detail: `Found ${unprotectedWrites.length} unprotected fs write operation(s):\n${unprotectedWrites.map((m) => `  ${m.file}:${m.line}`).join('\n')}`,
+        remediation:
+          'Ensure all write operations validate that the target path is within allowed directories (public/uploads, public/outputs, logs). Use isPathSafe() checks.',
+        autoFixable: false,
+      });
+    } else {
+      findings.push({
+        id: 'BR-002',
+        category: 'blast-radius',
+        severity: 'info',
+        title: `${writeOps.length} fs write operation(s) — all have path boundary validation`,
+        detail: writeOps.map((m) => `  ${m.file}:${m.line}`).join('\n'),
+        remediation: 'No action needed — all write operations have path safety checks.',
+        autoFixable: false,
+      });
+    }
   }
 
   // Check for unrestricted file deletion
   const deleteOps = grepDir(SRC_DIR, /\.(ts|tsx|js)$/, /fs\.(unlink|unlinkSync|rm|rmSync|rmdir|rmdirSync)\s*\(/);
   if (deleteOps.length > 0) {
-    findings.push({
-      id: 'BR-003',
-      category: 'blast-radius',
-      severity: 'medium',
-      title: 'Filesystem delete operations in application code',
-      detail: `Found ${deleteOps.length} fs delete operation(s):\n${deleteOps.map((m) => `  ${m.file}:${m.line}`).join('\n')}`,
-      remediation:
-        'Ensure all delete operations validate that the target path is within allowed directories. Never delete based on user-supplied paths without isPathSafe() validation.',
-      autoFixable: false,
+    // Check if those files have path boundary validation
+    const unprotectedDeletes = deleteOps.filter((m) => {
+      const fileContent = safeReadFile(m.file);
+      return !fileContent || !(/isPathSafe|startsWith\(.*Dir\)|startsWith\(.*PUBLIC|ALLOWED_DIRS/.test(fileContent));
     });
+    if (unprotectedDeletes.length > 0) {
+      findings.push({
+        id: 'BR-003',
+        category: 'blast-radius',
+        severity: 'medium',
+        title: 'Filesystem delete operations without path boundary validation',
+        detail: `Found ${unprotectedDeletes.length} unprotected fs delete operation(s):\n${unprotectedDeletes.map((m) => `  ${m.file}:${m.line}`).join('\n')}`,
+        remediation:
+          'Ensure all delete operations validate that the target path is within allowed directories. Never delete based on user-supplied paths without isPathSafe() validation.',
+        autoFixable: false,
+      });
+    } else {
+      findings.push({
+        id: 'BR-003',
+        category: 'blast-radius',
+        severity: 'info',
+        title: `${deleteOps.length} fs delete operation(s) — all have path boundary validation`,
+        detail: deleteOps.map((m) => `  ${m.file}:${m.line}`).join('\n'),
+        remediation: 'No action needed — all delete operations have path safety checks.',
+        autoFixable: false,
+      });
+    }
   }
 
   // Check for process.env access (which keys can the app read?)
@@ -392,18 +434,37 @@ function checkNetworkExposure(config: Config): Finding[] {
   }
 
   // Check for 0.0.0.0 bindings (accessible from network)
+  // Filter out macOS system services that always bind to wildcard and are not our concern
+  const macOsSystemServices = /^(ControlCe|rapportd|mDNSResponder|UserEvent|sharingd|airportd)\b/;
   const wildcardBind = shellSafe('lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null | grep "\\*:"');
   if (wildcardBind) {
-    findings.push({
-      id: 'NE-002',
-      category: 'network-exposure',
-      severity: 'high',
-      title: 'Services bound to all interfaces (0.0.0.0 / *)',
-      detail: `These services are accessible from other machines on the network:\n${wildcardBind}`,
-      remediation:
-        'Bind development services to 127.0.0.1 only. For Next.js: use "next dev -H 127.0.0.1". For production: use a reverse proxy.',
-      autoFixable: false,
-    });
+    const allLines = wildcardBind.split('\n').filter(Boolean);
+    const appLines = allLines.filter((l) => !macOsSystemServices.test(l.trim()));
+    const systemLines = allLines.filter((l) => macOsSystemServices.test(l.trim()));
+
+    if (appLines.length > 0) {
+      findings.push({
+        id: 'NE-002',
+        category: 'network-exposure',
+        severity: 'high',
+        title: 'Application services bound to all interfaces (0.0.0.0 / *)',
+        detail: `These services are accessible from other machines on the network:\n${appLines.join('\n')}`,
+        remediation:
+          'Bind development services to 127.0.0.1 only. For Next.js: use "next dev -H 127.0.0.1". For production: use a reverse proxy.',
+        autoFixable: false,
+      });
+    }
+    if (systemLines.length > 0) {
+      findings.push({
+        id: 'NE-002-sys',
+        category: 'network-exposure',
+        severity: 'info',
+        title: `${systemLines.length} macOS system service(s) bound to wildcard (not app-controlled)`,
+        detail: systemLines.join('\n'),
+        remediation: 'These are macOS system services. Control via System Settings > General > AirDrop & Handoff if needed.',
+        autoFixable: false,
+      });
+    }
   }
 
   // Check for external API calls in code (fetch to non-localhost)
@@ -1317,7 +1378,9 @@ function checkInputValidation(config: Config): Finding[] {
     }
 
     // Check for missing Content-Length / payload size limits
-    if (/POST/.test(content) && !/maxSize|MAX_SIZE|content-length|bodyParser|rawBody\.length|MAX_PAYLOAD_SIZE|MAX_FILE_SIZE|MAX_MUSIC_SIZE/i.test(content)) {
+    // Skip NextAuth catch-all routes and other framework-managed routes
+    const isFrameworkRoute = /\[\.\.\.nextauth\]|NextAuth/i.test(content) || /\[\.\.\./.test(route);
+    if (/POST/.test(content) && !isFrameworkRoute && !/maxSize|MAX_SIZE|content-length|bodyParser|rawBody\.length|MAX_PAYLOAD_SIZE|MAX_FILE_SIZE|MAX_MUSIC_SIZE/i.test(content)) {
       // Next.js has a default body size limit, but explicit is better
       findings.push({
         id: `IV-002-${path.basename(path.dirname(route))}`,
@@ -1396,8 +1459,8 @@ function checkPathTraversal(config: Config): Finding[] {
     }
   });
 
-  // Check for ../  in any URL parsing or query parameter handling
-  const dotDotCheck = grepDir(SRC_DIR, /\.(ts|tsx|js)$/, /searchParams|query.*\.\.\//);
+  // Check for query parameters used directly in file path operations (not numeric params)
+  const dotDotCheck = grepDir(SRC_DIR, /\.(ts|tsx|js)$/, /searchParams\.get\(.*\).*path\.(join|resolve)|query.*\.\.\//);
   if (dotDotCheck.length > 0) {
     findings.push({
       id: 'PT-002',

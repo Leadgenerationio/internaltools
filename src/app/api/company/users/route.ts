@@ -41,9 +41,22 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    const { userId } = await request.json();
+    // Validate payload size
+    const rawBody = await request.text();
+    if (rawBody.length > 5_000) {
+      return NextResponse.json({ error: 'Request payload too large' }, { status: 413 });
+    }
 
-    if (!userId) {
+    let body: any;
+    try {
+      body = JSON.parse(rawBody);
+    } catch {
+      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+    }
+
+    const { userId } = body;
+
+    if (!userId || typeof userId !== 'string') {
       return NextResponse.json({ error: 'User ID is required' }, { status: 400 });
     }
 

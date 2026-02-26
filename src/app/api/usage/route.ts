@@ -13,6 +13,8 @@ export async function GET(request: NextRequest) {
 
   const url = new URL(request.url);
   const days = Math.min(Number(url.searchParams.get('days')) || 30, 365);
+  const page = Math.max(Number(url.searchParams.get('page')) || 1, 1);
+  const pageSize = Math.min(Math.max(Number(url.searchParams.get('pageSize')) || 50, 10), 200);
 
   const since = new Date();
   since.setDate(since.getDate() - days);
@@ -65,11 +67,12 @@ export async function GET(request: NextRequest) {
         since
       ),
 
-      // Recent API calls
+      // Recent API calls (paginated)
       prisma.apiUsageLog.findMany({
         where: { companyId },
         orderBy: { createdAt: 'desc' },
-        take: 50,
+        take: pageSize,
+        skip: (page - 1) * pageSize,
         include: { user: { select: { name: true, email: true } } },
       }),
 
@@ -97,6 +100,9 @@ export async function GET(request: NextRequest) {
       service: row.service,
       totalCents: Number(row.total),
     }));
+
+    // Total call count for pagination
+    const totalCalls = await prisma.apiUsageLog.count({ where: { companyId } });
 
     return NextResponse.json({
       monthlyTotalCents: monthlyTotal._sum.costCents || 0,
@@ -127,6 +133,12 @@ export async function GET(request: NextRequest) {
         createdAt: c.createdAt,
         userName: c.user.name || c.user.email,
       })),
+      pagination: {
+        page,
+        pageSize,
+        totalCalls,
+        totalPages: Math.ceil(totalCalls / pageSize),
+      },
     });
   } catch (error: any) {
     console.error('Usage API error:', error);
