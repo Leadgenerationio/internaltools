@@ -368,13 +368,19 @@ export default function WelcomePage() {
                 Register
               </Link>
               <Link
-                href="#"
+                href="/help"
+                className="hover:text-gray-300 transition-colors"
+              >
+                Help
+              </Link>
+              <Link
+                href="/privacy"
                 className="hover:text-gray-300 transition-colors"
               >
                 Privacy
               </Link>
               <Link
-                href="#"
+                href="/terms"
                 className="hover:text-gray-300 transition-colors"
               >
                 Terms

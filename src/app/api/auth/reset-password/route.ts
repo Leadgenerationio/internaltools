@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import { sendPasswordResetEmail } from '@/lib/email';
 
 /**
  * POST /api/auth/reset-password
  * Step 1: Request a password reset (body: { email })
- *   - Generates a token, stores it, returns success (always, to prevent email enumeration)
- *   - In production, would send email. For now, logs the token.
+ *   - Generates a token, stores it in memory, sends reset email via Resend
+ *   - Always returns success to prevent email enumeration
  *
  * PUT /api/auth/reset-password
  * Step 2: Reset the password (body: { token, newPassword })
@@ -55,11 +56,20 @@ export async function POST(request: NextRequest) {
 
       resetTokens.set(token, { email: email.toLowerCase(), expiresAt });
 
-      // TODO: Send email with reset link in production
-      // For now, log the token (only in development)
+      const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
+      const resetUrl = `${baseUrl}/reset-password?token=${token}`;
+
+      // Send password reset email (fire-and-forget)
+      sendPasswordResetEmail(
+        email.toLowerCase(),
+        user.name || '',
+        resetUrl
+      ).catch(() => {}); // Silently swallow — sendPasswordResetEmail already logs errors
+
+      // Also log in development for debugging
       if (process.env.NODE_ENV !== 'production') {
         console.log(`[Password Reset] Token for ${email}: ${token}`);
-        console.log(`[Password Reset] Reset URL: ${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/reset-password?token=${token}`);
+        console.log(`[Password Reset] Reset URL: ${resetUrl}`);
       }
     }
 

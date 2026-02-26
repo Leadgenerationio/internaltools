@@ -10,6 +10,8 @@ import VideoPreview from '@/components/VideoPreview';
 import StyleConfigurator from '@/components/StyleConfigurator';
 import LogViewer from '@/components/LogViewer';
 import UserMenu from '@/components/UserMenu';
+import Tooltip from '@/components/Tooltip';
+import InfoBanner from '@/components/InfoBanner';
 import type {
   AdBrief,
   GeneratedAd,
@@ -514,6 +516,9 @@ export default function Home() {
         {/* Step 2: Review */}
         {step === 'review' && (
           <div className="space-y-6">
+            <InfoBanner variant="info" dismissible>
+              AI generated 10 ad variations across 3 funnel stages. Review each one, edit the text, then approve the ones you want to use.
+            </InfoBanner>
             <FunnelReview
               ads={ads}
               onUpdateAds={setAds}
@@ -547,6 +552,9 @@ export default function Home() {
         {step === 'media' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 space-y-6">
+              <InfoBanner variant="info" dismissible>
+                Upload your background videos or generate AI videos. Each approved ad will be rendered onto every video you add.
+              </InfoBanner>
               <VideoSourceTabs
                 videos={videos}
                 onUpload={setVideos}
@@ -602,7 +610,10 @@ export default function Home() {
 
               {/* Render quality */}
               <div className="p-4 bg-gray-800 rounded-xl border border-gray-700">
-                <h3 className="text-sm font-semibold text-gray-300 mb-2">Render Quality</h3>
+                <h3 className="text-sm font-semibold text-gray-300 mb-2 flex items-center">
+                  Render Quality
+                  <Tooltip text="Draft = fast preview (lower quality). Final = production quality (slower but sharper)." />
+                </h3>
                 <div className="flex gap-2">
                   <button
                     onClick={() => setRenderQuality('draft')}
@@ -690,6 +701,9 @@ export default function Home() {
         {/* Step 4: Render results */}
         {step === 'render' && (
           <div className="space-y-6">
+            <InfoBanner variant="tip" dismissible>
+              Each video costs 1 token to render. You have {approvedAds.length} ad{approvedAds.length !== 1 ? 's' : ''} x {videos.length} video{videos.length !== 1 ? 's' : ''} = {approvedAds.length * videos.length} token{approvedAds.length * videos.length !== 1 ? 's' : ''} total.
+            </InfoBanner>
             {/* Progress bar */}
             {rendering && renderTotal > 0 && (
               <div className="space-y-2">

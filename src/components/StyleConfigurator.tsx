@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import type { TextStyle } from '@/lib/types';
 import { OVERLAY_PRESETS } from '@/lib/types';
+import Tooltip from '@/components/Tooltip';
 
 interface SavedTemplate {
   name: string;
@@ -69,7 +70,10 @@ export default function StyleConfigurator({ style, onChange, staggerSeconds, onS
 
   return (
     <div className="p-4 bg-gray-800 rounded-xl border border-gray-700 space-y-4">
-      <h3 className="text-sm font-semibold text-gray-300">Overlay Style</h3>
+      <h3 className="text-sm font-semibold text-gray-300 flex items-center">
+        Overlay Style
+        <Tooltip text="Choose how text overlays appear on your videos. Try different presets or customise colours and fonts to match your brand." />
+      </h3>
 
       {/* Preset picker */}
       <div>

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { AdBrief } from '@/lib/types';
+import Tooltip from '@/components/Tooltip';
 
 interface Props {
   onGenerate: (brief: AdBrief) => void;
@@ -31,7 +32,10 @@ export default function AdBriefForm({ onGenerate, generating, initialBrief }: Pr
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-white">Ad Brief</h2>
+        <h2 className="text-xl font-bold text-white flex items-center">
+          Ad Brief
+          <Tooltip text="Describe your product and audience. The more detail you give, the better your ads will be." />
+        </h2>
         <p className="text-sm text-gray-400 mt-1">
           Give as much detail as possible — the better the brief, the better the ad copy.
         </p>
@@ -42,6 +46,7 @@ export default function AdBriefForm({ onGenerate, generating, initialBrief }: Pr
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-1.5">
             What are you advertising? <span className="text-red-400">*</span>
+            <Tooltip text="What are you selling? Be specific — e.g. 'organic dog treats for anxious puppies' not just 'pet food'." />
           </label>
           <input
             type="text"
@@ -56,6 +61,7 @@ export default function AdBriefForm({ onGenerate, generating, initialBrief }: Pr
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-1.5">
             Target audience
+            <Tooltip text="Who is your ideal customer? Age, interests, pain points — the more specific, the better the targeting in your ad copy." />
           </label>
           <input
             type="text"
@@ -70,6 +76,7 @@ export default function AdBriefForm({ onGenerate, generating, initialBrief }: Pr
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-1.5">
             Key selling points
+            <Tooltip text="What makes your product special? Unique benefits, guarantees, results — these become the hooks in your ads." />
           </label>
           <textarea
             value={brief.sellingPoints}
@@ -84,6 +91,7 @@ export default function AdBriefForm({ onGenerate, generating, initialBrief }: Pr
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-1.5">
             Examples of ads that have worked well
+            <Tooltip text="Paste examples of ads you like — style, tone, hooks that work in your niche. This helps the AI match your preferred approach." />
           </label>
           <textarea
             value={brief.adExamples}
@@ -98,6 +106,7 @@ export default function AdBriefForm({ onGenerate, generating, initialBrief }: Pr
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-1.5">
             Tone & style
+            <Tooltip text="How should the ad feel? Urgent? Friendly? Professional? Funny? This sets the voice for all generated ad copy." />
           </label>
           <input
             type="text"
@@ -112,6 +121,7 @@ export default function AdBriefForm({ onGenerate, generating, initialBrief }: Pr
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-1.5">
             Anything else
+            <Tooltip text="Anything else — brand voice, things to avoid, specific CTAs, offers, or deadlines you want mentioned." />
           </label>
           <textarea
             value={brief.additionalContext}

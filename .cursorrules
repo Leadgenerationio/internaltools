@@ -10,6 +10,8 @@ After any new feature or major change, always update `ARCHITECTURE.md`, `CLAUDE.
 - **Authentication**: NextAuth v5 (credentials provider, JWT sessions, httpOnly cookies)
 - **Multi-tenancy**: Companies with users (roles: OWNER/ADMIN/MEMBER), data filtered by company_id
 - **Token billing**: Token-based billing system (`src/lib/token-pricing.ts`, `src/lib/token-balance.ts`). 1 token = 1 finished video, 10 tokens = 1 Veo AI video (bundled with renders). Ad copy generation is FREE.
+- **Payments**: Stripe Checkout + Customer Portal for subscriptions and token top-ups (`src/lib/stripe.ts`, `/api/billing/create-checkout`, `/api/billing/manage`, `/api/webhooks/stripe`)
+- **Email**: Resend SDK for transactional emails — welcome, reset, upgrade, budget alerts, receipts (`src/lib/email.ts`)
 - **Internal cost tracking**: Per-call API usage logging in cents (`src/lib/track-usage.ts`, `src/lib/pricing.ts`) — admin-only, hidden from users
 - **Video processing**: FFmpeg via shell exec (server-side), @napi-rs/canvas for emoji-supporting overlay PNGs
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) for generating TOFU/MOFU/BOFU ad text
@@ -71,7 +73,15 @@ src/
     admin/
       page.tsx                    — Super admin dashboard (all companies, revenue, API calls)
     billing/
-      page.tsx                    — Plan comparison, upgrade (Stripe placeholder)
+      page.tsx                    — Plan comparison, Stripe Checkout, token top-ups
+      layout.tsx                  — Metadata + Suspense boundary
+    privacy/
+      page.tsx                    — Privacy Policy (GDPR-compliant)
+    terms/
+      page.tsx                    — Terms of Service
+    help/
+      page.tsx                    — Help center (~28 FAQ articles, search)
+      layout.tsx                  — Metadata
     reset-password/
       page.tsx                    — Forgot password / reset password flow
     error.tsx                      — App-level error boundary
@@ -86,6 +96,9 @@ src/
       company/logo/route.ts       — Logo upload (POST)
       billing/balance/route.ts    — Token balance, monthly usage, plan info (GET)
       billing/transactions/route.ts — Paginated token transaction history (GET)
+      billing/create-checkout/route.ts — Stripe Checkout for subs + top-ups (POST)
+      billing/manage/route.ts     — Stripe Customer Portal session (POST)
+      webhooks/stripe/route.ts    — Stripe webhook handler (POST)
       usage/route.ts              — Token usage dashboard (balance, by-reason, by-user, transactions)
       usage/export/route.ts       — CSV export of token transactions
       admin/route.ts              — Super admin platform-wide stats + company breakdown
@@ -115,6 +128,8 @@ src/
     LogViewer.tsx                 — Expandable debug log viewer
     UsageWidget.tsx               — Real-time cost display during operations
     SettingsPanel.tsx             — Company users, invitations, limits
+    Tooltip.tsx                   — Reusable info tooltip (hover/tap, CSS-only)
+    InfoBanner.tsx                — Info/tip/warning banners with icons
   lib/
     types.ts                      — TypeScript interfaces, presets, funnel types
     ffmpeg-renderer.ts            — Core FFmpeg rendering (overlay, audio, trim, quality)
@@ -130,7 +145,9 @@ src/
     track-usage.ts                — Per-call API usage logging (internal costs)
     plans.ts                      — Plan tiers with token allocations + top-up pricing
     check-limits.ts               — Token balance + user limit enforcement
-    spend-alerts.ts               — Token-based budget alerts (50%/80%/100%)
+    spend-alerts.ts               — Token-based budget alerts (50%/80%/100%) + email
+    stripe.ts                     — Stripe client singleton (lazy-loaded)
+    email.ts                      — Resend transactional emails (5 templates)
     api-auth.ts                   — Auth middleware helpers for API routes
     file-url.ts                   — Helper to convert paths to /api/files URLs
   middleware.ts                   — JWT verification, rate limiting, security headers
@@ -174,4 +191,5 @@ prisma/
 - `S3_BUCKET`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` for cloud storage (optional)
 - `SUPER_ADMIN_EMAILS` for super admin access (optional, comma-separated)
 - `SPEND_ALERT_WEBHOOK_URL` for budget alert webhooks (optional)
-- Email/SMTP credentials for company invitations (optional but recommended)
+- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO` for payments
+- `RESEND_API_KEY`, `EMAIL_FROM` for transactional emails (Resend)

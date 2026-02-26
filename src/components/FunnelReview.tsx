@@ -3,6 +3,7 @@
 import { useState, useCallback } from 'react';
 import type { GeneratedAd, FunnelStage } from '@/lib/types';
 import { FUNNEL_LABELS, FUNNEL_DESCRIPTIONS } from '@/lib/types';
+import Tooltip from '@/components/Tooltip';
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -43,6 +44,12 @@ interface Props {
 }
 
 const TABS: FunnelStage[] = ['tofu', 'mofu', 'bofu'];
+
+const FUNNEL_TOOLTIPS: Record<FunnelStage, string> = {
+  tofu: 'Top of Funnel — Awareness ads that hook attention and spark curiosity. These are for people who have never heard of you.',
+  mofu: 'Middle of Funnel — Trust-building ads with social proof and education. These warm up people who are already interested.',
+  bofu: 'Bottom of Funnel — Conversion ads with urgency, offers, and strong CTAs. These close the deal.',
+};
 
 export default function FunnelReview({ ads, onUpdateAds, onRegenerateAd, regeneratingId }: Props) {
   const [activeTab, setActiveTab] = useState<FunnelStage>('tofu');
@@ -107,7 +114,10 @@ export default function FunnelReview({ ads, onUpdateAds, onRegenerateAd, regener
                   : 'text-gray-400 hover:text-gray-300'
               }`}
             >
-              <span>{FUNNEL_LABELS[stage]}</span>
+              <span className="inline-flex items-center">
+                {FUNNEL_LABELS[stage]}
+                <Tooltip text={FUNNEL_TOOLTIPS[stage]} position="bottom" />
+              </span>
               <span className="ml-2 text-xs opacity-60">
                 {approved}/{count}
               </span>

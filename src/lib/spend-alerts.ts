@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import { formatTokens } from '@/lib/token-pricing';
+import { sendTokenBudgetAlert } from '@/lib/email';
 
 /**
  * In-memory set tracking which threshold alerts have already been sent
@@ -69,22 +70,52 @@ export async function checkTokenAlerts(companyId: string): Promise<void> {
 
       const webhookUrl = process.env.SPEND_ALERT_WEBHOOK_URL;
 
-      if (!webhookUrl) {
+      if (webhookUrl) {
+        try {
+          await fetch(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+        } catch (webhookErr) {
+          console.error(`[Token Alert] Failed to send webhook for ${threshold}%:`, webhookErr);
+        }
+      } else {
         console.log(`[Token Alert] ${message}`, payload);
-        continue;
       }
 
-      try {
-        await fetch(webhookUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-      } catch (webhookErr) {
-        console.error(`[Token Alert] Failed to send webhook for ${threshold}%:`, webhookErr);
-      }
+      // Send email alert to company owner(s) — fire-and-forget
+      sendAlertEmails(companyId, companyName, usagePct, used, budget).catch(() => {});
     }
   } catch (err) {
     console.error('[Token Alert] Failed to check alerts:', err);
+  }
+}
+
+/**
+ * Send budget alert emails to all OWNER users of the company.
+ * Fire-and-forget — errors are logged, never thrown.
+ */
+async function sendAlertEmails(
+  companyId: string,
+  companyName: string,
+  percentUsed: number,
+  tokensUsed: number,
+  budget: number
+): Promise<void> {
+  try {
+    const owners = await prisma.user.findMany({
+      where: { companyId, role: 'OWNER' },
+      select: { email: true },
+    });
+
+    // Send to all owners in parallel; partial failure is fine
+    await Promise.allSettled(
+      owners.map((owner: { email: string }) =>
+        sendTokenBudgetAlert(owner.email, companyName, percentUsed, tokensUsed, budget)
+      )
+    );
+  } catch (err) {
+    console.error('[Token Alert] Failed to send alert emails:', err);
   }
 }

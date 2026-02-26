@@ -1,0 +1,21 @@
+{
+  "name": "Ad Maker",
+  "short_name": "AdMaker",
+  "description": "Create scroll-stopping video ads in minutes",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#030712",
+  "background_color": "#030712",
+  "icons": [
+    {
+      "src": "/icon",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/apple-icon",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

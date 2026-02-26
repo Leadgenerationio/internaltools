@@ -80,7 +80,7 @@ const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'http://localhost:3000';
 
 // ─── Public Routes (no auth required) ───────────────────────────────────────
 
-const PUBLIC_ROUTES = ['/login', '/register', '/welcome', '/reset-password', '/api/auth', '/api/health'];
+const PUBLIC_ROUTES = ['/login', '/register', '/welcome', '/reset-password', '/api/auth', '/api/health', '/api/webhooks', '/privacy', '/terms', '/help'];
 
 function isPublicRoute(pathname: string): boolean {
   return PUBLIC_ROUTES.some((route) => pathname.startsWith(route));

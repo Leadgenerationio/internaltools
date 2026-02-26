@@ -4,6 +4,7 @@ import { useState } from 'react';
 import VideoUploader from '@/components/VideoUploader';
 import VideoGenerator from '@/components/VideoGenerator';
 import type { UploadedVideo } from '@/lib/types';
+import Tooltip from '@/components/Tooltip';
 
 type Tab = 'upload' | 'generate';
 
@@ -33,7 +34,10 @@ export default function VideoSourceTabs({
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-white">1. Upload Videos</h2>
+      <h2 className="text-lg font-semibold text-white flex items-center">
+        1. Background Videos
+        <Tooltip text="These are the background videos your ad text will appear over. Upload your own or generate one with AI." />
+      </h2>
 
       {/* Tab bar */}
       <div className="flex border-b border-gray-700">

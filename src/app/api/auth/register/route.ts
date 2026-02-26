@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
+import { sendWelcomeEmail } from '@/lib/email';
+import { getPlanLimits } from '@/lib/plans';
 
 export async function POST(request: NextRequest) {
   try {
@@ -67,12 +69,15 @@ export async function POST(request: NextRequest) {
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // Create company and owner user in a transaction
+    const plan = getPlanLimits('FREE');
+
+    // Create company and owner user in a transaction, crediting initial tokens
     const result = await prisma.$transaction(async (tx: any) => {
       const company = await tx.company.create({
         data: {
           name: companyName,
           slug,
+          tokenBalance: plan.monthlyTokens,
         },
       });
 
@@ -86,8 +91,28 @@ export async function POST(request: NextRequest) {
         },
       });
 
+      // Record the initial token grant
+      await tx.tokenTransaction.create({
+        data: {
+          companyId: company.id,
+          userId: user.id,
+          type: 'CREDIT',
+          amount: plan.monthlyTokens,
+          balanceAfter: plan.monthlyTokens,
+          reason: 'PLAN_ALLOCATION',
+          description: `Welcome! ${plan.monthlyTokens} free tokens for your Free plan.`,
+        },
+      });
+
       return { company, user };
     });
+
+    // Fire-and-forget: send welcome email (don't block the response)
+    sendWelcomeEmail(
+      result.user.email,
+      name || '',
+      plan.monthlyTokens
+    ).catch(() => {}); // Silently swallow — sendWelcomeEmail already logs errors
 
     return NextResponse.json({
       success: true,

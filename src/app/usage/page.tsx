@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import UserMenu from '@/components/UserMenu';
+import Tooltip from '@/components/Tooltip';
 
 interface UsageData {
   tokenBalance: number;
@@ -153,7 +154,10 @@ export default function UsagePage() {
           </div>
 
           <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
-            <p className="text-sm text-gray-400">Monthly Budget</p>
+            <p className="text-sm text-gray-400 flex items-center">
+              Monthly Budget
+              <Tooltip text="Optional spending cap set by your team owner. Operations will be blocked when this limit is reached." />
+            </p>
             {budgetPct !== null ? (
               <>
                 <p className="text-3xl font-bold text-white mt-1">{data.monthlyTokenBudget!.toLocaleString()}</p>
@@ -220,7 +224,10 @@ export default function UsagePage() {
         {/* Usage By Reason */}
         {data.byReason.length > 0 && (
           <div>
-            <h2 className="text-lg font-semibold text-white mb-3">Usage By Type</h2>
+            <h2 className="text-lg font-semibold text-white mb-3 flex items-center">
+              Usage By Type
+              <Tooltip text="Breakdown of how your tokens were spent this month — video renders, AI generation, and other operations." />
+            </h2>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {data.byReason.map((r) => (
                 <div key={r.reason} className="bg-gray-800 rounded-xl p-4 border border-gray-700">

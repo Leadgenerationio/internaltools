@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState, useEffect } from 'react';
 import type { UploadedVideo } from '@/lib/types';
+import Tooltip from '@/components/Tooltip';
 
 const log = async (level: string, message: string, meta?: object) => {
   try {
@@ -160,7 +161,10 @@ export default function VideoUploader({ videos, onUpload, uploading, setUploadin
             <p className="text-gray-400">
               Drag & drop videos here, or <span className="text-blue-400 underline">browse</span>
             </p>
-            <p className="text-gray-500 text-sm mt-1">MP4, MOV, WebM supported. Max 500MB per file. Upload multiple for batch.</p>
+            <p className="text-gray-500 text-sm mt-1 inline-flex items-center flex-wrap justify-center gap-0">
+              Upload 9:16 vertical videos (1080x1920). MP4, MOV, or WebM. Max 500MB each.
+              <Tooltip text="For best results, upload vertical (portrait) videos at 1080x1920 resolution. Other sizes will be auto-cropped to fit the 9:16 ad format." position="bottom" />
+            </p>
           </>
         )}
       </label>

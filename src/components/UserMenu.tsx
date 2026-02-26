@@ -90,6 +90,13 @@ export default function UserMenu() {
                 </Link>
               </>
             )}
+            <Link
+              href="/help"
+              onClick={() => setOpen(false)}
+              className="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
+            >
+              Help & Support
+            </Link>
             <button
               onClick={() => signOut({ callbackUrl: '/login' })}
               className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-gray-700"

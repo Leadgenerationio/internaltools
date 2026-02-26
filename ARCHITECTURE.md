@@ -60,6 +60,8 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 | AI copy generation | Anthropic SDK (Claude Sonnet) | TOFU/MOFU/BOFU ad scripts |
 | AI video generation | Google Veo 3.1 | Optional AI background videos |
 | Token billing | Prisma transactions | Atomic token deduction/credit, append-only ledger, budget alerts |
+| Payments | Stripe (Checkout + Customer Portal) | Subscriptions, one-time token top-ups, webhook handling |
+| Email | Resend SDK | Transactional emails (welcome, reset, budget alerts, receipts) |
 | Cost tracking | Prisma + Winston | Internal per-call API cost logging (admin-only) |
 | Logging | Winston + daily-rotate-file | Server-side structured logs |
 | IDs | uuid v4 | Unique file and entity IDs |
@@ -98,6 +100,22 @@ Users are billed in tokens, not raw API costs. This abstracts away internal cost
   - `src/lib/plans.ts` — Plan tiers with token allocations and top-up pricing
   - `src/lib/check-limits.ts` — Token balance checks before operations
   - `src/lib/spend-alerts.ts` — Token-based budget alerts (50%/80%/100% thresholds)
+  - `src/lib/stripe.ts` — Stripe client singleton (lazy-loaded)
+  - `src/lib/email.ts` — Resend transactional emails (welcome, reset, upgrade, budget alerts, receipts)
+
+### Stripe Payments
+- **Subscriptions**: Stripe Checkout for STARTER/PRO plan upgrades via `/api/billing/create-checkout`
+- **Token top-ups**: One-time payments for token packages (Small/Medium/Large) via same route
+- **Customer Portal**: Manage subscription (change plan, cancel) via `/api/billing/manage`
+- **Webhooks**: `/api/webhooks/stripe` handles checkout.session.completed, invoice.payment_succeeded, customer.subscription.updated/deleted
+- **Stripe Customer**: Created/linked on first checkout, stored as `stripeCustomerId` on Company
+- **Env vars**: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO`
+
+### Transactional Email (Resend)
+- Fire-and-forget emails via Resend SDK (`src/lib/email.ts`)
+- Templates: welcome, password reset, plan upgrade, token budget alert, payment receipt
+- Dark-themed HTML email templates matching the app UI
+- **Env vars**: `RESEND_API_KEY`, `EMAIL_FROM`
 
 ## App Flow
 
@@ -161,9 +179,22 @@ src/
 │   ├── admin/
 │   │   └── page.tsx                  # Super admin dashboard: all companies, revenue, API calls
 │   ├── billing/
-│   │   └── page.tsx                  # Plan comparison, current plan, upgrade (Stripe placeholder)
+│   │   ├── page.tsx                  # Plan comparison, Stripe Checkout, token top-ups
+│   │   └── layout.tsx                # Metadata + Suspense boundary
+│   ├── privacy/
+│   │   └── page.tsx                  # Privacy Policy (GDPR-compliant, 12 sections)
+│   ├── terms/
+│   │   └── page.tsx                  # Terms of Service (15 sections)
+│   ├── help/
+│   │   ├── page.tsx                  # Help center (~28 FAQ articles, search, accordions)
+│   │   └── layout.tsx                # Metadata
 │   ├── reset-password/
 │   │   └── page.tsx                  # Forgot password / reset password flow
+│   ├── icon.tsx                       # Dynamic SVG favicon
+│   ├── apple-icon.tsx                 # Apple touch icon (180x180)
+│   ├── opengraph-image.tsx            # OG image (1200x630)
+│   ├── robots.ts                      # robots.txt generation
+│   ├── sitemap.ts                     # sitemap.xml generation
 │   ├── error.tsx                      # App-level error boundary
 │   └── api/
 │       ├── auth/[...nextauth]/
@@ -176,6 +207,9 @@ src/
 │       ├── company/logo/route.ts     # Logo upload (POST)
 │       ├── billing/balance/route.ts  # Token balance, monthly usage, plan info (GET)
 │       ├── billing/transactions/route.ts # Paginated token transaction history (GET)
+│       ├── billing/create-checkout/route.ts # Stripe Checkout for subscriptions + top-ups (POST)
+│       ├── billing/manage/route.ts  # Stripe Customer Portal session (POST)
+│       ├── webhooks/stripe/route.ts # Stripe webhook handler (POST)
 │       ├── usage/route.ts            # Token usage dashboard (balance, by-reason, by-user, transactions)
 │       ├── usage/export/route.ts     # CSV export of token transactions
 │       ├── admin/route.ts            # Super admin: platform-wide stats + company breakdown
@@ -204,7 +238,9 @@ src/
 │   ├── TextOverlayEditor.tsx         # Manual overlay editor
 │   ├── LogViewer.tsx                 # Debug log viewer
 │   ├── UsageWidget.tsx               # Real-time cost display during operations
-│   └── SettingsPanel.tsx             # Company users, invitations, spend limits
+│   ├── SettingsPanel.tsx             # Company users, invitations, spend limits
+│   ├── Tooltip.tsx                   # Reusable info tooltip (hover/tap, CSS-only)
+│   └── InfoBanner.tsx                # Info/tip/warning banners with icons
 ├── middleware.ts                     # Auth verification, JWT validation, rate limiting
 ├── lib/
 │   ├── types.ts                      # All TypeScript interfaces + constants
@@ -221,7 +257,9 @@ src/
 │   ├── track-usage.ts                # Per-call API usage logging (internal costs)
 │   ├── plans.ts                      # Plan tiers with token allocations + top-up pricing
 │   ├── check-limits.ts               # Token balance + user limit enforcement
-│   ├── spend-alerts.ts               # Token-based budget alerts (50%/80%/100%)
+│   ├── spend-alerts.ts               # Token-based budget alerts (50%/80%/100%) + email
+│   ├── stripe.ts                     # Stripe client singleton (lazy-loaded)
+│   ├── email.ts                      # Resend transactional emails (5 templates)
 │   ├── api-auth.ts                   # Auth middleware helpers for API routes
 │   └── file-url.ts                   # Helper: converts paths to /api/files URLs
 ├── prisma/
@@ -284,6 +322,9 @@ FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to 
 | `/api/company/logo` | POST | Upload company logo (PNG/JPEG/SVG/WebP, 2MB max) | default | required (OWNER/ADMIN) |
 | `/api/billing/balance` | GET | Token balance, monthly usage, plan info | default | required |
 | `/api/billing/transactions` | GET | Paginated token transaction history | default | required (OWNER/ADMIN) |
+| `/api/billing/create-checkout` | POST | Create Stripe Checkout session (subscription or top-up) | default | required |
+| `/api/billing/manage` | POST | Create Stripe Customer Portal session | default | required |
+| `/api/webhooks/stripe` | POST | Stripe webhook (checkout, invoice, subscription events) | default | public (verified by Stripe signature) |
 | `/api/usage` | GET | Token usage dashboard (balance, by-reason, by-user, transactions) | default | required (OWNER/ADMIN) |
 | `/api/usage/export` | GET | Export token transactions as CSV | default | required (OWNER/ADMIN) |
 | `/api/admin` | GET | Platform-wide stats, company breakdown, recent calls | default | required (super admin) |
@@ -332,12 +373,15 @@ S3_ACCESS_KEY_ID=...             # Required with S3_BUCKET
 S3_SECRET_ACCESS_KEY=...         # Required with S3_BUCKET
 S3_PUBLIC_URL=https://...        # Optional — public URL prefix for S3 files
 
-# Email (for invitations)
-EMAIL_FROM=noreply@example.com   # Required for company invitations
-SMTP_HOST=smtp.example.com       # Required for email invitations
-SMTP_PORT=587                    # Required for email invitations
-SMTP_USER=...                    # Required for email invitations
-SMTP_PASS=...                    # Required for email invitations
+# Stripe (payments)
+STRIPE_SECRET_KEY=sk_...         # Required for Stripe Checkout + Customer Portal
+STRIPE_WEBHOOK_SECRET=whsec_... # Required for Stripe webhook signature verification
+STRIPE_PRICE_STARTER=price_...   # Stripe Price ID for Starter plan subscription
+STRIPE_PRICE_PRO=price_...       # Stripe Price ID for Pro plan subscription
+
+# Email (Resend)
+RESEND_API_KEY=re_...            # Required for transactional emails (welcome, reset, alerts)
+EMAIL_FROM=noreply@example.com   # Sender address for all transactional emails
 ```
 
 ## Security
@@ -486,7 +530,7 @@ Plan tiers (FREE/STARTER/PRO/ENTERPRISE) defined in `src/lib/plans.ts`:
 - **Storage limits**: Max storage per company (enforced at upload)
 - **Token budget alerts**: Webhook notifications at 50%, 80%, and 100% of monthly token budget via `src/lib/spend-alerts.ts`
 - Monthly token budget can be configured by OWNER in Settings page
-- Plan upgrade/downgrade via Billing page (Stripe integration placeholder)
+- Plan upgrade/downgrade via Billing page (Stripe Checkout + Customer Portal)
 
 ### Token Flow
 1. User initiates operation (render, Veo generation)
@@ -506,8 +550,13 @@ Plan tiers (FREE/STARTER/PRO/ENTERPRISE) defined in `src/lib/plans.ts`:
 - **Mobile-responsive**: Scrollable step nav, responsive padding, adapted grid layouts
 - **CSV export**: Download usage data as CSV from the usage page
 - **Pagination**: Usage logs and projects list support paginated navigation
-- **Password reset**: Forgot password flow with token-based reset
+- **Password reset**: Forgot password flow with token-based reset (+ email via Resend)
 - **Company logo**: Upload company logo from settings page
+- **Tooltips**: Inline info tooltips (Tooltip.tsx) on all form fields, billing concepts, and usage metrics
+- **Info banners**: Contextual tip/warning banners (InfoBanner.tsx) at each wizard step
+- **Help center**: `/help` page with ~28 searchable FAQ articles in accordions
+- **Legal pages**: `/privacy` (GDPR-compliant) and `/terms` server-rendered pages
+- **SEO**: Dynamic favicon, OG images, robots.txt, sitemap.xml, PWA manifest, per-page metadata
 
 ## Deployment
 

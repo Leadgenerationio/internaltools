@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from 'react';
 import type { MusicTrack } from '@/lib/types';
+import Tooltip from '@/components/Tooltip';
 
 interface Props {
   music: MusicTrack | null;
@@ -48,7 +49,10 @@ export default function MusicSelector({ music, onChange }: Props) {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-white">3. Background Music</h2>
+      <h2 className="text-lg font-semibold text-white flex items-center">
+        3. Background Music
+        <Tooltip text="Optional. Music will play under all rendered videos. You can adjust volume and fade settings after uploading." />
+      </h2>
 
       {music ? (
         <div className="p-4 bg-gray-800 rounded-xl border border-gray-700 space-y-3">

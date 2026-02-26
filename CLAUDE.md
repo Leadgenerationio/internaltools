@@ -88,10 +88,14 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **Plan enforcement**: Plan tiers (FREE 40tok/STARTER 500tok £29/PRO 2500tok £99/ENTERPRISE custom) in `src/lib/plans.ts`. Token balance checked in `src/lib/check-limits.ts` before render and Veo operations. User limits checked on invite.
 - **Token budget alerts**: Webhook notifications at 50%/80%/100% of monthly token budget via `src/lib/spend-alerts.ts`
 - **Projects**: CRUD API at `/api/projects`, list page at `/projects`, ads save at `/api/projects/[id]/ads`
-- **Billing**: Token balance + plan comparison at `/billing`, token transaction history at `/usage`, monthly token budget editable in settings. Stripe placeholder for upgrades and top-ups.
-- **Password reset**: Token-based reset flow at `/api/auth/reset-password` + `/reset-password` page
+- **Billing & Stripe**: Token balance + plan comparison at `/billing`, token transaction history at `/usage`, monthly token budget editable in settings. Stripe Checkout for subscriptions (`/api/billing/create-checkout`) and one-time token top-ups. Stripe Customer Portal for subscription management (`/api/billing/manage`). Webhook at `/api/webhooks/stripe` handles checkout completion, invoice renewals, subscription changes/cancellations. Stripe client singleton at `src/lib/stripe.ts`. Company model stores `stripeCustomerId` + `stripeSubscriptionId`.
+- **Transactional email**: Resend SDK via `src/lib/email.ts` — welcome, password reset, plan upgrade, budget alert, payment receipt emails. Fire-and-forget, dark-themed HTML.
+- **Password reset**: Token-based reset flow at `/api/auth/reset-password` + `/reset-password` page (sends email via Resend)
 - **CSV export**: Token transaction data downloadable as CSV from `/api/usage/export`
 - **Company logo**: Upload at `/api/company/logo`, displayed in settings
+- **Help & Legal**: `/help` page (~28 FAQ articles, search, accordions), `/privacy` (GDPR-compliant), `/terms` (15 sections). All public routes.
+- **Tooltips & banners**: `Tooltip.tsx` (reusable info icon with hover text), `InfoBanner.tsx` (info/tip/warning banners). Added throughout the app for beginner-friendly UX.
+- **SEO**: Dynamic favicon (`icon.tsx`), OG images (`opengraph-image.tsx`), `robots.ts`, `sitemap.ts`, `manifest.json`, per-page metadata via layout files.
 - **Deployment**: Railway with Docker, `output: 'standalone'` in next.config.js, Railway Volume at `/app/data` for persistent storage, `docker-entrypoint.sh` for startup (symlinks + migrate + serve)
 - **Watchdog QA**: `npm run watchdog` — standalone script that continuously tests all endpoints, checks health, stress-tests, and auto-remediates (restart server, create dirs, clean old files). Config in `scripts/watchdog.config.json`
 - **Security Agent**: `npm run security` — continuous security audit (blast radius, network exposure, browser control, disk hygiene, plugin hygiene, credentials, reverse proxy, session logs, shell injection, input validation, path traversal, secrets in git history). Config in `scripts/security.config.json`. `npm run security:once` for single scan with CI-friendly exit codes.

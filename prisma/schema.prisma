@@ -19,6 +19,10 @@ model Company {
   plan               Plan @default(FREE)
   monthlyBudgetCents Int? // Internal admin field — actual API cost cap (hidden from users)
 
+  // Stripe integration
+  stripeCustomerId     String? @unique // Stripe Customer ID
+  stripeSubscriptionId String? @unique // Active Stripe Subscription ID
+
   // Token system
   tokenBalance       Int  @default(0)  // Current available tokens
   monthlyTokenBudget Int?              // Optional: monthly token usage cap
