@@ -28,7 +28,7 @@ COPY . .
 # Ensure public dir exists (contents are in .dockerignore)
 RUN mkdir -p public/uploads public/outputs public/music
 
-# Build the Next.js app
+# Build the Next.js app (standalone output)
 RUN npm run build
 
 # --- Stage 2: Production image ---
@@ -48,11 +48,9 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy built app and dependencies from builder
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/next.config.js ./next.config.js
+# Copy the standalone build (includes node_modules it needs)
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 
 # Create the public directory and subdirectories the app needs
 RUN mkdir -p public/uploads public/outputs public/music
@@ -60,7 +58,9 @@ RUN mkdir -p public/uploads public/outputs public/music
 # Railway sets the PORT env var automatically
 ENV PORT=3000
 ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
 
 EXPOSE 3000
 
-CMD ["npm", "start"]
+# Standalone mode uses server.js instead of next start
+CMD ["node", "server.js"]
