@@ -52,6 +52,8 @@ WORKDIR /app
 # Copy the standalone build (includes node_modules it needs)
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+# Copy public directory — required for Next.js standalone to serve static files
+COPY --from=builder /app/public ./public
 
 # Copy Prisma schema + config + generated client for migrations
 COPY --from=builder /app/prisma ./prisma
