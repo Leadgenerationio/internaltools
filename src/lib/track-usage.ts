@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma';
-import { calculateAnthropicCostCents, calculateVeoCostCents } from '@/lib/pricing';
+import { calculateAnthropicCostPence, calculateVeoCostPence } from '@/lib/pricing';
 
 /**
  * Track Anthropic Claude API usage. Fire-and-forget — never throws.
@@ -17,7 +17,7 @@ export async function trackAnthropicUsage(params: {
   errorMessage?: string;
 }): Promise<number> {
   try {
-    const costCents = calculateAnthropicCostCents(
+    const costCents = calculateAnthropicCostPence(
       params.model,
       params.inputTokens,
       params.outputTokens
@@ -63,7 +63,7 @@ export async function trackVeoUsage(params: {
   errorMessage?: string;
 }): Promise<number> {
   try {
-    const costCents = calculateVeoCostCents(params.model, params.videoCount);
+    const costCents = calculateVeoCostPence(params.model, params.videoCount);
 
     await prisma.apiUsageLog.create({
       data: {

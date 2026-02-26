@@ -5,6 +5,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { v4 as uuidv4 } from 'uuid';
 import { unlink } from 'fs/promises';
+import { getAuthContext } from '@/lib/api-auth';
 
 const execFileAsync = promisify(execFile);
 
@@ -16,6 +17,9 @@ function isPathSafe(filePath: string, allowedDir: string): boolean {
 }
 
 export async function POST(request: NextRequest) {
+  const authResult = await getAuthContext();
+  if (authResult.error) return authResult.error;
+
   try {
     const body = await request.json();
     const files: { url: string; name: string }[] = body.files;

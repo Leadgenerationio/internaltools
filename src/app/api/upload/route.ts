@@ -7,6 +7,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { getVideoInfo } from '@/lib/get-video-info';
 import { logger } from '@/lib/logger';
+import { getAuthContext } from '@/lib/api-auth';
 
 const execFileAsync = promisify(execFile);
 
@@ -16,6 +17,9 @@ const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
 
 export async function POST(request: NextRequest) {
+  const authResult = await getAuthContext();
+  if (authResult.error) return authResult.error;
+
   logger.info('Upload API called', { contentType: request.headers.get('content-type') });
   try {
     if (!existsSync(UPLOAD_DIR)) {

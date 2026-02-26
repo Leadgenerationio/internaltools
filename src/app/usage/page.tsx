@@ -29,8 +29,8 @@ interface UsageData {
   }[];
 }
 
-function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
+function formatPence(pence: number): string {
+  return `£${(pence / 100).toFixed(2)}`;
 }
 
 function formatDate(iso: string): string {
@@ -115,12 +115,12 @@ export default function UsagePage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
             <p className="text-sm text-gray-400">This Month</p>
-            <p className="text-3xl font-bold text-white mt-1">{formatCents(data.monthlyTotalCents)}</p>
+            <p className="text-3xl font-bold text-white mt-1">{formatPence(data.monthlyTotalCents)}</p>
             {budgetPct !== null && (
               <div className="mt-3">
                 <div className="flex justify-between text-xs text-gray-400 mb-1">
                   <span>Budget</span>
-                  <span>{formatCents(data.monthlyBudgetCents!)}</span>
+                  <span>{formatPence(data.monthlyBudgetCents!)}</span>
                 </div>
                 <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
                   <div
@@ -134,12 +134,12 @@ export default function UsagePage() {
 
           <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
             <p className="text-sm text-gray-400">Claude (Ad Copy)</p>
-            <p className="text-2xl font-bold text-white mt-1">{formatCents(anthropicCents)}</p>
+            <p className="text-2xl font-bold text-white mt-1">{formatPence(anthropicCents)}</p>
           </div>
 
           <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
             <p className="text-sm text-gray-400">Veo (Video Gen)</p>
-            <p className="text-2xl font-bold text-white mt-1">{formatCents(veoCents)}</p>
+            <p className="text-2xl font-bold text-white mt-1">{formatPence(veoCents)}</p>
           </div>
         </div>
 
@@ -178,7 +178,7 @@ export default function UsagePage() {
                     <tr key={u.userId} className="border-b border-gray-700/50">
                       <td className="px-4 py-3 text-white">{u.name}</td>
                       <td className="px-4 py-3 text-gray-300 text-right">{u.callCount}</td>
-                      <td className="px-4 py-3 text-white text-right font-medium">{formatCents(u.totalCents)}</td>
+                      <td className="px-4 py-3 text-white text-right font-medium">{formatPence(u.totalCents)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -213,7 +213,7 @@ export default function UsagePage() {
                     <td className="px-4 py-3 text-gray-300 text-right whitespace-nowrap">
                       {c.inputTokens !== null ? `${c.inputTokens} / ${c.outputTokens}` : c.videoCount ? `${c.videoCount} video(s)` : '-'}
                     </td>
-                    <td className="px-4 py-3 text-white text-right font-medium">{formatCents(c.costCents)}</td>
+                    <td className="px-4 py-3 text-white text-right font-medium">{formatPence(c.costCents)}</td>
                     <td className="px-4 py-3 text-center">
                       <span className={`inline-block w-2 h-2 rounded-full ${c.success ? 'bg-green-500' : 'bg-red-500'}`} />
                     </td>

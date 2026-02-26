@@ -3,12 +3,16 @@ import { writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { getAuthContext } from '@/lib/api-auth';
 
 const MUSIC_DIR = path.join(process.cwd(), 'public', 'music');
 const MAX_MUSIC_SIZE = 50 * 1024 * 1024; // 50MB
 const ALLOWED_EXTENSIONS = ['.mp3', '.wav', '.aac', '.m4a', '.ogg', '.flac'];
 
 export async function POST(request: NextRequest) {
+  const authResult = await getAuthContext();
+  if (authResult.error) return authResult.error;
+
   try {
     if (!existsSync(MUSIC_DIR)) {
       await mkdir(MUSIC_DIR, { recursive: true });

@@ -4,6 +4,7 @@ import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { renderVideo, batchRender } from '@/lib/ffmpeg-renderer';
 import { uploadFile, isCloudStorage } from '@/lib/storage';
+import { getAuthContext } from '@/lib/api-auth';
 import type { TextOverlay, MusicTrack, UploadedVideo } from '@/lib/types';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
@@ -18,6 +19,9 @@ function isPathSafe(resolvedPath: string, allowedDir: string): boolean {
 export const maxDuration = 300; // 5 min for batch renders
 
 export async function POST(request: NextRequest) {
+  const authResult = await getAuthContext();
+  if (authResult.error) return authResult.error;
+
   try {
     // Validate payload size
     const rawBody = await request.text();
