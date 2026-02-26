@@ -9,7 +9,8 @@ After any new feature or major change, always update `ARCHITECTURE.md`, `CLAUDE.
 - **Database**: PostgreSQL + Prisma ORM (multi-tenant companies, users, API usage tracking)
 - **Authentication**: NextAuth v5 (credentials provider, JWT sessions, httpOnly cookies)
 - **Multi-tenancy**: Companies with users (roles: OWNER/ADMIN/MEMBER), data filtered by company_id
-- **Cost tracking**: Per-call API usage logging in cents (`src/lib/track-usage.ts`, `src/lib/pricing.ts`)
+- **Token billing**: Token-based billing system (`src/lib/token-pricing.ts`, `src/lib/token-balance.ts`). 1 token = 1 finished video, 10 tokens = 1 Veo AI video (bundled with renders). Ad copy generation is FREE.
+- **Internal cost tracking**: Per-call API usage logging in cents (`src/lib/track-usage.ts`, `src/lib/pricing.ts`) — admin-only, hidden from users
 - **Video processing**: FFmpeg via shell exec (server-side), @napi-rs/canvas for emoji-supporting overlay PNGs
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) for generating TOFU/MOFU/BOFU ad text
 - **AI video generation**: Google Veo 3.1 (optional — users can also upload their own videos)
@@ -64,9 +65,9 @@ src/
     projects/
       page.tsx                    — Projects list (grid of cards, create/delete, pagination)
     usage/
-      page.tsx                    — Usage dashboard (monthly spend, per-service)
+      page.tsx                    — Token usage dashboard (balance, by-reason, by-user)
     settings/
-      page.tsx                    — Company settings (users, invitations, limits)
+      page.tsx                    — Company settings (users, invitations, token budget)
     admin/
       page.tsx                    — Super admin dashboard (all companies, revenue, API calls)
     billing/
@@ -81,10 +82,12 @@ src/
       auth/reset-password/route.ts — Password reset (request + execute)
       company/users/route.ts      — List, add, remove users
       company/invite/route.ts     — Invite users (+ user limit check)
-      company/settings/route.ts   — Company settings: budget, name (GET/PUT)
+      company/settings/route.ts   — Company settings: token budget, name (GET/PUT)
       company/logo/route.ts       — Logo upload (POST)
-      usage/route.ts              — Get monthly spend + breakdown (paginated)
-      usage/export/route.ts       — CSV export of usage data
+      billing/balance/route.ts    — Token balance, monthly usage, plan info (GET)
+      billing/transactions/route.ts — Paginated token transaction history (GET)
+      usage/route.ts              — Token usage dashboard (balance, by-reason, by-user, transactions)
+      usage/export/route.ts       — CSV export of token transactions
       admin/route.ts              — Super admin platform-wide stats + company breakdown
       health/route.ts             — Health check (DB + FFmpeg)
       projects/route.ts           — List + create projects (GET/POST)
@@ -121,17 +124,19 @@ src/
     logger.ts                     — Winston logger setup
     prisma.ts                     — Prisma client singleton
     auth.ts                       — NextAuth session helpers, user context
-    pricing.ts                    — API cost calculation per model/tokens
-    track-usage.ts                — Per-call usage logging, monthly aggregation
-    plans.ts                      — Plan tier definitions (FREE/STARTER/PRO/ENTERPRISE)
-    check-limits.ts               — Generation + user limit enforcement per plan
-    spend-alerts.ts               — Webhook spend alerts (50%/80%/100% budget)
+    token-pricing.ts               — Token costs per operation, calculation helpers
+    token-balance.ts               — Atomic token deduct/credit/refund/balance/history
+    pricing.ts                    — Internal API cost calculation (admin-only)
+    track-usage.ts                — Per-call API usage logging (internal costs)
+    plans.ts                      — Plan tiers with token allocations + top-up pricing
+    check-limits.ts               — Token balance + user limit enforcement
+    spend-alerts.ts               — Token-based budget alerts (50%/80%/100%)
     api-auth.ts                   — Auth middleware helpers for API routes
     file-url.ts                   — Helper to convert paths to /api/files URLs
   middleware.ts                   — JWT verification, rate limiting, security headers
   auth.config.ts                  — NextAuth v5 configuration
 prisma/
-  schema.prisma                   — Data models: Company, User, Session, ApiUsage
+  schema.prisma                   — Data models: Company, User, Session, ApiUsage, TokenTransaction, TokenTopup
   migrations/                     — Database migrations
 ```
 

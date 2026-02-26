@@ -7,9 +7,11 @@ import Link from 'next/link';
 import UserMenu from '@/components/UserMenu';
 
 interface BillingData {
+  tokenBalance: number;
+  monthlyTokensUsed: number;
+  monthlyAllocation: number;
   plan: string;
-  monthlyTotalCents: number;
-  monthlyBudgetCents: number | null;
+  topupEnabled: boolean;
 }
 
 const PLANS = [
@@ -17,32 +19,57 @@ const PLANS = [
     key: 'FREE',
     label: 'Free',
     price: 0,
-    features: ['10 generations / month', '1 user', '5 GB storage'],
+    tokens: 40,
+    features: [
+      '40 tokens / month',
+      '~40 finished ad videos',
+      '1 user',
+      'AI ad copy generation (free)',
+      '5 GB storage',
+    ],
   },
   {
     key: 'STARTER',
     label: 'Starter',
     price: 2900,
-    features: ['100 generations / month', '5 users', '50 GB storage'],
+    tokens: 500,
+    features: [
+      '500 tokens / month',
+      '~500 finished ad videos',
+      '5 users',
+      'AI ad copy generation (free)',
+      '50 GB storage',
+      'Token top-ups available',
+    ],
     popular: true,
   },
   {
     key: 'PRO',
     label: 'Pro',
     price: 9900,
-    features: ['Unlimited generations', 'Unlimited users', '500 GB storage'],
+    tokens: 2500,
+    features: [
+      '2,500 tokens / month',
+      '~2,500 finished ad videos',
+      'Unlimited users',
+      'AI ad copy generation (free)',
+      '500 GB storage',
+      'Cheapest top-up rate',
+    ],
   },
   {
     key: 'ENTERPRISE',
     label: 'Enterprise',
     price: null,
-    features: ['Custom limits', 'Custom integrations', 'Dedicated support'],
+    tokens: null,
+    features: [
+      'Custom token allocation',
+      'Custom integrations',
+      'Dedicated support',
+      'Volume discounts',
+    ],
   },
 ];
-
-function formatPence(pence: number): string {
-  return `\u00A3${(pence / 100).toFixed(2)}`;
-}
 
 export default function BillingPage() {
   const { status } = useSession();
@@ -62,13 +89,15 @@ export default function BillingPage() {
     const controller = new AbortController();
     controllerRef.current = controller;
 
-    fetch('/api/usage?days=30', { signal: controller.signal })
+    fetch('/api/billing/balance', { signal: controller.signal })
       .then((r) => r.json())
       .then((d) => {
         setData({
+          tokenBalance: d.tokenBalance || 0,
+          monthlyTokensUsed: d.monthlyTokensUsed || 0,
+          monthlyAllocation: d.monthlyAllocation || 0,
           plan: d.plan || 'FREE',
-          monthlyTotalCents: d.monthlyTotalCents || 0,
-          monthlyBudgetCents: d.monthlyBudgetCents,
+          topupEnabled: d.topupEnabled || false,
         });
       })
       .catch((err) => {
@@ -88,6 +117,9 @@ export default function BillingPage() {
   }
 
   const currentPlan = data?.plan || 'FREE';
+  const usagePct = data && data.monthlyAllocation > 0
+    ? Math.min((data.monthlyTokensUsed / data.monthlyAllocation) * 100, 100)
+    : 0;
 
   return (
     <main className="min-h-screen bg-gray-950">
@@ -102,27 +134,60 @@ export default function BillingPage() {
       </header>
 
       <div className="max-w-5xl mx-auto px-6 py-8 space-y-8">
-        {/* Current plan summary */}
+        {/* Token balance summary */}
         <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
           <div className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <p className="text-sm text-gray-400">Token Balance</p>
+              <p className="text-3xl font-bold text-white mt-1">
+                {data?.tokenBalance.toLocaleString() || 0}
+                <span className="text-sm font-normal text-gray-500 ml-1">tokens</span>
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-400">Used This Month</p>
+              <p className="text-2xl font-bold text-white mt-1">
+                {data?.monthlyTokensUsed.toLocaleString() || 0}
+                <span className="text-sm font-normal text-gray-500 ml-1">
+                  / {data?.monthlyAllocation.toLocaleString() || 0}
+                </span>
+              </p>
+              {data && data.monthlyAllocation > 0 && (
+                <div className="mt-2 w-48">
+                  <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        usagePct > 80 ? 'bg-red-500' : usagePct > 50 ? 'bg-yellow-500' : 'bg-green-500'
+                      }`}
+                      style={{ width: `${usagePct}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
             <div>
               <p className="text-sm text-gray-400">Current Plan</p>
               <p className="text-2xl font-bold text-white mt-1">{currentPlan}</p>
             </div>
-            <div>
-              <p className="text-sm text-gray-400">This Month&apos;s Spend</p>
-              <p className="text-2xl font-bold text-white mt-1">
-                {formatPence(data?.monthlyTotalCents || 0)}
-              </p>
+          </div>
+        </div>
+
+        {/* Token cost explainer */}
+        <div className="bg-gray-800/50 rounded-xl p-5 border border-gray-700/60">
+          <h3 className="text-sm font-semibold text-gray-300 mb-3">How Tokens Work</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+            <div className="flex items-start gap-2">
+              <span className="text-green-400 font-bold">FREE</span>
+              <span className="text-gray-400">AI ad copy generation &mdash; create and regenerate ad scripts at no cost</span>
             </div>
-            {data?.monthlyBudgetCents && (
-              <div>
-                <p className="text-sm text-gray-400">Monthly Budget</p>
-                <p className="text-2xl font-bold text-white mt-1">
-                  {formatPence(data.monthlyBudgetCents)}
-                </p>
-              </div>
-            )}
+            <div className="flex items-start gap-2">
+              <span className="text-blue-400 font-bold">1 token</span>
+              <span className="text-gray-400">= 1 finished ad video rendered with your own background video</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-purple-400 font-bold">10 tokens</span>
+              <span className="text-gray-400">= 1 AI-generated video (Veo) including all renders onto it</span>
+            </div>
           </div>
         </div>
 
@@ -155,16 +220,19 @@ export default function BillingPage() {
                   )}
 
                   <h3 className="text-lg font-semibold text-white">{plan.label}</h3>
-                  <div className="mt-2 mb-4">
+                  <div className="mt-2 mb-1">
                     {plan.price !== null ? (
                       <span className="text-3xl font-extrabold text-white">
-                        {formatPence(plan.price)}
+                        &pound;{(plan.price / 100).toFixed(0)}
                         <span className="text-sm font-normal text-gray-500">/mo</span>
                       </span>
                     ) : (
                       <span className="text-lg font-semibold text-gray-400">Custom pricing</span>
                     )}
                   </div>
+                  {plan.tokens !== null && (
+                    <p className="text-xs text-blue-400 mb-3">{plan.tokens.toLocaleString()} tokens/month</p>
+                  )}
 
                   <ul className="space-y-2 mb-5 flex-1">
                     {plan.features.map((f) => (
@@ -203,7 +271,7 @@ export default function BillingPage() {
             href="/usage"
             className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white text-sm rounded-lg border border-gray-700 transition-colors"
           >
-            View Detailed Usage
+            View Token Usage
           </Link>
           <Link
             href="/settings"

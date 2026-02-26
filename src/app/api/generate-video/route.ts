@@ -8,7 +8,9 @@ import { getVideoInfo } from '@/lib/get-video-info';
 import { logger } from '@/lib/logger';
 import { getAuthContext } from '@/lib/api-auth';
 import { trackVeoUsage } from '@/lib/track-usage';
-import { checkGenerationLimit } from '@/lib/check-limits';
+import { checkTokenBalance } from '@/lib/check-limits';
+import { deductTokens, refundTokens } from '@/lib/token-balance';
+import { calculateVeoTokens } from '@/lib/token-pricing';
 import { fileUrl } from '@/lib/file-url';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -27,10 +29,6 @@ export async function POST(request: NextRequest) {
   if (authResult.error) return authResult.error;
   const { userId, companyId } = authResult.auth;
 
-  // Plan limit check
-  const limitError = await checkGenerationLimit(companyId);
-  if (limitError) return limitError;
-
   logger.info('Generate-video API called');
 
   const apiKey = process.env.GEMINI_API_KEY;
@@ -41,6 +39,9 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+
+  // Declare tokenCost outside try so catch block can access it for refunds
+  let tokenCost = 0;
 
   try {
     // Validate payload size
@@ -69,6 +70,31 @@ export async function POST(request: NextRequest) {
     const dur = validDurations.includes(String(duration)) ? String(duration) : '6';
 
     logger.info('Generate request', { prompt: prompt.slice(0, 100), count: videoCount, aspectRatio: ar, duration: dur });
+
+    // Check and deduct tokens (10 per AI video — includes future renders onto it)
+    tokenCost = calculateVeoTokens(videoCount);
+    const limitError = await checkTokenBalance(companyId, tokenCost);
+    if (limitError) return limitError;
+
+    const deduction = await deductTokens({
+      companyId,
+      userId,
+      amount: tokenCost,
+      reason: 'GENERATE_VIDEO',
+      description: `Generate ${videoCount} AI video${videoCount !== 1 ? 's' : ''} (${tokenCost} tokens)`,
+    });
+
+    if (!deduction.success) {
+      return NextResponse.json(
+        {
+          error: `You need ${tokenCost} tokens but have ${deduction.balance}. Top up or upgrade your plan.`,
+          code: 'INSUFFICIENT_TOKENS',
+          balance: deduction.balance,
+          required: tokenCost,
+        },
+        { status: 402 }
+      );
+    }
 
     // Ensure upload directory exists
     if (!existsSync(UPLOAD_DIR)) {
@@ -161,10 +187,24 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Refund tokens for failed videos (10 tokens each)
+    if (failures.length > 0) {
+      const refundAmount = calculateVeoTokens(failures.length);
+      await refundTokens({
+        companyId,
+        userId,
+        amount: refundAmount,
+        description: `Refund: ${failures.length} AI video${failures.length !== 1 ? 's' : ''} failed to generate`,
+      });
+      logger.info(`Refunded ${refundAmount} tokens for ${failures.length} failed videos`);
+    }
+
     if (videos.length === 0) {
       const firstError = (failures[0] as PromiseRejectedResult)?.reason?.message || 'All generations failed';
       return NextResponse.json({ error: firstError }, { status: 500 });
     }
+
+    const tokensCharged = calculateVeoTokens(videos.length);
 
     // Track API cost (fire-and-forget)
     trackVeoUsage({
@@ -176,15 +216,25 @@ export async function POST(request: NextRequest) {
       endpoint: 'generate-video',
       durationMs: 0,
       success: true,
+      tokensCost: tokensCharged,
     });
 
-    logger.info('Generations complete', { succeeded: videos.length, failed: failures.length });
+    logger.info('Generations complete', { succeeded: videos.length, failed: failures.length, tokensCharged });
     return NextResponse.json({
       videos,
+      tokensUsed: tokensCharged,
       ...(failures.length > 0 && { warning: `${failures.length} of ${videoCount} videos failed to generate` }),
     });
   } catch (error: any) {
     logger.error('Generate-video error', { error: error.message, stack: error.stack });
+
+    // Refund all tokens on total failure
+    await refundTokens({
+      companyId,
+      userId,
+      amount: tokenCost,
+      description: `Refund: video generation failed — ${error.message}`,
+    });
 
     trackVeoUsage({
       companyId,
@@ -195,6 +245,7 @@ export async function POST(request: NextRequest) {
       durationMs: 0,
       success: false,
       errorMessage: error.message,
+      tokensCost: 0,
     });
 
     return NextResponse.json({ error: error.message }, { status: 500 });

@@ -1,64 +1,65 @@
 import { prisma } from '@/lib/prisma';
 import { getPlanLimits } from '@/lib/plans';
+import { formatTokens } from '@/lib/token-pricing';
 import { NextResponse } from 'next/server';
 
 /**
- * Check if a company can make an AI generation call.
+ * Check if a company has enough tokens for an operation.
  * Returns null if allowed, or an error response if blocked.
  */
-export async function checkGenerationLimit(companyId: string): Promise<NextResponse | null> {
+export async function checkTokenBalance(
+  companyId: string,
+  requiredTokens: number
+): Promise<NextResponse | null> {
   try {
     const company = await prisma.company.findUnique({
       where: { id: companyId },
-      select: { plan: true, monthlyBudgetCents: true },
+      select: { tokenBalance: true, plan: true, monthlyTokenBudget: true },
     });
 
     if (!company) {
       return NextResponse.json({ error: 'Company not found' }, { status: 404 });
     }
 
-    const limits = getPlanLimits(company.plan);
-
-    // Check generation count this month
-    const startOfMonth = new Date();
-    startOfMonth.setDate(1);
-    startOfMonth.setHours(0, 0, 0, 0);
-
-    const generationCount = await prisma.apiUsageLog.count({
-      where: {
-        companyId,
-        createdAt: { gte: startOfMonth },
-        success: true,
-      },
-    });
-
-    if (generationCount >= limits.maxGenerationsPerMonth) {
+    // Check token balance
+    if (company.tokenBalance < requiredTokens) {
+      const plan = getPlanLimits(company.plan);
       return NextResponse.json(
         {
-          error: `Monthly generation limit reached (${limits.maxGenerationsPerMonth} on ${limits.label} plan). Upgrade your plan for more.`,
-          code: 'GENERATION_LIMIT',
+          error: `You need ${formatTokens(requiredTokens)} but have ${formatTokens(company.tokenBalance)}. ${
+            plan.topupEnabled
+              ? 'Top up your tokens or upgrade your plan.'
+              : 'Upgrade your plan for more tokens.'
+          }`,
+          code: 'INSUFFICIENT_TOKENS',
+          balance: company.tokenBalance,
+          required: requiredTokens,
         },
         { status: 402 }
       );
     }
 
-    // Check monthly budget if set
-    if (company.monthlyBudgetCents) {
-      const monthlySpend = await prisma.apiUsageLog.aggregate({
+    // Check monthly token budget if set
+    if (company.monthlyTokenBudget) {
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+
+      const monthlyUsage = await prisma.tokenTransaction.aggregate({
         where: {
           companyId,
+          type: 'DEBIT',
           createdAt: { gte: startOfMonth },
-          success: true,
         },
-        _sum: { costCents: true },
+        _sum: { amount: true },
       });
 
-      const spent = monthlySpend._sum.costCents || 0;
-      if (spent >= company.monthlyBudgetCents) {
+      const used = monthlyUsage._sum.amount || 0;
+      if (used + requiredTokens > company.monthlyTokenBudget) {
         return NextResponse.json(
           {
-            error: `Monthly budget of £${(company.monthlyBudgetCents / 100).toFixed(2)} reached. Increase your budget in settings.`,
-            code: 'BUDGET_LIMIT',
+            error: `Monthly token budget of ${formatTokens(company.monthlyTokenBudget)} reached. Increase your budget in settings.`,
+            code: 'TOKEN_BUDGET_LIMIT',
           },
           { status: 402 }
         );
@@ -67,8 +68,8 @@ export async function checkGenerationLimit(companyId: string): Promise<NextRespo
 
     return null; // Allowed
   } catch (err) {
-    console.error('Limit check failed:', err);
-    return null; // Fail open — don't block users if the check itself fails
+    console.error('Token balance check failed:', err);
+    return null; // Fail open
   }
 }
 

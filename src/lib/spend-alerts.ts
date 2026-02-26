@@ -1,9 +1,9 @@
 import { prisma } from '@/lib/prisma';
+import { formatTokens } from '@/lib/token-pricing';
 
 /**
  * In-memory set tracking which threshold alerts have already been sent
  * this month. Keyed by "companyId:YYYY-MM:threshold".
- * Resets naturally when the month changes (new keys).
  */
 const notifiedThresholds = new Set<string>();
 
@@ -11,73 +11,66 @@ const notifiedThresholds = new Set<string>();
 const ALERT_THRESHOLDS = [50, 80, 100] as const;
 
 /**
- * Check whether a company's spend has crossed any alert thresholds
+ * Check whether a company's token usage has crossed any alert thresholds
  * and fire a webhook if so. Fire-and-forget — never throws.
  */
-export async function checkSpendAlerts(companyId: string): Promise<void> {
+export async function checkTokenAlerts(companyId: string): Promise<void> {
   try {
     const now = new Date();
     const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    // Get the company's budget
     const company = await prisma.company.findUnique({
       where: { id: companyId },
-      select: { monthlyBudgetCents: true, name: true },
+      select: { monthlyTokenBudget: true, name: true },
     });
 
-    if (!company || !company.monthlyBudgetCents || company.monthlyBudgetCents <= 0) {
-      return; // No budget set — nothing to check
+    if (!company || !company.monthlyTokenBudget || company.monthlyTokenBudget <= 0) {
+      return; // No budget set
     }
 
-    const budgetPence: number = company.monthlyBudgetCents;
-    const companyName: string = company.name || companyId;
+    const budget = company.monthlyTokenBudget;
+    const companyName = company.name || companyId;
 
-    // Get current month's total spend
-    const result = await prisma.apiUsageLog.aggregate({
+    // Get current month's total token usage
+    const result = await prisma.tokenTransaction.aggregate({
       where: {
         companyId,
+        type: 'DEBIT',
         createdAt: { gte: startOfMonth },
-        success: true,
       },
-      _sum: { costCents: true },
+      _sum: { amount: true },
     });
 
-    const currentSpendPence: number = result._sum.costCents || 0;
-    const spendPercentage = (currentSpendPence / budgetPence) * 100;
+    const used = result._sum.amount || 0;
+    const usagePct = (used / budget) * 100;
 
-    // Check each threshold from highest to lowest
     for (const threshold of ALERT_THRESHOLDS) {
-      if (spendPercentage < threshold) {
-        continue;
-      }
+      if (usagePct < threshold) continue;
 
-      const notificationKey = `${companyId}:${monthKey}:${threshold}`;
-      if (notifiedThresholds.has(notificationKey)) {
-        continue; // Already notified for this threshold this month
-      }
+      const key = `${companyId}:${monthKey}:${threshold}`;
+      if (notifiedThresholds.has(key)) continue;
 
-      // Mark as notified before sending (prevents duplicate sends on race)
-      notifiedThresholds.add(notificationKey);
+      notifiedThresholds.add(key);
 
       const message =
         threshold >= 100
-          ? `${companyName} has exceeded their monthly budget (${spendPercentage.toFixed(1)}% used).`
-          : `${companyName} has used ${threshold}% of their monthly budget (${spendPercentage.toFixed(1)}% actual).`;
+          ? `${companyName} has exceeded their monthly token budget (${formatTokens(used)} of ${formatTokens(budget)} used).`
+          : `${companyName} has used ${threshold}% of their monthly token budget (${formatTokens(used)} of ${formatTokens(budget)}).`;
 
       const payload = {
         companyId,
         companyName,
         threshold,
-        currentSpendPence,
-        budgetPence,
+        tokensUsed: used,
+        tokenBudget: budget,
         message,
       };
 
       const webhookUrl = process.env.SPEND_ALERT_WEBHOOK_URL;
 
       if (!webhookUrl) {
-        console.log(`[Spend Alert] ${message}`, payload);
+        console.log(`[Token Alert] ${message}`, payload);
         continue;
       }
 
@@ -88,11 +81,10 @@ export async function checkSpendAlerts(companyId: string): Promise<void> {
           body: JSON.stringify(payload),
         });
       } catch (webhookErr) {
-        console.error(`[Spend Alert] Failed to send webhook for threshold ${threshold}%:`, webhookErr);
-        // Don't remove from notifiedThresholds — avoid spamming a broken webhook
+        console.error(`[Token Alert] Failed to send webhook for ${threshold}%:`, webhookErr);
       }
     }
   } catch (err) {
-    console.error('[Spend Alert] Failed to check spend alerts:', err);
+    console.error('[Token Alert] Failed to check alerts:', err);
   }
 }

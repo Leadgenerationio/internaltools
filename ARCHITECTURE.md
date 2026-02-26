@@ -37,10 +37,12 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
         │
         ▼
   PostgreSQL (Prisma)
-  - Companies
+  - Companies (tokenBalance, monthlyTokenBudget)
   - Users (roles: OWNER/ADMIN/MEMBER)
   - Projects (with ads, videos, music, renders)
-  - API usage logs (per-call tracking in cents)
+  - API usage logs (per-call tracking in cents — admin-only)
+  - Token transactions (append-only ledger)
+  - Token top-ups (Stripe purchase records)
   - Sessions (JWT)
 ```
 
@@ -57,7 +59,8 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 | Overlay rendering | @napi-rs/canvas | Text-to-PNG with emoji support |
 | AI copy generation | Anthropic SDK (Claude Sonnet) | TOFU/MOFU/BOFU ad scripts |
 | AI video generation | Google Veo 3.1 | Optional AI background videos |
-| Cost tracking | Prisma + Winston | Per-call API usage logging in cents, monthly aggregation |
+| Token billing | Prisma transactions | Atomic token deduction/credit, append-only ledger, budget alerts |
+| Cost tracking | Prisma + Winston | Internal per-call API cost logging (admin-only) |
 | Logging | Winston + daily-rotate-file | Server-side structured logs |
 | IDs | uuid v4 | Unique file and entity IDs |
 
@@ -76,18 +79,25 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 - All data queries filtered by company_id from session
 - Company users can be invited via `/api/company/invite` (email-based invitations)
 
-### API Cost Tracking
-- **Per-call logging**: Each call to generate-ads, generate-video, render records:
-  - API name, timestamp, user_id, company_id, input/output tokens (or units)
-  - Cost in cents (calculated from model pricing + actual usage)
-- **Monthly aggregation**: `/api/usage` endpoint returns:
-  - Total spend (current month), per-service breakdown, per-user breakdown
-  - Historical monthly trends
-  - Warnings if approaching monthly spend limits (configurable per company)
-- **Usage tracking helper** (`src/lib/track-usage.ts`):
-  - `trackUsage(apiName, costInCents, metadata)` — logs to database after operation
-  - `getMonthlyUsage(companyId, month)` — retrieves aggregated data
-  - `getServiceBreakdown(companyId)` — costs per service for current month
+### Token Billing System
+Users are billed in tokens, not raw API costs. This abstracts away internal costs and provides a simple pricing model.
+
+- **Token model**:
+  - Ad copy generation = **FREE** (0 tokens) — users can create and regenerate unlimited ad scripts
+  - 1 finished ad video = **1 token** (using own uploaded background video)
+  - 1 AI-generated video (Veo) = **10 tokens** (bundled — includes all renders onto it)
+- **Plan tiers**: FREE (40 tokens/mo), STARTER (500 tokens/mo, £29), PRO (2,500 tokens/mo, £99), ENTERPRISE (custom)
+- **Top-ups**: Paid plans can purchase additional token packages (Small/Medium/Large at plan-specific per-token rates)
+- **Pre-deduction pattern**: Tokens are deducted atomically BEFORE expensive API calls using Prisma interactive transactions with row-level locking. If the operation fails, tokens are automatically refunded.
+- **Append-only ledger**: All token changes recorded in `TokenTransaction` table for full auditability
+- **Monthly token budget**: Owners can set an optional monthly cap on token usage in Settings
+- **Internal cost tracking**: Raw API costs (in cents) still logged in `ApiUsageLog` for admin visibility — hidden from users
+- **Key files**:
+  - `src/lib/token-pricing.ts` — Token costs per operation, calculation helpers
+  - `src/lib/token-balance.ts` — Atomic deduct/credit/refund/balance operations
+  - `src/lib/plans.ts` — Plan tiers with token allocations and top-up pricing
+  - `src/lib/check-limits.ts` — Token balance checks before operations
+  - `src/lib/spend-alerts.ts` — Token-based budget alerts (50%/80%/100% thresholds)
 
 ## App Flow
 
@@ -162,10 +172,12 @@ src/
 │       ├── auth/reset-password/route.ts # Password reset request + execute
 │       ├── company/users/route.ts    # List, add, remove users from company
 │       ├── company/invite/route.ts   # Invite users to company (+ user limit check)
-│       ├── company/settings/route.ts # Company settings: budget, name (GET/PUT)
+│       ├── company/settings/route.ts # Company settings: token budget, name (GET/PUT)
 │       ├── company/logo/route.ts     # Logo upload (POST)
-│       ├── usage/route.ts            # Get monthly spend + service breakdown (paginated)
-│       ├── usage/export/route.ts     # CSV export of usage data
+│       ├── billing/balance/route.ts  # Token balance, monthly usage, plan info (GET)
+│       ├── billing/transactions/route.ts # Paginated token transaction history (GET)
+│       ├── usage/route.ts            # Token usage dashboard (balance, by-reason, by-user, transactions)
+│       ├── usage/export/route.ts     # CSV export of token transactions
 │       ├── admin/route.ts            # Super admin: platform-wide stats + company breakdown
 │       ├── projects/route.ts         # List + create projects (GET/POST)
 │       ├── projects/[id]/route.ts   # Get, update, delete project (GET/PUT/DELETE)
@@ -203,16 +215,18 @@ src/
 │   ├── logger.ts                     # Winston logger config
 │   ├── prisma.ts                     # Prisma client singleton
 │   ├── auth.ts                       # NextAuth session helpers, user context
-│   ├── pricing.ts                    # API cost calculation per model/tokens
-│   ├── track-usage.ts                # Per-call usage logging, monthly aggregation
-│   ├── plans.ts                      # Plan tier definitions (FREE/STARTER/PRO/ENTERPRISE)
-│   ├── check-limits.ts               # Generation + user limit enforcement per plan
-│   ├── spend-alerts.ts               # Webhook spend alerts (50%/80%/100% budget thresholds)
+│   ├── token-pricing.ts               # Token costs per operation, calculation helpers
+│   ├── token-balance.ts               # Atomic token deduct/credit/refund/balance/history
+│   ├── pricing.ts                    # Internal API cost calculation (admin-only)
+│   ├── track-usage.ts                # Per-call API usage logging (internal costs)
+│   ├── plans.ts                      # Plan tiers with token allocations + top-up pricing
+│   ├── check-limits.ts               # Token balance + user limit enforcement
+│   ├── spend-alerts.ts               # Token-based budget alerts (50%/80%/100%)
 │   ├── api-auth.ts                   # Auth middleware helpers for API routes
 │   └── file-url.ts                   # Helper: converts paths to /api/files URLs
 ├── prisma/
 │   ├── schema.prisma                 # Data models: Company, User, Session, ApiUsage
-│   └── migrations/                   # Database migrations
+│   └── migrations/                   # Database migrations (incl. 20260226152922_add_token_system)
 └── auth.config.ts                    # NextAuth v5 configuration
 ```
 
@@ -266,10 +280,12 @@ FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to 
 | `/api/auth/reset-password` | POST/PUT | Request and execute password reset | default | public |
 | `/api/company/users` | GET/POST | List/add users to company | default | required (OWNER/ADMIN) |
 | `/api/company/invite` | POST | Send email invitation to join company | default | required (OWNER/ADMIN) |
-| `/api/company/settings` | GET/PUT | Get/update company settings (budget, name) | default | required (OWNER) |
+| `/api/company/settings` | GET/PUT | Get/update company settings (token budget, name) | default | required (OWNER) |
 | `/api/company/logo` | POST | Upload company logo (PNG/JPEG/SVG/WebP, 2MB max) | default | required (OWNER/ADMIN) |
-| `/api/usage` | GET | Get monthly spend + service breakdown (paginated) | default | required |
-| `/api/usage/export` | GET | Export usage data as CSV | default | required (OWNER/ADMIN) |
+| `/api/billing/balance` | GET | Token balance, monthly usage, plan info | default | required |
+| `/api/billing/transactions` | GET | Paginated token transaction history | default | required (OWNER/ADMIN) |
+| `/api/usage` | GET | Token usage dashboard (balance, by-reason, by-user, transactions) | default | required (OWNER/ADMIN) |
+| `/api/usage/export` | GET | Export token transactions as CSV | default | required (OWNER/ADMIN) |
 | `/api/admin` | GET | Platform-wide stats, company breakdown, recent calls | default | required (super admin) |
 | `/api/projects` | GET | List projects for user's company (paginated) | default | required |
 | `/api/projects` | POST | Create a new project | default | required |
@@ -277,11 +293,11 @@ FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to 
 | `/api/projects/[id]` | PUT | Update project fields | default | required |
 | `/api/projects/[id]` | DELETE | Delete project (cascades, OWNER/ADMIN/creator only) | default | required |
 | `/api/projects/[id]/ads` | POST | Save ads to project (replace all) | default | required |
-| `/api/generate-ads` | POST | Generate ad copy via Claude | 60s | required + cost tracking |
-| `/api/generate-video` | POST | Generate video via Veo | 300s | required + cost tracking |
+| `/api/generate-ads` | POST | Generate ad copy via Claude (FREE, 0 tokens) | 60s | required |
+| `/api/generate-video` | POST | Generate video via Veo (10 tokens/video) | 300s | required + token deduction |
 | `/api/upload` | POST | Upload video files (max 500MB each) | 60s | required |
 | `/api/upload-music` | POST | Upload music (max 50MB, validated formats) | default | required |
-| `/api/render` | POST | Batch FFmpeg render (supports draft/final quality, trim) | 300s | required + cost tracking |
+| `/api/render` | POST | Batch FFmpeg render (1 token/output video) | 300s | required + token deduction |
 | `/api/download-zip` | POST | Bundle rendered videos into a ZIP file | default | required |
 | `/api/log` | POST | Ingest client-side logs | default | public |
 | `/api/logs` | GET | Retrieve recent log lines | default | required |
@@ -460,15 +476,25 @@ Two render quality modes selectable before rendering:
 - **Draft**: `preset=ultrafast`, `crf=28` — fast encoding, lower quality, good for previewing
 - **Final**: `preset=fast`, `crf=23` — slower encoding, higher quality, for production use
 
-## Plan Enforcement
+## Plan Enforcement & Token Billing
 
 Plan tiers (FREE/STARTER/PRO/ENTERPRISE) defined in `src/lib/plans.ts`:
-- **Generation limits**: Monthly cap on AI generation calls, checked before each API call
+- **Token allocations**: Monthly tokens refreshed per plan (40/500/2,500/custom)
+- **Token deduction**: Atomic pre-deduction before expensive operations, automatic refund on failure
+- **Token top-ups**: Paid plans can buy additional tokens at plan-specific rates
 - **User limits**: Max team members per plan, checked when inviting
 - **Storage limits**: Max storage per company (enforced at upload)
-- **Budget alerts**: Webhook notifications at 50%, 80%, and 100% of monthly budget via `src/lib/spend-alerts.ts`
-- Budget can be configured by OWNER in Settings page
+- **Token budget alerts**: Webhook notifications at 50%, 80%, and 100% of monthly token budget via `src/lib/spend-alerts.ts`
+- Monthly token budget can be configured by OWNER in Settings page
 - Plan upgrade/downgrade via Billing page (Stripe integration placeholder)
+
+### Token Flow
+1. User initiates operation (render, Veo generation)
+2. `checkTokenBalance()` verifies sufficient tokens + monthly budget
+3. `deductTokens()` atomically deducts in a Prisma transaction
+4. Operation proceeds
+5. On failure: `refundTokens()` credits back automatically
+6. `checkTokenAlerts()` fires if approaching monthly budget
 
 ## UX Features
 

@@ -5,6 +5,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { renderVideo, batchRender } from '@/lib/ffmpeg-renderer';
 import { uploadFile, isCloudStorage } from '@/lib/storage';
 import { getAuthContext } from '@/lib/api-auth';
+import { checkTokenBalance } from '@/lib/check-limits';
+import { deductTokens, refundTokens } from '@/lib/token-balance';
+import { checkTokenAlerts } from '@/lib/spend-alerts';
+import { calculateRenderTokens } from '@/lib/token-pricing';
 import type { TextOverlay, MusicTrack, UploadedVideo } from '@/lib/types';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
@@ -99,7 +103,52 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const outputPaths = await batchRender(videoPaths, overlays, musicConfig, undefined, quality);
+    // Calculate total output count (this is the number of finished ad videos)
+    const outputCount = videoPaths.length;
+    const tokenCost = calculateRenderTokens(outputCount);
+
+    // Check token balance before rendering
+    if (tokenCost > 0) {
+      const limitError = await checkTokenBalance(authResult.auth.companyId, tokenCost);
+      if (limitError) return limitError;
+
+      // Deduct tokens upfront
+      const deduction = await deductTokens({
+        companyId: authResult.auth.companyId,
+        userId: authResult.auth.userId,
+        amount: tokenCost,
+        reason: 'RENDER',
+        description: `Render ${outputCount} video${outputCount !== 1 ? 's' : ''}`,
+      });
+
+      if (!deduction.success) {
+        return NextResponse.json(
+          {
+            error: `You need ${tokenCost} tokens but have ${deduction.balance}. Top up or upgrade your plan.`,
+            code: 'INSUFFICIENT_TOKENS',
+            balance: deduction.balance,
+            required: tokenCost,
+          },
+          { status: 402 }
+        );
+      }
+    }
+
+    let outputPaths: string[];
+    try {
+      outputPaths = await batchRender(videoPaths, overlays, musicConfig, undefined, quality);
+    } catch (renderErr: any) {
+      // Refund tokens on render failure
+      if (tokenCost > 0) {
+        await refundTokens({
+          companyId: authResult.auth.companyId,
+          userId: authResult.auth.userId,
+          amount: tokenCost,
+          description: `Refund: render failed — ${renderErr.message}`,
+        });
+      }
+      throw renderErr;
+    }
 
     // Upload to cloud storage if configured, otherwise return local paths
     const results = [];
@@ -114,7 +163,10 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    return NextResponse.json({ results });
+    // Check token alerts after successful render
+    checkTokenAlerts(authResult.auth.companyId);
+
+    return NextResponse.json({ results, tokensUsed: tokenCost });
   } catch (error: any) {
     console.error('Render error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });

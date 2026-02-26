@@ -70,7 +70,8 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **Video processing**: FFmpeg via shell exec, @napi-rs/canvas for emoji-supporting overlay PNGs
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) — generates TOFU/MOFU/BOFU funnel ad text
 - **AI video generation**: Google Veo 3.1 (optional)
-- **Cost tracking**: Per-call API usage logging (in cents), monthly aggregation via `/api/usage`
+- **Token billing**: Users pay in tokens (1 token = 1 finished video, 10 tokens = 1 Veo AI video bundled with renders). Ad copy generation is FREE. See `src/lib/token-pricing.ts`, `src/lib/token-balance.ts`.
+- **Internal cost tracking**: Per-call API cost logging (in cents) via `src/lib/track-usage.ts` — admin-only, hidden from users
 - **Files**: uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/` — symlinked to Railway Volume (`/app/data`) via `docker-entrypoint.sh`
 - **File serving**: All file URLs use `/api/files?path=xxx` — Next.js standalone doesn't serve runtime files from `public/`. Always use `fileUrl()` from `src/lib/file-url.ts` to generate URLs.
 - **Cloud storage**: Optional S3/R2 via `src/lib/storage.ts` — activated by `S3_BUCKET` env var, lazy-loads AWS SDK
@@ -84,12 +85,12 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **Dark themed UI**: gray-950 background, gray-800 cards, blue-500 accents, green-600 action buttons
 - **No branding in ads**: "Andro Media" = Meta's ad system, not a brand to put in generated copy
 - **Super admin dashboard**: `/admin` page + `/api/admin` route — platform-wide stats (all companies, revenue, API calls). Access gated by `SUPER_ADMIN_EMAILS` env var (comma-separated emails).
-- **Plan enforcement**: Plan tiers (FREE/STARTER/PRO/ENTERPRISE) in `src/lib/plans.ts`, limits checked in `src/lib/check-limits.ts` before AI API calls and user invites
-- **Spend alerts**: Webhook notifications at 50%/80%/100% budget via `src/lib/spend-alerts.ts`, triggered after each tracked API call
+- **Plan enforcement**: Plan tiers (FREE 40tok/STARTER 500tok £29/PRO 2500tok £99/ENTERPRISE custom) in `src/lib/plans.ts`. Token balance checked in `src/lib/check-limits.ts` before render and Veo operations. User limits checked on invite.
+- **Token budget alerts**: Webhook notifications at 50%/80%/100% of monthly token budget via `src/lib/spend-alerts.ts`
 - **Projects**: CRUD API at `/api/projects`, list page at `/projects`, ads save at `/api/projects/[id]/ads`
-- **Billing**: Plan comparison page at `/billing` (Stripe placeholder), monthly budget editable in settings
+- **Billing**: Token balance + plan comparison at `/billing`, token transaction history at `/usage`, monthly token budget editable in settings. Stripe placeholder for upgrades and top-ups.
 - **Password reset**: Token-based reset flow at `/api/auth/reset-password` + `/reset-password` page
-- **CSV export**: Usage data downloadable as CSV from `/api/usage/export`
+- **CSV export**: Token transaction data downloadable as CSV from `/api/usage/export`
 - **Company logo**: Upload at `/api/company/logo`, displayed in settings
 - **Deployment**: Railway with Docker, `output: 'standalone'` in next.config.js, Railway Volume at `/app/data` for persistent storage, `docker-entrypoint.sh` for startup (symlinks + migrate + serve)
 - **Watchdog QA**: `npm run watchdog` — standalone script that continuously tests all endpoints, checks health, stress-tests, and auto-remediates (restart server, create dirs, clean old files). Config in `scripts/watchdog.config.json`

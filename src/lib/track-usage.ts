@@ -1,9 +1,10 @@
 import { prisma } from '@/lib/prisma';
 import { calculateAnthropicCostPence, calculateVeoCostPence } from '@/lib/pricing';
-import { checkSpendAlerts } from '@/lib/spend-alerts';
+import { checkTokenAlerts } from '@/lib/spend-alerts';
 
 /**
  * Track Anthropic Claude API usage. Fire-and-forget — never throws.
+ * Ad generation is free (0 tokens) so this only tracks internal cost.
  */
 export async function trackAnthropicUsage(params: {
   companyId: string;
@@ -35,14 +36,12 @@ export async function trackAnthropicUsage(params: {
         inputTokens: params.inputTokens,
         outputTokens: params.outputTokens,
         costCents,
+        tokensCost: 0, // Ad generation is free
         durationMs: params.durationMs,
         success: params.success,
         errorMessage: params.errorMessage,
       },
     });
-
-    // Fire-and-forget spend alert check (don't await)
-    checkSpendAlerts(params.companyId);
 
     return costCents;
   } catch (err) {
@@ -53,6 +52,7 @@ export async function trackAnthropicUsage(params: {
 
 /**
  * Track Google Veo API usage. Fire-and-forget — never throws.
+ * Token deduction happens separately in the route (before the API call).
  */
 export async function trackVeoUsage(params: {
   companyId: string;
@@ -65,6 +65,7 @@ export async function trackVeoUsage(params: {
   durationMs: number;
   success: boolean;
   errorMessage?: string;
+  tokensCost?: number;
 }): Promise<number> {
   try {
     const costCents = calculateVeoCostPence(params.model, params.videoCount);
@@ -80,42 +81,19 @@ export async function trackVeoUsage(params: {
         videoCount: params.videoCount,
         videoSeconds: params.videoSeconds,
         costCents,
+        tokensCost: params.tokensCost ?? 0,
         durationMs: params.durationMs,
         success: params.success,
         errorMessage: params.errorMessage,
       },
     });
 
-    // Fire-and-forget spend alert check (don't await)
-    checkSpendAlerts(params.companyId);
+    // Check token alerts after usage
+    checkTokenAlerts(params.companyId);
 
     return costCents;
   } catch (err) {
     console.error('Failed to track Veo usage:', err);
-    return 0;
-  }
-}
-
-/**
- * Get a company's total spend for the current month (in cents).
- */
-export async function getMonthlySpendCents(companyId: string): Promise<number> {
-  try {
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-
-    const result = await prisma.apiUsageLog.aggregate({
-      where: {
-        companyId,
-        createdAt: { gte: startOfMonth },
-        success: true,
-      },
-      _sum: { costCents: true },
-    });
-
-    return result._sum.costCents || 0;
-  } catch (err) {
-    console.error('Failed to get monthly spend:', err);
     return 0;
   }
 }

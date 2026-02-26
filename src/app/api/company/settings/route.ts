@@ -19,7 +19,8 @@ export async function GET() {
         name: true,
         slug: true,
         plan: true,
-        monthlyBudgetCents: true,
+        tokenBalance: true,
+        monthlyTokenBudget: true,
         createdAt: true,
       },
     });
@@ -54,13 +55,13 @@ export async function PUT(request: NextRequest) {
 
     const updates: Record<string, any> = {};
 
-    // Monthly budget (in pence, or null to remove)
-    if ('monthlyBudgetCents' in body) {
-      const budget = body.monthlyBudgetCents;
+    // Monthly token budget (integer, or null to remove)
+    if ('monthlyTokenBudget' in body) {
+      const budget = body.monthlyTokenBudget;
       if (budget === null || budget === 0) {
-        updates.monthlyBudgetCents = null;
+        updates.monthlyTokenBudget = null;
       } else if (typeof budget === 'number' && budget > 0) {
-        updates.monthlyBudgetCents = Math.round(budget);
+        updates.monthlyTokenBudget = Math.round(budget);
       }
     }
 
@@ -80,7 +81,8 @@ export async function PUT(request: NextRequest) {
         id: true,
         name: true,
         plan: true,
-        monthlyBudgetCents: true,
+        tokenBalance: true,
+        monthlyTokenBudget: true,
       },
     });
 

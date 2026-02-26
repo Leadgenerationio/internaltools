@@ -17,12 +17,18 @@ model Company {
   updatedAt DateTime @updatedAt
 
   plan               Plan @default(FREE)
-  monthlyBudgetCents Int? // Optional spending cap (in cents)
+  monthlyBudgetCents Int? // Internal admin field — actual API cost cap (hidden from users)
 
-  users    User[]
-  projects Project[]
-  apiUsage ApiUsageLog[]
-  files    StorageFile[]
+  // Token system
+  tokenBalance       Int  @default(0)  // Current available tokens
+  monthlyTokenBudget Int?              // Optional: monthly token usage cap
+
+  users             User[]
+  projects          Project[]
+  apiUsage          ApiUsageLog[]
+  files             StorageFile[]
+  tokenTransactions TokenTransaction[]
+  tokenTopups       TokenTopup[]
 
   @@index([slug])
 }
@@ -46,10 +52,12 @@ model User {
   updatedAt    DateTime  @updatedAt
   lastLoginAt  DateTime?
 
-  sessions Session[]
-  accounts Account[]
-  projects Project[]
-  apiUsage ApiUsageLog[]
+  sessions          Session[]
+  accounts          Account[]
+  projects          Project[]
+  apiUsage          ApiUsageLog[]
+  tokenTransactions TokenTransaction[]
+  tokenTopups       TokenTopup[]
 
   @@index([companyId])
   @@index([email])
@@ -220,13 +228,16 @@ model ApiUsageLog {
   videoSeconds Int?
   videoCount   Int?
 
-  costCents    Int
+  costCents    Int      // Internal: actual API cost in pence (hidden from users)
+  tokensCost   Int?     // User-facing: how many tokens this operation cost
   durationMs   Int?
-  success      Boolean @default(true)
+  success      Boolean  @default(true)
   errorMessage String?
   metadata     Json?
 
   createdAt DateTime @default(now())
+
+  tokenTransaction TokenTransaction?
 
   @@index([companyId, createdAt])
   @@index([userId, createdAt])
@@ -236,4 +247,78 @@ model ApiUsageLog {
 enum ApiService {
   ANTHROPIC
   GOOGLE_VEO
+}
+
+// ─── Token System ──────────────────────────────────────────
+
+model TokenTransaction {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+
+  type         TokenTransactionType
+  amount       Int    // Always positive; type indicates direction
+  balanceAfter Int    // Snapshot of balance after this transaction
+
+  reason      TokenReason
+  description String?
+  metadata    Json?
+
+  // Link to API usage log for debits
+  apiUsageLogId String?       @unique
+  apiUsageLog   ApiUsageLog?  @relation(fields: [apiUsageLogId], references: [id])
+
+  // Link to Stripe for purchases
+  stripePaymentId String?
+
+  createdAt DateTime  @default(now())
+  expiresAt DateTime? // Plan tokens may expire at end of billing cycle
+
+  @@index([companyId, createdAt])
+  @@index([companyId, type, createdAt])
+}
+
+enum TokenTransactionType {
+  CREDIT
+  DEBIT
+}
+
+enum TokenReason {
+  PLAN_ALLOCATION
+  TOPUP_PURCHASE
+  ADMIN_GRANT
+  GENERATE_ADS
+  GENERATE_VIDEO
+  RENDER
+  REFUND
+  EXPIRY
+  ADJUSTMENT
+}
+
+model TokenTopup {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+
+  tokenAmount     Int         // How many tokens purchased
+  pricePence      Int         // How much they paid (in pence)
+  stripeSessionId String?     @unique
+  stripePaymentId String?
+  status          TopupStatus @default(PENDING)
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([companyId, createdAt])
+}
+
+enum TopupStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
 }

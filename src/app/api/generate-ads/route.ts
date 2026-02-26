@@ -3,7 +3,6 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { AdBrief, FunnelStage } from '@/lib/types';
 import { getAuthContext } from '@/lib/api-auth';
 import { trackAnthropicUsage } from '@/lib/track-usage';
-import { checkGenerationLimit } from '@/lib/check-limits';
 
 export const maxDuration = 60;
 
@@ -135,9 +134,7 @@ export async function POST(request: NextRequest) {
   if (authResult.error) return authResult.error;
   const { userId, companyId } = authResult.auth;
 
-  // Plan limit check
-  const limitError = await checkGenerationLimit(companyId);
-  if (limitError) return limitError;
+  // Ad generation is free (0 tokens) — no balance check needed
 
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json(

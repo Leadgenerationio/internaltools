@@ -22,8 +22,8 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // Company settings
-  const [budgetPounds, setBudgetPounds] = useState('');
+  // Company settings — monthly token budget
+  const [tokenBudget, setTokenBudget] = useState('');
   const [savingBudget, setSavingBudget] = useState(false);
   const [budgetMessage, setBudgetMessage] = useState('');
 
@@ -74,8 +74,8 @@ export default function SettingsPage() {
     fetch('/api/company/settings')
       .then((r) => r.json())
       .then((d) => {
-        if (d.company?.monthlyBudgetCents) {
-          setBudgetPounds((d.company.monthlyBudgetCents / 100).toFixed(2));
+        if (d.company?.monthlyTokenBudget) {
+          setTokenBudget(String(d.company.monthlyTokenBudget));
         }
       })
       .catch(() => {});
@@ -168,12 +168,12 @@ export default function SettingsPage() {
           <p className="text-sm text-gray-400">{users.length} team member{users.length !== 1 ? 's' : ''}</p>
         </div>
 
-        {/* Monthly Budget */}
+        {/* Monthly Token Budget */}
         {isOwner && (
           <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
-            <h2 className="text-lg font-semibold text-white mb-3">Monthly Budget</h2>
+            <h2 className="text-lg font-semibold text-white mb-3">Monthly Token Budget</h2>
             <p className="text-sm text-gray-400 mb-3">
-              Set a spending cap for API calls. Generation requests will be blocked once the budget is reached.
+              Set a monthly token usage cap. Operations will be blocked once the budget is reached. Leave empty for no limit.
             </p>
             <form
               onSubmit={async (e) => {
@@ -181,11 +181,11 @@ export default function SettingsPage() {
                 setSavingBudget(true);
                 setBudgetMessage('');
                 try {
-                  const pence = budgetPounds ? Math.round(parseFloat(budgetPounds) * 100) : null;
+                  const budget = tokenBudget ? Math.round(Number(tokenBudget)) : null;
                   const res = await fetch('/api/company/settings', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ monthlyBudgetCents: pence }),
+                    body: JSON.stringify({ monthlyTokenBudget: budget }),
                   });
                   const data = await res.json();
                   if (!res.ok) setBudgetMessage(data.error || 'Failed to save');
@@ -200,16 +200,16 @@ export default function SettingsPage() {
               className="flex items-center gap-3"
             >
               <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">&pound;</span>
                 <input
                   type="number"
                   min="0"
-                  step="0.01"
-                  value={budgetPounds}
-                  onChange={(e) => setBudgetPounds(e.target.value)}
+                  step="1"
+                  value={tokenBudget}
+                  onChange={(e) => setTokenBudget(e.target.value)}
                   placeholder="No limit"
-                  className="w-40 bg-gray-900 border border-gray-700 rounded-lg pl-7 pr-3 py-2 text-white text-sm placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+                  className="w-40 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm placeholder-gray-500 focus:border-blue-500 focus:outline-none"
                 />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">tokens</span>
               </div>
               <button
                 type="submit"

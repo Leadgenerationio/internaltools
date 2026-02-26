@@ -18,43 +18,30 @@ export async function GET(request: NextRequest) {
   since.setDate(since.getDate() - days);
 
   try {
-    const logs = await prisma.apiUsageLog.findMany({
+    const transactions = await prisma.tokenTransaction.findMany({
       where: { companyId, createdAt: { gte: since } },
       orderBy: { createdAt: 'desc' },
       include: { user: { select: { name: true, email: true } } },
     });
 
-    // Build CSV
     const headers = [
       'Date',
       'User',
-      'Email',
-      'Service',
-      'Endpoint',
-      'Model',
-      'Cost (£)',
-      'Input Tokens',
-      'Output Tokens',
-      'Videos',
-      'Duration (ms)',
-      'Success',
-      'Error',
+      'Type',
+      'Tokens',
+      'Balance After',
+      'Reason',
+      'Description',
     ];
 
-    const rows = logs.map((log: any) => [
-      new Date(log.createdAt).toISOString(),
-      log.user.name || '',
-      log.user.email,
-      log.service,
-      log.endpoint,
-      log.model,
-      (log.costCents / 100).toFixed(2),
-      log.inputTokens ?? '',
-      log.outputTokens ?? '',
-      log.videoCount ?? '',
-      log.durationMs ?? '',
-      log.success ? 'Yes' : 'No',
-      log.errorMessage || '',
+    const rows = transactions.map((t: any) => [
+      new Date(t.createdAt).toISOString(),
+      t.user?.name || t.user?.email || 'System',
+      t.type,
+      t.type === 'DEBIT' ? `-${t.amount}` : `+${t.amount}`,
+      t.balanceAfter,
+      t.reason,
+      t.description || '',
     ]);
 
     const csvContent = [
@@ -62,7 +49,6 @@ export async function GET(request: NextRequest) {
       ...rows.map((row: any[]) =>
         row.map((cell: any) => {
           const str = String(cell);
-          // Escape fields containing commas, quotes, or newlines
           if (str.includes(',') || str.includes('"') || str.includes('\n')) {
             return `"${str.replace(/"/g, '""')}"`;
           }
@@ -74,7 +60,7 @@ export async function GET(request: NextRequest) {
     return new NextResponse(csvContent, {
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Disposition': `attachment; filename="usage-${days}d-${new Date().toISOString().split('T')[0]}.csv"`,
+        'Content-Disposition': `attachment; filename="token-usage-${days}d-${new Date().toISOString().split('T')[0]}.csv"`,
       },
     });
   } catch (error: any) {
