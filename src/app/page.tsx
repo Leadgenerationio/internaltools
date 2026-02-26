@@ -355,14 +355,56 @@ export default function Home() {
     }
   };
 
-  const handleDownloadAll = () => {
-    for (const r of results) {
+  const handleDownloadAll = async () => {
+    if (results.length === 0) return;
+
+    setDownloadingZip(true);
+    try {
+      const files = results.map((r) => ({
+        url: r.outputUrl,
+        name: `${r.adLabel.replace(/[^a-zA-Z0-9]/g, '_')}_${r.originalName}`,
+      }));
+
+      const res = await fetch('/api/download-zip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files }),
+      });
+
+      if (!res.ok) {
+        // Fallback to individual downloads
+        for (const r of results) {
+          const link = document.createElement('a');
+          link.href = r.outputUrl;
+          link.download = `${r.adLabel.replace(/[^a-zA-Z0-9]/g, '_')}_${r.originalName}`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
-      link.href = r.outputUrl;
-      link.download = `${r.adLabel.replace(/[^a-zA-Z0-9]/g, '_')}_${r.originalName}`;
+      link.href = url;
+      link.download = 'ad-videos.zip';
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch {
+      // Fallback to individual downloads
+      for (const r of results) {
+        const link = document.createElement('a');
+        link.href = r.outputUrl;
+        link.download = `${r.adLabel.replace(/[^a-zA-Z0-9]/g, '_')}_${r.originalName}`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } finally {
+      setDownloadingZip(false);
     }
   };
 
