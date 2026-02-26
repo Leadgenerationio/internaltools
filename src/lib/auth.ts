@@ -15,62 +15,34 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
-        try {
-          if (!credentials?.email || !credentials?.password) {
-            console.log('[auth] Missing email or password');
-            return null;
-          }
+        if (!credentials?.email || !credentials?.password) return null;
 
-          const emailLower = (credentials.email as string).toLowerCase();
-          console.log('[auth] Login attempt for:', emailLower);
+        const user = await prisma.user.findUnique({
+          where: { email: (credentials.email as string).toLowerCase() },
+          include: { company: true },
+        });
 
-          const user = await prisma.user.findUnique({
-            where: { email: emailLower },
-            include: { company: true },
-          });
+        if (!user) return null;
 
-          if (!user) {
-            console.log('[auth] User not found:', emailLower);
-            return null;
-          }
+        const valid = await bcrypt.compare(
+          credentials.password as string,
+          user.passwordHash
+        );
+        if (!valid) return null;
 
-          const passwordInput = credentials.password as string;
-          console.log('[auth] User found, checking password. Input length:', passwordInput.length, 'Hash prefix:', user.passwordHash?.substring(0, 7), 'Hash length:', user.passwordHash?.length);
-          console.log('[auth] Input type:', typeof passwordInput, 'Hash type:', typeof user.passwordHash);
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { lastLoginAt: new Date() },
+        });
 
-          let valid: boolean;
-          try {
-            valid = await bcrypt.compare(passwordInput, user.passwordHash);
-          } catch (bcryptErr) {
-            console.error('[auth] bcrypt.compare threw:', bcryptErr);
-            return null;
-          }
-          console.log('[auth] bcrypt.compare result:', valid);
-
-          if (!valid) {
-            console.log('[auth] Invalid password for:', emailLower);
-            return null;
-          }
-
-          console.log('[auth] Password valid, updating lastLoginAt...');
-          await prisma.user.update({
-            where: { id: user.id },
-            data: { lastLoginAt: new Date() },
-          });
-
-          console.log('[auth] Login successful for:', emailLower);
-          return {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            companyId: user.companyId,
-            companyName: user.company.name,
-            role: user.role,
-          };
-        } catch (error) {
-          console.error('[auth] Authorize error:', error);
-          return null;
-        }
+        return {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          companyId: user.companyId,
+          companyName: user.company.name,
+          role: user.role,
+        };
       },
     }),
   ],

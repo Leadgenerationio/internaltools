@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 
+// NextAuth v5 uses AUTH_SECRET, but also supports NEXTAUTH_SECRET for backwards compat.
+// Pass explicitly to guarantee middleware can decode the JWT.
+const SECRET = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
+
 // ─── Rate Limiting ──────────────────────────────────────────────────────────
 
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
@@ -92,9 +96,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // ── Auth: redirect unauthenticated users to /login ──
+  // ── Auth: redirect unauthenticated users to /welcome ──
   if (!isPublicRoute(pathname)) {
-    const token = await getToken({ req: request });
+    const token = await getToken({ req: request, secret: SECRET });
     if (!token) {
       const welcomeUrl = new URL('/welcome', request.url);
       return NextResponse.redirect(welcomeUrl);
@@ -104,7 +108,7 @@ export async function middleware(request: NextRequest) {
   // ── Rate limiting for API routes ──
   if (pathname.startsWith('/api/') && !pathname.startsWith('/api/auth')) {
     // Use userId from token if available, fall back to IP
-    const token = await getToken({ req: request });
+    const token = await getToken({ req: request, secret: SECRET });
     const rateLimitKey = token?.sub || getClientIp(request);
 
     const routeKey = Object.keys(RATE_LIMITS).find((key) => pathname.startsWith(key));
