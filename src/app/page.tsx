@@ -184,11 +184,15 @@ export default function Home() {
     setGenerating(true);
     setGenerateError(null);
 
+    const abort = new AbortController();
+    generateAbortRef.current = abort;
+
     try {
       const res = await fetch('/api/generate-ads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ brief: newBrief }),
+        signal: abort.signal,
       });
 
       const data = await res.json();
@@ -221,8 +225,10 @@ export default function Home() {
       setAds(generated);
       setStep('review');
     } catch (err: any) {
+      if (err.name === 'AbortError') return; // Handled by cancel button
       setGenerateError(err.message || 'Generation failed');
     } finally {
+      generateAbortRef.current = null;
       setGenerating(false);
     }
   };
