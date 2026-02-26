@@ -141,15 +141,26 @@ export default function AdBriefForm({ onGenerate, generating, initialBrief }: Pr
           Output language
           <Tooltip text="The language your ad copy will be written in. The AI will generate all text boxes in this language." />
         </label>
-        <select
-          value={brief.language}
-          onChange={(e) => update('language', e.target.value)}
-          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none cursor-pointer"
-        >
-          {AD_LANGUAGES.map((lang) => (
-            <option key={lang} value={lang}>{lang}</option>
-          ))}
-        </select>
+        <div className="relative">
+          <select
+            value={brief.language}
+            onChange={(e) => update('language', e.target.value)}
+            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 pr-10 text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none cursor-pointer"
+          >
+            {AD_LANGUAGES.map((lang) => (
+              <option key={lang} value={lang}>{lang}</option>
+            ))}
+          </select>
+          <svg
+            className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </div>
       </div>
 
       {/* Emoji toggle */}
