@@ -86,30 +86,36 @@ src/
 │   ├── page.tsx                    # Main 4-step flow controller
 │   ├── layout.tsx                  # Root layout + metadata
 │   ├── globals.css                 # Tailwind + custom styles
+│   ├── login/
+│   │   └── page.tsx                # Password login page
 │   └── api/
+│       ├── auth/route.ts           # Password authentication endpoint
 │       ├── generate-ads/route.ts   # Claude API → ad copy
 │       ├── generate-video/route.ts # Google Veo → AI videos
-│       ├── render/route.ts         # FFmpeg batch render
+│       ├── render/route.ts         # FFmpeg batch render + cloud storage upload
 │       ├── upload/route.ts         # Video file upload
 │       ├── upload-music/route.ts   # Music file upload
+│       ├── download-zip/route.ts   # Bundle outputs into ZIP
 │       ├── log/route.ts            # Client log ingestion
 │       └── logs/route.ts           # Log retrieval
 ├── components/
 │   ├── AdBriefForm.tsx             # Brief input (6 fields)
-│   ├── FunnelReview.tsx            # Tabbed ad review + approve/edit/regen
-│   ├── StyleConfigurator.tsx       # Overlay style presets + custom controls
+│   ├── FunnelReview.tsx            # Tabbed ad review + approve/edit/regen + copy text
+│   ├── StyleConfigurator.tsx       # Overlay style presets + custom controls + template library
 │   ├── VideoSourceTabs.tsx         # Upload vs AI generate tabs
-│   ├── VideoUploader.tsx           # Drag-drop video upload
-│   ├── VideoGenerator.tsx          # Veo video generation (multi-prompt, multi-batch)
-│   ├── MusicSelector.tsx           # Music upload + volume/fade
-│   ├── VideoPreview.tsx            # Real-time 9:16 preview
+│   ├── VideoUploader.tsx           # Drag-drop video upload with cancel
+│   ├── VideoGenerator.tsx          # Veo video generation with cancel
+│   ├── MusicSelector.tsx           # Upload and configure background music
+│   ├── VideoPreview.tsx            # Real-time 9:16 preview + trim controls
 │   ├── TextOverlayEditor.tsx       # Manual overlay editor
 │   └── LogViewer.tsx               # Debug log viewer
+├── middleware.ts                    # Auth, rate limiting, CORS, security headers
 └── lib/
     ├── types.ts                    # All TypeScript interfaces + constants
-    ├── ffmpeg-renderer.ts          # FFmpeg render pipeline
+    ├── ffmpeg-renderer.ts          # FFmpeg render pipeline (draft/final quality, trim)
     ├── overlay-renderer.ts         # Canvas → PNG overlay generation
     ├── get-video-info.ts           # ffprobe metadata + FFmpeg check
+    ├── storage.ts                  # Cloud storage abstraction (local FS / S3 / R2)
     └── logger.ts                   # Winston logger config
 ```
 
@@ -140,7 +146,7 @@ FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to 
 - `GeneratedAd` — id, funnelStage, variationLabel, textBoxes[], approved
 - `TextOverlay` — id, text, startTime, endTime, position, style
 - `TextStyle` — fontSize, fontWeight, textColor, bgColor, bgOpacity, borderRadius, padding, maxWidth, textAlign
-- `UploadedVideo` — id, filename, path, duration, width, height, thumbnail
+- `UploadedVideo` — id, filename, path, duration, width, height, thumbnail, trimStart?, trimEnd?
 - `MusicTrack` — id, name, file, volume, fadeIn, fadeOut
 
 ### State (all in page.tsx)
@@ -151,6 +157,7 @@ FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to 
 - `music` — optional music track
 - `overlayStyle` — current TextStyle for rendering
 - `staggerSeconds` — seconds between text box appearances
+- `renderQuality` — 'draft' (fast, lower quality) or 'final' (slow, high quality)
 - `results` — rendered video output URLs
 
 ## API Routes
@@ -161,7 +168,9 @@ FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to 
 | `/api/generate-video` | POST | Generate video via Veo | 300s |
 | `/api/upload` | POST | Upload video files (max 500MB each) | 60s |
 | `/api/upload-music` | POST | Upload music (max 50MB, validated formats) | default |
-| `/api/render` | POST | Batch FFmpeg render | 300s |
+| `/api/render` | POST | Batch FFmpeg render (supports draft/final quality, trim) | 300s |
+| `/api/download-zip` | POST | Bundle rendered videos into a ZIP file | default |
+| `/api/auth` | POST | Password authentication (sets httpOnly cookie) | default |
 | `/api/log` | POST | Ingest client-side logs | default |
 | `/api/logs` | GET | Retrieve recent log lines | default |
 
@@ -170,11 +179,18 @@ FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to 
 ```
 ANTHROPIC_API_KEY=sk-ant-...    # Required for ad copy generation
 GOOGLE_API_KEY=...               # Optional for Veo video generation
+APP_PASSWORD=...                 # Optional — password-protect the entire app
+S3_BUCKET=your-bucket            # Optional — enable cloud storage (S3/R2)
+S3_ENDPOINT=https://...          # Required with S3_BUCKET
+S3_ACCESS_KEY_ID=...             # Required with S3_BUCKET
+S3_SECRET_ACCESS_KEY=...         # Required with S3_BUCKET
+S3_PUBLIC_URL=https://...        # Optional — public URL prefix for S3 files
 ```
 
 ## Security
 
 ### Middleware (`src/middleware.ts`)
+- **Password protection**: Optional `APP_PASSWORD` env var — redirects unauthenticated users to `/login`, sets httpOnly cookie
 - **Rate limiting**: Per-IP rate limits on all API routes (configurable per-route)
 - **CORS**: Explicit `Access-Control-Allow-Origin` restricted to allowed origins
 - **Security headers**: X-Frame-Options, X-Content-Type-Options, Referrer-Policy, X-XSS-Protection, Permissions-Policy, Content-Security-Policy
@@ -276,6 +292,53 @@ scripts/
 ├── security.ts            # Main security agent script
 └── security.config.json   # Config with defaults + thresholds
 ```
+
+## Cloud Storage (`src/lib/storage.ts`)
+
+Abstraction layer that defaults to local filesystem and switches to S3-compatible storage (AWS S3, Cloudflare R2, etc.) when `S3_BUCKET` is configured.
+
+- **Local mode** (default): Files stay on disk in `public/`, URLs are relative paths
+- **Cloud mode**: Files uploaded to S3 after processing, local copies cleaned up
+- AWS SDK is lazy-loaded — only imported when cloud storage is actually configured
+- Currently integrated into the render route (output videos uploaded to S3)
+
+## Video Trimming
+
+Users can trim uploaded videos before rendering:
+- Trim controls in VideoPreview (start/end range sliders)
+- `trimStart`/`trimEnd` stored on `UploadedVideo` and passed to FFmpeg
+- FFmpeg uses `-ss` (seek before input) and `-t` (duration limit) for efficient trim
+- Overlay timing is based on trimmed duration
+
+## Render Quality
+
+Two render quality modes selectable before rendering:
+- **Draft**: `preset=ultrafast`, `crf=28` — fast encoding, lower quality, good for previewing
+- **Final**: `preset=fast`, `crf=23` — slower encoding, higher quality, for production use
+
+## Password Protection
+
+Optional app-wide password protection via `APP_PASSWORD` env var:
+- Middleware redirects unauthenticated users to `/login`
+- Login page posts to `/api/auth` which validates and sets an httpOnly cookie
+- Cookie is base64-encoded password, checked in middleware on every request
+- No password set = no protection (open access)
+
+## UX Features
+
+- **Cancel buttons**: AbortController on all long-running operations (generate, render, upload)
+- **ZIP download**: Server-side ZIP creation via `/api/download-zip` for "Download All"
+- **Auto-dismiss**: Success messages auto-clear after 8 seconds
+- **Copy ad text**: Clipboard button on each ad card in FunnelReview
+- **Template library**: Save/load overlay style presets to localStorage
+- **Mobile-responsive**: Render results grid adapts to screen size
+
+## Deployment
+
+- **Platform**: Railway (Docker-based)
+- **Dockerfile**: Multi-stage build — builder with native dependencies, runner with runtime libs + FFmpeg
+- **Output**: Next.js standalone mode (`output: 'standalone'` in next.config.js)
+- **Auto-deploy**: Git agent (`npm run git-agent`) watches for file changes and auto-pushes to GitHub, triggering Railway auto-deploy
 
 ## Prerequisites
 

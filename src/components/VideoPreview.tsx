@@ -8,11 +8,13 @@ interface Props {
   videos: UploadedVideo[];
   activeIndex: number;
   onVideoChange: (index: number) => void;
+  onUpdateVideo?: (index: number, updates: Partial<UploadedVideo>) => void;
   overlays: TextOverlay[];
   music: MusicTrack | null;
 }
 
-export default function VideoPreview({ video, videos, activeIndex, onVideoChange, overlays, music }: Props) {
+export default function VideoPreview({ video, videos, activeIndex, onVideoChange, onUpdateVideo, overlays, music }: Props) {
+  const [showTrim, setShowTrim] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
@@ -225,10 +227,84 @@ export default function VideoPreview({ video, videos, activeIndex, onVideoChange
         </button>
       </div>
 
-      {/* Playback time */}
-      <div className="text-center text-xs text-gray-500">
-        {currentTime.toFixed(1)}s / {video.duration.toFixed(1)}s
+      {/* Playback time + trim toggle */}
+      <div className="flex items-center justify-center gap-3 text-xs text-gray-500">
+        <span>{currentTime.toFixed(1)}s / {video.duration.toFixed(1)}s</span>
+        {onUpdateVideo && (
+          <button
+            onClick={() => setShowTrim(!showTrim)}
+            className={`px-2 py-0.5 rounded text-xs transition-colors ${
+              showTrim || video.trimStart || video.trimEnd
+                ? 'text-blue-400 bg-blue-500/10'
+                : 'text-gray-500 hover:text-gray-300'
+            }`}
+          >
+            {video.trimStart !== undefined || video.trimEnd !== undefined
+              ? `Trimmed: ${(video.trimStart ?? 0).toFixed(1)}s–${(video.trimEnd ?? video.duration).toFixed(1)}s`
+              : 'Trim'}
+          </button>
+        )}
       </div>
+
+      {/* Trim controls */}
+      {showTrim && onUpdateVideo && (
+        <div className="p-3 bg-gray-800 rounded-lg border border-gray-700 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-400 font-medium">Trim Video</span>
+            {(video.trimStart !== undefined || video.trimEnd !== undefined) && (
+              <button
+                onClick={() => onUpdateVideo(activeIndex, { trimStart: undefined, trimEnd: undefined })}
+                className="text-xs text-red-400 hover:text-red-300 transition-colors"
+              >
+                Reset
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Start</label>
+              <div className="flex items-center gap-1">
+                <input
+                  type="range"
+                  min={0}
+                  max={video.duration}
+                  step={0.1}
+                  value={video.trimStart ?? 0}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    const end = video.trimEnd ?? video.duration;
+                    if (val < end - 0.5) onUpdateVideo(activeIndex, { trimStart: val > 0 ? val : undefined });
+                  }}
+                  className="flex-1 accent-blue-500 h-1.5"
+                />
+                <span className="text-xs text-gray-400 w-10 text-right">{(video.trimStart ?? 0).toFixed(1)}s</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">End</label>
+              <div className="flex items-center gap-1">
+                <input
+                  type="range"
+                  min={0}
+                  max={video.duration}
+                  step={0.1}
+                  value={video.trimEnd ?? video.duration}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    const start = video.trimStart ?? 0;
+                    if (val > start + 0.5) onUpdateVideo(activeIndex, { trimEnd: val < video.duration ? val : undefined });
+                  }}
+                  className="flex-1 accent-blue-500 h-1.5"
+                />
+                <span className="text-xs text-gray-400 w-10 text-right">{(video.trimEnd ?? video.duration).toFixed(1)}s</span>
+              </div>
+            </div>
+          </div>
+          <p className="text-xs text-gray-600">
+            Output duration: {((video.trimEnd ?? video.duration) - (video.trimStart ?? 0)).toFixed(1)}s
+          </p>
+        </div>
+      )}
     </div>
   );
 }

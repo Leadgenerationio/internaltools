@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { renderVideo, batchRender } from '@/lib/ffmpeg-renderer';
+import { uploadFile, isCloudStorage } from '@/lib/storage';
 import type { TextOverlay, MusicTrack, UploadedVideo } from '@/lib/types';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
@@ -61,7 +62,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Prepare video paths - validate they stay within uploads
-    const videoPaths: { inputPath: string; outputPath: string; width: number; height: number; duration: number }[] = [];
+    const videoPaths: { inputPath: string; outputPath: string; width: number; height: number; duration: number; trimStart?: number; trimEnd?: number }[] = [];
     for (const v of videos) {
       const cleanPath = v.path.startsWith('/') ? v.path.slice(1) : v.path;
       if (!cleanPath.startsWith('uploads/')) {
@@ -80,17 +81,25 @@ export async function POST(request: NextRequest) {
         width: v.width,
         height: v.height,
         duration: v.duration,
+        trimStart: v.trimStart,
+        trimEnd: v.trimEnd,
       });
     }
 
     const outputPaths = await batchRender(videoPaths, overlays, musicConfig, undefined, quality);
 
-    // Return paths relative to public dir
-    const results = outputPaths.map((p, i) => ({
-      videoId: videos[i].id,
-      originalName: videos[i].originalName,
-      outputUrl: `/outputs/${path.basename(p)}`,
-    }));
+    // Upload to cloud storage if configured, otherwise return local paths
+    const results = [];
+    for (let i = 0; i < outputPaths.length; i++) {
+      const p = outputPaths[i];
+      const storagePath = `outputs/${path.basename(p)}`;
+      const outputUrl = await uploadFile(p, storagePath);
+      results.push({
+        videoId: videos[i].id,
+        originalName: videos[i].originalName,
+        outputUrl,
+      });
+    }
 
     return NextResponse.json({ results });
   } catch (error: any) {

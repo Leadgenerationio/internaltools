@@ -10,8 +10,11 @@ After any new feature or major change, always update `ARCHITECTURE.md`, `CLAUDE.
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) for generating TOFU/MOFU/BOFU ad text
 - **AI video generation**: Google Veo 3.1 (optional — users can also upload their own videos)
 - **File handling**: Uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/`
+- **Cloud storage**: Optional S3/R2 support via `src/lib/storage.ts` (activated by `S3_BUCKET` env var)
+- **Auth**: Optional password protection via `APP_PASSWORD` env var (middleware + cookie)
 - **State**: React useState (no external state management)
 - **Logging**: Winston with daily-rotate-file, client-side logs forwarded via `/api/log`
+- **Deployment**: Railway with Docker, Next.js standalone output
 
 ## App Flow (4 Steps)
 
@@ -51,11 +54,15 @@ src/
     api/
       generate-ads/route.ts — Claude API for ad copy generation
       generate-video/route.ts — Google Veo API for video generation
+      auth/route.ts         — Password authentication endpoint
       upload/route.ts       — Video upload (validates size, extracts metadata via ffprobe)
       upload-music/route.ts — Music upload (validates format + size)
-      render/route.ts       — FFmpeg batch render endpoint
+      render/route.ts       — FFmpeg batch render + cloud storage upload
+      download-zip/route.ts — Bundle outputs into ZIP
       log/route.ts          — Client-side log ingestion
       logs/route.ts         — Log retrieval for debug viewer
+    login/
+      page.tsx              — Password login page
   components/
     AdBriefForm.tsx         — Rich brief input form (6 fields)
     FunnelReview.tsx        — Tabbed review UI (TOFU/MOFU/BOFU) with approve/edit/regenerate
@@ -69,9 +76,10 @@ src/
     LogViewer.tsx           — Expandable debug log viewer (only polls when open)
   lib/
     types.ts                — TypeScript interfaces, presets, funnel types
-    ffmpeg-renderer.ts      — Core FFmpeg rendering (overlay compositing + audio mixing)
+    ffmpeg-renderer.ts      — Core FFmpeg rendering (overlay compositing + audio mixing, trim, quality)
     overlay-renderer.ts     — Canvas-based PNG generation with emoji support
     get-video-info.ts       — ffprobe metadata extraction + FFmpeg availability check
+    storage.ts              — Cloud storage abstraction (local FS / S3 / R2)
     logger.ts               — Winston logger setup
 ```
 
@@ -102,3 +110,5 @@ src/
 - FFmpeg installed (`brew install ffmpeg` / `apt install ffmpeg`)
 - `ANTHROPIC_API_KEY` in `.env.local` for ad copy generation
 - `GOOGLE_API_KEY` in `.env.local` for Veo video generation (optional)
+- `APP_PASSWORD` in env for password protection (optional)
+- `S3_BUCKET`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` for cloud storage (optional)

@@ -173,7 +173,9 @@ export default function Home() {
   const approvedAds = ads.filter((a) => a.approved);
   const safeVideoIndex = Math.min(previewVideoIndex, Math.max(videos.length - 1, 0));
   const previewVideo = videos[safeVideoIndex] || null;
-  const videoDuration = previewVideo ? previewVideo.duration : 15;
+  const videoDuration = previewVideo
+    ? (previewVideo.trimEnd ?? previewVideo.duration) - (previewVideo.trimStart ?? 0)
+    : 15;
 
   // Preview overlays for the selected ad
   const previewAd = ads.find((a) => a.id === previewAdId) || approvedAds[0] || null;
@@ -301,8 +303,9 @@ export default function Home() {
           break;
         }
 
-        // Compute overlays per-video so timing matches each video's actual duration
-        const overlays = adsToOverlays(ad, vid.duration, overlayStyle, staggerSeconds);
+        // Compute overlays per-video so timing matches each video's actual (trimmed) duration
+        const trimmedDuration = (vid.trimEnd ?? vid.duration) - (vid.trimStart ?? 0);
+        const overlays = adsToOverlays(ad, trimmedDuration, overlayStyle, staggerSeconds);
 
         setRenderProgress(`Rendering "${ad.variationLabel}" — ${vid.originalName} (${completed + 1} of ${totalCount})...`);
 
@@ -411,6 +414,10 @@ export default function Home() {
       setDownloadingZip(false);
     }
   };
+
+  const handleUpdateVideo = useCallback((index: number, updates: Partial<UploadedVideo>) => {
+    setVideos((prev) => prev.map((v, i) => i === index ? { ...v, ...updates } : v));
+  }, []);
 
   const canRender = approvedAds.length > 0 && videos.length > 0;
   const isAsyncBusy = generating || rendering || uploading || videoGenerating;
@@ -650,6 +657,7 @@ export default function Home() {
                   videos={videos}
                   activeIndex={safeVideoIndex}
                   onVideoChange={setPreviewVideoIndex}
+                  onUpdateVideo={handleUpdateVideo}
                   overlays={previewOverlays}
                   music={music}
                 />

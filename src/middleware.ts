@@ -74,6 +74,19 @@ const SECURITY_HEADERS: Record<string, string> = {
 
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'http://localhost:3000';
 
+// ─── Password Protection ────────────────────────────────────────────────────
+
+const APP_PASSWORD = process.env.APP_PASSWORD; // Set in Railway to protect the app
+
+function checkAuth(request: NextRequest): NextResponse | null {
+  if (!APP_PASSWORD) return null; // No password set = no protection
+
+  const authCookie = request.cookies.get('app_auth')?.value;
+  if (authCookie === APP_PASSWORD) return null; // Already authenticated
+
+  return null; // Auth check is handled by the login page
+}
+
 // ─── Middleware ─────────────────────────────────────────────────────────────
 
 export function middleware(request: NextRequest) {
@@ -82,6 +95,18 @@ export function middleware(request: NextRequest) {
   // Only process API routes and page requests
   if (pathname.startsWith('/_next') || pathname.startsWith('/favicon')) {
     return NextResponse.next();
+  }
+
+  // Password protection — redirect to login if not authenticated
+  if (APP_PASSWORD) {
+    const isLoginRoute = pathname === '/login' || pathname === '/api/auth';
+    const authCookie = request.cookies.get('app_auth')?.value;
+    const isAuthed = authCookie === Buffer.from(APP_PASSWORD).toString('base64');
+
+    if (!isAuthed && !isLoginRoute && !pathname.startsWith('/_next')) {
+      const loginUrl = new URL('/login', request.url);
+      return NextResponse.redirect(loginUrl);
+    }
   }
 
   // ── Rate limiting for API routes ──

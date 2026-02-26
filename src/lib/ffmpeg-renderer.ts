@@ -54,6 +54,8 @@ export interface RenderOptions {
   videoWidth: number;
   videoHeight: number;
   videoDuration: number;
+  trimStart?: number;
+  trimEnd?: number;
   quality?: RenderQuality;
   onProgress?: (percent: number) => void;
 }
@@ -68,8 +70,12 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
     overlays,
     music,
     videoDuration,
+    trimStart,
+    trimEnd,
     quality = 'final',
   } = options;
+
+  const hasTrim = (trimStart !== undefined && trimStart > 0) || (trimEnd !== undefined && trimEnd < videoDuration);
 
   // Quality settings: draft = fast encode, lower quality; final = high quality
   const preset = quality === 'draft' ? 'ultrafast' : 'fast';
@@ -126,8 +132,19 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
     // Build FFmpeg args as an array (no shell interpolation)
     const args: string[] = ['-y'];
 
+    // Trim: seek to start time before input for efficiency
+    if (hasTrim && trimStart && trimStart > 0) {
+      args.push('-ss', String(trimStart));
+    }
+
     // Input files
     args.push('-i', inputVideoPath);
+
+    // Trim: limit duration
+    if (hasTrim) {
+      const effectiveDuration = (trimEnd ?? videoDuration) - (trimStart ?? 0);
+      args.push('-t', String(effectiveDuration));
+    }
 
     if (music && fs.existsSync(music.file)) {
       args.push('-i', music.file);
@@ -188,7 +205,7 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
  * Batch render: apply same overlays + music to multiple videos
  */
 export async function batchRender(
-  videoPaths: { inputPath: string; outputPath: string; width: number; height: number; duration: number }[],
+  videoPaths: { inputPath: string; outputPath: string; width: number; height: number; duration: number; trimStart?: number; trimEnd?: number }[],
   overlays: TextOverlay[],
   music: MusicTrack | null,
   onJobProgress?: (videoIndex: number, percent: number) => void,
@@ -206,6 +223,8 @@ export async function batchRender(
       videoWidth: video.width,
       videoHeight: video.height,
       videoDuration: video.duration,
+      trimStart: video.trimStart,
+      trimEnd: video.trimEnd,
       quality,
       onProgress: (p) => onJobProgress?.(i, p),
     });

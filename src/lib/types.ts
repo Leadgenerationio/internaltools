@@ -41,6 +41,8 @@ export interface UploadedVideo {
   width: number;
   height: number;
   thumbnail: string;
+  trimStart?: number;  // seconds from start to begin
+  trimEnd?: number;    // seconds from start to end
 }
 
 // Default style matching the solar ad format (rounded white boxes, bold text, generous padding)

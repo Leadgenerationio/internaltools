@@ -68,11 +68,16 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) — generates TOFU/MOFU/BOFU funnel ad text
 - **AI video generation**: Google Veo 3.1 (optional)
 - **Files**: uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/`
+- **Cloud storage**: Optional S3/R2 via `src/lib/storage.ts` — activated by `S3_BUCKET` env var, lazy-loads AWS SDK
+- **Auth**: Optional password protection via `APP_PASSWORD` env var — middleware redirect to `/login`, httpOnly cookie
 - **State management**: React useState, no external store
 - **Logging**: Winston with daily-rotate-file, client-side log helper POSTs to `/api/log`
 - **App flow**: 4-step wizard — Brief → Review → Media → Render
 - **Overlay rendering**: Canvas PNG approach (not FFmpeg drawtext) for emoji support
+- **Video trimming**: Users can trim videos via range sliders in VideoPreview; FFmpeg uses `-ss`/`-t` flags
+- **Render quality**: Draft (ultrafast/crf28) vs Final (fast/crf23) selectable before render
 - **Dark themed UI**: gray-950 background, gray-800 cards, blue-500 accents, green-600 action buttons
 - **No branding in ads**: "Andro Media" = Meta's ad system, not a brand to put in generated copy
+- **Deployment**: Railway with Docker, `output: 'standalone'` in next.config.js, auto-deploy via git-agent
 - **Watchdog QA**: `npm run watchdog` — standalone script that continuously tests all endpoints, checks health, stress-tests, and auto-remediates (restart server, create dirs, clean old files). Config in `scripts/watchdog.config.json`
 - **Security Agent**: `npm run security` — continuous security audit (blast radius, network exposure, browser control, disk hygiene, plugin hygiene, credentials, reverse proxy, session logs, shell injection, input validation, path traversal, secrets in git history). Config in `scripts/security.config.json`. `npm run security:once` for single scan with CI-friendly exit codes.
