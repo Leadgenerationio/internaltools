@@ -1,7 +1,27 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import type { TextStyle } from '@/lib/types';
 import { OVERLAY_PRESETS } from '@/lib/types';
+
+interface SavedTemplate {
+  name: string;
+  style: TextStyle;
+  stagger: number;
+}
+
+const TEMPLATES_KEY = 'adMaker_templates';
+
+function loadTemplates(): SavedTemplate[] {
+  try {
+    const stored = localStorage.getItem(TEMPLATES_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch { return []; }
+}
+
+function saveTemplates(templates: SavedTemplate[]) {
+  try { localStorage.setItem(TEMPLATES_KEY, JSON.stringify(templates)); } catch { /* ignore */ }
+}
 
 interface Props {
   style: TextStyle;
@@ -11,6 +31,12 @@ interface Props {
 }
 
 export default function StyleConfigurator({ style, onChange, staggerSeconds, onStaggerChange }: Props) {
+  const [templates, setTemplates] = useState<SavedTemplate[]>([]);
+  const [showSave, setShowSave] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+
+  useEffect(() => { setTemplates(loadTemplates()); }, []);
+
   const update = (changes: Partial<TextStyle>) => {
     onChange({ ...style, ...changes });
   };
@@ -18,6 +44,27 @@ export default function StyleConfigurator({ style, onChange, staggerSeconds, onS
   const applyPreset = (key: string) => {
     const preset = OVERLAY_PRESETS[key as keyof typeof OVERLAY_PRESETS];
     if (preset) onChange({ ...preset.style });
+  };
+
+  const handleSaveTemplate = () => {
+    const name = templateName.trim();
+    if (!name) return;
+    const updated = [...templates.filter((t) => t.name !== name), { name, style: { ...style }, stagger: staggerSeconds }];
+    setTemplates(updated);
+    saveTemplates(updated);
+    setTemplateName('');
+    setShowSave(false);
+  };
+
+  const handleLoadTemplate = (t: SavedTemplate) => {
+    onChange({ ...t.style });
+    onStaggerChange(t.stagger);
+  };
+
+  const handleDeleteTemplate = (name: string) => {
+    const updated = templates.filter((t) => t.name !== name);
+    setTemplates(updated);
+    saveTemplates(updated);
   };
 
   return (
@@ -139,6 +186,67 @@ export default function StyleConfigurator({ style, onChange, staggerSeconds, onS
             <option value="extrabold">Extra Bold</option>
           </select>
         </div>
+      </div>
+
+      {/* Saved templates */}
+      <div className="border-t border-gray-700 pt-3">
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs text-gray-400">Saved Templates</label>
+          <button
+            onClick={() => setShowSave(!showSave)}
+            className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+          >
+            {showSave ? 'Cancel' : 'Save Current'}
+          </button>
+        </div>
+
+        {showSave && (
+          <div className="flex gap-2 mb-2">
+            <input
+              type="text"
+              value={templateName}
+              onChange={(e) => setTemplateName(e.target.value)}
+              placeholder="Template name..."
+              className="flex-1 bg-gray-900 border border-gray-600 rounded-lg px-2 py-1 text-white text-xs focus:border-blue-500 focus:outline-none"
+              onKeyDown={(e) => e.key === 'Enter' && handleSaveTemplate()}
+            />
+            <button
+              onClick={handleSaveTemplate}
+              disabled={!templateName.trim()}
+              className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-xs rounded-lg transition-colors"
+            >
+              Save
+            </button>
+          </div>
+        )}
+
+        {templates.length > 0 ? (
+          <div className="space-y-1">
+            {templates.map((t) => (
+              <div key={t.name} className="flex items-center gap-2">
+                <button
+                  onClick={() => handleLoadTemplate(t)}
+                  className="flex-1 text-left px-2 py-1.5 text-xs text-gray-300 hover:text-white hover:bg-gray-700 rounded transition-colors truncate"
+                >
+                  <span
+                    className="inline-block w-2.5 h-2.5 rounded mr-1.5 align-middle border border-gray-600"
+                    style={{ backgroundColor: t.style.bgOpacity > 0 ? t.style.bgColor : 'transparent' }}
+                  />
+                  {t.name}
+                </button>
+                <button
+                  onClick={() => handleDeleteTemplate(t.name)}
+                  className="shrink-0 text-xs text-gray-500 hover:text-red-400 px-1 transition-colors"
+                  title="Delete template"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-gray-600">No saved templates yet.</p>
+        )}
       </div>
     </div>
   );

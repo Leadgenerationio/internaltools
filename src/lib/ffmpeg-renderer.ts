@@ -44,6 +44,8 @@ const OUTPUT_HEIGHT = 1920;
  * use FFmpeg's overlay filter to composite them onto the video.
  */
 
+export type RenderQuality = 'draft' | 'final';
+
 export interface RenderOptions {
   inputVideoPath: string;
   outputPath: string;
@@ -52,6 +54,7 @@ export interface RenderOptions {
   videoWidth: number;
   videoHeight: number;
   videoDuration: number;
+  quality?: RenderQuality;
   onProgress?: (percent: number) => void;
 }
 
@@ -65,7 +68,12 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
     overlays,
     music,
     videoDuration,
+    quality = 'final',
   } = options;
+
+  // Quality settings: draft = fast encode, lower quality; final = high quality
+  const preset = quality === 'draft' ? 'ultrafast' : 'fast';
+  const crf = quality === 'draft' ? '28' : '23';
 
   // Ensure output directory exists
   const outputDir = path.dirname(outputPath);
@@ -144,14 +152,14 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
 
       args.push('-filter_complex', filterComplex);
       args.push('-map', '[outv]', '-map', '[outa]');
-      args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '23');
+      args.push('-c:v', 'libx264', '-preset', preset, '-crf', crf);
       args.push('-c:a', 'aac', '-b:a', '192k');
       args.push('-movflags', '+faststart');
       args.push('-t', String(videoDuration));
     } else {
       args.push('-filter_complex', videoFilter);
       args.push('-map', '[outv]');
-      args.push('-c:v', 'libx264', '-preset', 'fast', '-crf', '23');
+      args.push('-c:v', 'libx264', '-preset', preset, '-crf', crf);
       args.push('-c:a', 'copy');
       args.push('-movflags', '+faststart');
     }
@@ -184,6 +192,7 @@ export async function batchRender(
   overlays: TextOverlay[],
   music: MusicTrack | null,
   onJobProgress?: (videoIndex: number, percent: number) => void,
+  quality?: RenderQuality,
 ): Promise<string[]> {
   const results: string[] = [];
 
@@ -197,6 +206,7 @@ export async function batchRender(
       videoWidth: video.width,
       videoHeight: video.height,
       videoDuration: video.duration,
+      quality,
       onProgress: (p) => onJobProgress?.(i, p),
     });
     results.push(output);

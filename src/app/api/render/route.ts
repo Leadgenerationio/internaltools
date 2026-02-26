@@ -31,10 +31,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
     }
 
-    const { videos, overlays, music } = body as {
+    const { videos, overlays, music, quality } = body as {
       videos: UploadedVideo[];
       overlays: TextOverlay[];
       music: MusicTrack | null;
+      quality?: 'draft' | 'final';
     };
 
     if (!videos || videos.length === 0) {
@@ -82,7 +83,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const outputPaths = await batchRender(videoPaths, overlays, musicConfig);
+    const outputPaths = await batchRender(videoPaths, overlays, musicConfig, undefined, quality);
 
     // Return paths relative to public dir
     const results = outputPaths.map((p, i) => ({

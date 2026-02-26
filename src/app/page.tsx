@@ -74,6 +74,9 @@ export default function Home() {
   const [overlayStyle, setOverlayStyle] = useState<TextStyle>({ ...DEFAULT_TEXT_STYLE });
   const [staggerSeconds, setStaggerSeconds] = useState(2);
 
+  // Render quality
+  const [renderQuality, setRenderQuality] = useState<'draft' | 'final'>('final');
+
   // Render
   const [rendering, setRendering] = useState(false);
   const [renderProgress, setRenderProgress] = useState('');
@@ -104,6 +107,7 @@ export default function Home() {
         if (s.step) setStep(s.step);
         if (s.overlayStyle) setOverlayStyle(s.overlayStyle);
         if (typeof s.staggerSeconds === 'number') setStaggerSeconds(s.staggerSeconds);
+        if (s.renderQuality) setRenderQuality(s.renderQuality);
         if (s.videos?.length) setVideos(s.videos);
         if (s.music) setMusic(s.music);
       }
@@ -115,10 +119,10 @@ export default function Home() {
     if (!isRestored) return;
     try {
       localStorage.setItem('adMaker_state', JSON.stringify({
-        brief, ads, step, overlayStyle, staggerSeconds, videos, music,
+        brief, ads, step, overlayStyle, staggerSeconds, renderQuality, videos, music,
       }));
     } catch { /* storage full or unavailable */ }
-  }, [isRestored, brief, ads, step, overlayStyle, staggerSeconds, videos, music]);
+  }, [isRestored, brief, ads, step, overlayStyle, staggerSeconds, renderQuality, videos, music]);
 
   // Auto-dismiss success/done messages after 8 seconds
   useEffect(() => {
@@ -306,7 +310,7 @@ export default function Home() {
           const res = await fetch('/api/render', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ videos: [vid], overlays, music }),
+            body: JSON.stringify({ videos: [vid], overlays, music, quality: renderQuality }),
             signal: abort.signal,
           });
 
@@ -433,13 +437,13 @@ export default function Home() {
           </div>
 
           {/* Step nav */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 overflow-x-auto">
             {steps.map((s) => (
               <button
                 key={s.key}
                 onClick={() => s.enabled && setStep(s.key)}
                 disabled={!s.enabled}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                className={`px-2 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap ${
                   step === s.key
                     ? 'bg-blue-600 text-white'
                     : s.enabled
@@ -452,7 +456,7 @@ export default function Home() {
             ))}
             <button
               onClick={handleResetAll}
-              className="ml-2 px-3 py-1.5 rounded-lg text-sm font-medium text-red-400 hover:text-red-300 hover:bg-red-950/30 transition-all"
+              className="ml-1 sm:ml-2 px-2 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium text-red-400 hover:text-red-300 hover:bg-red-950/30 transition-all whitespace-nowrap"
               title="Clear all saved data and start fresh"
             >
               Reset
@@ -573,6 +577,35 @@ export default function Home() {
                   </p>
                 </div>
               )}
+
+              {/* Render quality */}
+              <div className="p-4 bg-gray-800 rounded-xl border border-gray-700">
+                <h3 className="text-sm font-semibold text-gray-300 mb-2">Render Quality</h3>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setRenderQuality('draft')}
+                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                      renderQuality === 'draft'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-900 text-gray-400 hover:text-gray-300 border border-gray-600'
+                    }`}
+                  >
+                    <span className="block">Draft</span>
+                    <span className="block text-xs opacity-60 mt-0.5">Fast preview, lower quality</span>
+                  </button>
+                  <button
+                    onClick={() => setRenderQuality('final')}
+                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                      renderQuality === 'final'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-900 text-gray-400 hover:text-gray-300 border border-gray-600'
+                    }`}
+                  >
+                    <span className="block">Final</span>
+                    <span className="block text-xs opacity-60 mt-0.5">High quality, ready to upload</span>
+                  </button>
+                </div>
+              </div>
 
               <div className="flex items-center justify-between pt-4 border-t border-gray-800">
                 <button
@@ -713,25 +746,25 @@ export default function Home() {
                     </button>
                   )}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
                   {results.map((r, i) => (
                     <div
                       key={i}
-                      className="bg-gray-800 rounded-xl p-4 border border-gray-700 hover:border-gray-600 transition-colors"
+                      className="bg-gray-800 rounded-xl p-2 sm:p-4 border border-gray-700 hover:border-gray-600 transition-colors"
                     >
                       <video
                         src={r.outputUrl}
-                        className="w-full rounded-lg mb-3 aspect-[9/16] object-cover"
+                        className="w-full rounded-lg mb-2 sm:mb-3 aspect-[9/16] object-cover bg-black"
                         controls
                         playsInline
                       />
-                      <div className="space-y-2">
-                        <p className="text-xs text-blue-400 font-medium">{r.adLabel}</p>
-                        <p className="text-sm text-gray-300 truncate">{r.originalName}</p>
+                      <div className="space-y-1.5 sm:space-y-2">
+                        <p className="text-[10px] sm:text-xs text-blue-400 font-medium truncate">{r.adLabel}</p>
+                        <p className="text-xs sm:text-sm text-gray-300 truncate">{r.originalName}</p>
                         <a
                           href={r.outputUrl}
                           download
-                          className="block text-center px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-sm font-medium rounded-lg transition-colors"
+                          className="block text-center px-2 sm:px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-xs sm:text-sm font-medium rounded-lg transition-colors"
                         >
                           Download
                         </a>

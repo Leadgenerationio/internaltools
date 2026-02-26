@@ -4,7 +4,6 @@ const nextConfig = {
   poweredByHeader: false,
   experimental: {
     serverComponentsExternalPackages: [
-      'fluent-ffmpeg',
       '@ffmpeg-installer/ffmpeg',
       '@napi-rs/canvas',
     ],

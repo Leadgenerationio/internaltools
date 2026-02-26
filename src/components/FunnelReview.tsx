@@ -1,8 +1,39 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import type { GeneratedAd, FunnelStage } from '@/lib/types';
 import { FUNNEL_LABELS, FUNNEL_DESCRIPTIONS } from '@/lib/types';
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback for older browsers
+      const el = document.createElement('textarea');
+      el.value = text;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  }, [text]);
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="text-xs text-gray-400 hover:text-blue-400 transition-colors"
+      title="Copy ad text to clipboard"
+    >
+      {copied ? 'Copied!' : 'Copy text'}
+    </button>
+  );
+}
 
 interface Props {
   ads: GeneratedAd[];
@@ -104,7 +135,8 @@ export default function FunnelReview({ ads, onUpdateAds, onRegenerateAd, regener
               <span className="text-sm font-medium text-gray-300">
                 {ad.variationLabel}
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
+                <CopyButton text={ad.textBoxes.map((b) => b.text).join('\n')} />
                 {regeneratingId === ad.id ? (
                   <span className="flex items-center gap-1.5 text-xs text-blue-400">
                     <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
