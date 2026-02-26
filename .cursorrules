@@ -68,14 +68,24 @@ src/
       page.tsx                    — Company settings (users, invitations, limits)
     admin/
       page.tsx                    — Super admin dashboard (all companies, revenue, API calls)
+    billing/
+      page.tsx                    — Plan comparison, upgrade (Stripe placeholder)
+    reset-password/
+      page.tsx                    — Forgot password / reset password flow
+    error.tsx                      — App-level error boundary
     api/
       auth/[...nextauth]/
         route.ts                  — NextAuth v5 credentials provider
       auth/register/route.ts      — Create new user + company
+      auth/reset-password/route.ts — Password reset (request + execute)
       company/users/route.ts      — List, add, remove users
-      company/invite/route.ts     — Send email invitations
-      usage/route.ts              — Get monthly spend + breakdown
+      company/invite/route.ts     — Invite users (+ user limit check)
+      company/settings/route.ts   — Company settings: budget, name (GET/PUT)
+      company/logo/route.ts       — Logo upload (POST)
+      usage/route.ts              — Get monthly spend + breakdown (paginated)
+      usage/export/route.ts       — CSV export of usage data
       admin/route.ts              — Super admin platform-wide stats + company breakdown
+      health/route.ts             — Health check (DB + FFmpeg)
       projects/route.ts           — List + create projects (GET/POST)
       projects/[id]/route.ts     — Get, update, delete project (GET/PUT/DELETE)
       projects/[id]/ads/route.ts — Save ads to project (POST — replace all)
@@ -111,6 +121,9 @@ src/
     auth.ts                       — NextAuth session helpers, user context
     pricing.ts                    — API cost calculation per model/tokens
     track-usage.ts                — Per-call usage logging, monthly aggregation
+    plans.ts                      — Plan tier definitions (FREE/STARTER/PRO/ENTERPRISE)
+    check-limits.ts               — Generation + user limit enforcement per plan
+    spend-alerts.ts               — Webhook spend alerts (50%/80%/100% budget)
     api-auth.ts                   — Auth middleware helpers for API routes
   middleware.ts                   — JWT verification, rate limiting, security headers
   auth.config.ts                  — NextAuth v5 configuration
@@ -151,4 +164,6 @@ prisma/
 - `ANTHROPIC_API_KEY` in `.env.local` for ad copy generation
 - `GOOGLE_API_KEY` in `.env.local` for Veo video generation (optional)
 - `S3_BUCKET`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` for cloud storage (optional)
+- `SUPER_ADMIN_EMAILS` for super admin access (optional, comma-separated)
+- `SPEND_ALERT_WEBHOOK_URL` for budget alert webhooks (optional)
 - Email/SMTP credentials for company invitations (optional but recommended)

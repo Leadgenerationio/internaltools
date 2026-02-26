@@ -83,6 +83,13 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **Dark themed UI**: gray-950 background, gray-800 cards, blue-500 accents, green-600 action buttons
 - **No branding in ads**: "Andro Media" = Meta's ad system, not a brand to put in generated copy
 - **Super admin dashboard**: `/admin` page + `/api/admin` route — platform-wide stats (all companies, revenue, API calls). Access gated by `SUPER_ADMIN_EMAILS` env var (comma-separated emails).
+- **Plan enforcement**: Plan tiers (FREE/STARTER/PRO/ENTERPRISE) in `src/lib/plans.ts`, limits checked in `src/lib/check-limits.ts` before AI API calls and user invites
+- **Spend alerts**: Webhook notifications at 50%/80%/100% budget via `src/lib/spend-alerts.ts`, triggered after each tracked API call
+- **Projects**: CRUD API at `/api/projects`, list page at `/projects`, ads save at `/api/projects/[id]/ads`
+- **Billing**: Plan comparison page at `/billing` (Stripe placeholder), monthly budget editable in settings
+- **Password reset**: Token-based reset flow at `/api/auth/reset-password` + `/reset-password` page
+- **CSV export**: Usage data downloadable as CSV from `/api/usage/export`
+- **Company logo**: Upload at `/api/company/logo`, displayed in settings
 - **Deployment**: Railway with Docker, `output: 'standalone'` in next.config.js, auto-deploy via git-agent
 - **Watchdog QA**: `npm run watchdog` — standalone script that continuously tests all endpoints, checks health, stress-tests, and auto-remediates (restart server, create dirs, clean old files). Config in `scripts/watchdog.config.json`
 - **Security Agent**: `npm run security` — continuous security audit (blast radius, network exposure, browser control, disk hygiene, plugin hygiene, credentials, reverse proxy, session logs, shell injection, input validation, path traversal, secrets in git history). Config in `scripts/security.config.json`. `npm run security:once` for single scan with CI-friendly exit codes.

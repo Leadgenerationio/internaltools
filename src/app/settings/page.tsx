@@ -27,6 +27,11 @@ export default function SettingsPage() {
   const [savingBudget, setSavingBudget] = useState(false);
   const [budgetMessage, setBudgetMessage] = useState('');
 
+  // Logo
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [logoMessage, setLogoMessage] = useState('');
+
   // Invite form
   const [showInvite, setShowInvite] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -219,6 +224,66 @@ export default function SettingsPage() {
                 </span>
               )}
             </form>
+          </div>
+        )}
+
+        {/* Company Logo */}
+        {isOwner && (
+          <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
+            <h2 className="text-lg font-semibold text-white mb-3">Company Logo</h2>
+            <p className="text-sm text-gray-400 mb-3">
+              Upload your company logo (PNG, JPEG, SVG, or WebP, max 2MB).
+            </p>
+            <div className="flex items-center gap-4">
+              {logoUrl && (
+                <img
+                  src={logoUrl}
+                  alt="Company logo"
+                  className="w-12 h-12 rounded-lg object-contain bg-gray-900 border border-gray-700"
+                />
+              )}
+              <label className="cursor-pointer">
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setUploadingLogo(true);
+                    setLogoMessage('');
+                    try {
+                      const formData = new FormData();
+                      formData.append('logo', file);
+                      const res = await fetch('/api/company/logo', {
+                        method: 'POST',
+                        body: formData,
+                      });
+                      const data = await res.json();
+                      if (!res.ok) {
+                        setLogoMessage(data.error || 'Upload failed');
+                      } else {
+                        setLogoUrl(data.logoUrl);
+                        setLogoMessage('Logo uploaded');
+                      }
+                    } catch {
+                      setLogoMessage('Upload failed');
+                    } finally {
+                      setUploadingLogo(false);
+                      setTimeout(() => setLogoMessage(''), 5000);
+                    }
+                  }}
+                />
+                <span className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded-lg font-medium transition-colors inline-block">
+                  {uploadingLogo ? 'Uploading...' : 'Choose File'}
+                </span>
+              </label>
+              {logoMessage && (
+                <span className={`text-sm ${logoMessage.includes('failed') ? 'text-red-400' : 'text-green-400'}`}>
+                  {logoMessage}
+                </span>
+              )}
+            </div>
           </div>
         )}
 

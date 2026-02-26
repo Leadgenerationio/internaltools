@@ -150,13 +150,22 @@ src/
 │   │   └── page.tsx                  # Company settings: users, invitations, spend limits
 │   ├── admin/
 │   │   └── page.tsx                  # Super admin dashboard: all companies, revenue, API calls
+│   ├── billing/
+│   │   └── page.tsx                  # Plan comparison, current plan, upgrade (Stripe placeholder)
+│   ├── reset-password/
+│   │   └── page.tsx                  # Forgot password / reset password flow
+│   ├── error.tsx                      # App-level error boundary
 │   └── api/
 │       ├── auth/[...nextauth]/
 │       │   └── route.ts              # NextAuth v5 credentials provider
 │       ├── auth/register/route.ts    # Register new user + company
+│       ├── auth/reset-password/route.ts # Password reset request + execute
 │       ├── company/users/route.ts    # List, add, remove users from company
-│       ├── company/invite/route.ts   # Send email invitations to join company
-│       ├── usage/route.ts            # Get monthly spend + service breakdown
+│       ├── company/invite/route.ts   # Invite users to company (+ user limit check)
+│       ├── company/settings/route.ts # Company settings: budget, name (GET/PUT)
+│       ├── company/logo/route.ts     # Logo upload (POST)
+│       ├── usage/route.ts            # Get monthly spend + service breakdown (paginated)
+│       ├── usage/export/route.ts     # CSV export of usage data
 │       ├── admin/route.ts            # Super admin: platform-wide stats + company breakdown
 │       ├── projects/route.ts         # List + create projects (GET/POST)
 │       ├── projects/[id]/route.ts   # Get, update, delete project (GET/PUT/DELETE)
@@ -195,6 +204,9 @@ src/
 │   ├── auth.ts                       # NextAuth session helpers, user context
 │   ├── pricing.ts                    # API cost calculation per model/tokens
 │   ├── track-usage.ts                # Per-call usage logging, monthly aggregation
+│   ├── plans.ts                      # Plan tier definitions (FREE/STARTER/PRO/ENTERPRISE)
+│   ├── check-limits.ts               # Generation + user limit enforcement per plan
+│   ├── spend-alerts.ts               # Webhook spend alerts (50%/80%/100% budget thresholds)
 │   └── api-auth.ts                   # Auth middleware helpers for API routes
 ├── prisma/
 │   ├── schema.prisma                 # Data models: Company, User, Session, ApiUsage
@@ -249,9 +261,13 @@ FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to 
 |-------|--------|---------|---------|------|
 | `/api/auth/[...nextauth]` | GET/POST | NextAuth v5 endpoints (login, callback, signout) | default | public |
 | `/api/auth/register` | POST | Create new user + company | default | public |
+| `/api/auth/reset-password` | POST/PUT | Request and execute password reset | default | public |
 | `/api/company/users` | GET/POST | List/add users to company | default | required (OWNER/ADMIN) |
 | `/api/company/invite` | POST | Send email invitation to join company | default | required (OWNER/ADMIN) |
-| `/api/usage` | GET | Get monthly spend + service breakdown | default | required |
+| `/api/company/settings` | GET/PUT | Get/update company settings (budget, name) | default | required (OWNER) |
+| `/api/company/logo` | POST | Upload company logo (PNG/JPEG/SVG/WebP, 2MB max) | default | required (OWNER/ADMIN) |
+| `/api/usage` | GET | Get monthly spend + service breakdown (paginated) | default | required |
+| `/api/usage/export` | GET | Export usage data as CSV | default | required (OWNER/ADMIN) |
 | `/api/admin` | GET | Platform-wide stats, company breakdown, recent calls | default | required (super admin) |
 | `/api/projects` | GET | List projects for user's company (paginated) | default | required |
 | `/api/projects` | POST | Create a new project | default | required |
@@ -284,6 +300,9 @@ GOOGLE_API_KEY=...               # Optional for Veo video generation
 
 # Super Admin
 SUPER_ADMIN_EMAILS=admin@example.com  # Comma-separated list of super admin emails
+
+# Spend Alerts (optional)
+SPEND_ALERT_WEBHOOK_URL=https://...   # Optional — webhook URL for budget alerts (50%/80%/100%)
 
 # Cloud Storage (optional)
 S3_BUCKET=your-bucket            # Optional — enable cloud storage (S3/R2)
@@ -436,13 +455,15 @@ Two render quality modes selectable before rendering:
 - **Draft**: `preset=ultrafast`, `crf=28` — fast encoding, lower quality, good for previewing
 - **Final**: `preset=fast`, `crf=23` — slower encoding, higher quality, for production use
 
-## Password Protection
+## Plan Enforcement
 
-Optional app-wide password protection via `APP_PASSWORD` env var:
-- Middleware redirects unauthenticated users to `/login`
-- Login page posts to `/api/auth` which validates and sets an httpOnly cookie
-- Cookie is base64-encoded password, checked in middleware on every request
-- No password set = no protection (open access)
+Plan tiers (FREE/STARTER/PRO/ENTERPRISE) defined in `src/lib/plans.ts`:
+- **Generation limits**: Monthly cap on AI generation calls, checked before each API call
+- **User limits**: Max team members per plan, checked when inviting
+- **Storage limits**: Max storage per company (enforced at upload)
+- **Budget alerts**: Webhook notifications at 50%, 80%, and 100% of monthly budget via `src/lib/spend-alerts.ts`
+- Budget can be configured by OWNER in Settings page
+- Plan upgrade/downgrade via Billing page (Stripe integration placeholder)
 
 ## UX Features
 
@@ -451,7 +472,11 @@ Optional app-wide password protection via `APP_PASSWORD` env var:
 - **Auto-dismiss**: Success messages auto-clear after 8 seconds
 - **Copy ad text**: Clipboard button on each ad card in FunnelReview
 - **Template library**: Save/load overlay style presets to localStorage
-- **Mobile-responsive**: Render results grid adapts to screen size
+- **Mobile-responsive**: Scrollable step nav, responsive padding, adapted grid layouts
+- **CSV export**: Download usage data as CSV from the usage page
+- **Pagination**: Usage logs and projects list support paginated navigation
+- **Password reset**: Forgot password flow with token-based reset
+- **Company logo**: Upload company logo from settings page
 
 ## Deployment
 
