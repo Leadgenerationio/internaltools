@@ -53,12 +53,13 @@ WORKDIR /app
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 
-# Copy Prisma schema + generated client + CLI for migrations
+# Copy Prisma schema + config + generated client for migrations
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 COPY --from=builder /app/src/generated ./src/generated
-COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+
+# Install prisma CLI for migrations (has many transitive deps, easier to install fresh)
+RUN npm install prisma@latest --save-dev --ignore-scripts
 
 # Create the public directory and subdirectories the app needs
 RUN mkdir -p public/uploads public/outputs public/music public/logos
@@ -71,4 +72,4 @@ ENV HOSTNAME=0.0.0.0
 EXPOSE 3000
 
 # Run Prisma migrations then start the app
-CMD ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy && node server.js"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node server.js"]
