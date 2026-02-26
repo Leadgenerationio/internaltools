@@ -3,11 +3,8 @@ import { PrismaClient } from '@/generated/prisma/client';
 const globalForPrisma = globalThis as unknown as { prisma: any };
 
 function createPrismaClient(): any {
-  // Prisma 7: datasource URL must be passed explicitly to the client
-  // (prisma.config.ts is only for CLI tools like migrate/generate)
-  return new (PrismaClient as any)({
-    datasourceUrl: process.env.DATABASE_URL,
-  });
+  // PrismaClient reads DATABASE_URL from the environment automatically
+  return new (PrismaClient as any)();
 }
 
 // Lazy initialization — only connect when first accessed
