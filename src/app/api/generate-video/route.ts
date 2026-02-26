@@ -6,6 +6,8 @@ import crypto from 'crypto';
 import { GoogleGenAI } from '@google/genai';
 import { getVideoInfo } from '@/lib/get-video-info';
 import { logger } from '@/lib/logger';
+import { getAuthContext } from '@/lib/api-auth';
+import { trackVeoUsage } from '@/lib/track-usage';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
@@ -18,6 +20,11 @@ const POLL_INTERVAL_MS = 10_000;
 const MAX_POLL_TIME_MS = 6 * 60 * 1000; // 6 minutes
 
 export async function POST(request: NextRequest) {
+  // Auth check
+  const authResult = await getAuthContext();
+  if (authResult.error) return authResult.error;
+  const { userId, companyId } = authResult.auth;
+
   logger.info('Generate-video API called');
 
   const apiKey = process.env.GEMINI_API_KEY;
@@ -153,6 +160,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: firstError }, { status: 500 });
     }
 
+    // Track API cost (fire-and-forget)
+    trackVeoUsage({
+      companyId,
+      userId,
+      model: 'veo-3.1-generate-preview',
+      videoCount: videos.length,
+      videoSeconds: videos.length * Number(dur),
+      endpoint: 'generate-video',
+      durationMs: 0,
+      success: true,
+    });
+
     logger.info('Generations complete', { succeeded: videos.length, failed: failures.length });
     return NextResponse.json({
       videos,
@@ -160,6 +179,18 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: any) {
     logger.error('Generate-video error', { error: error.message, stack: error.stack });
+
+    trackVeoUsage({
+      companyId,
+      userId,
+      model: 'veo-3.1-generate-preview',
+      videoCount: 0,
+      endpoint: 'generate-video',
+      durationMs: 0,
+      success: false,
+      errorMessage: error.message,
+    });
+
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

@@ -53,6 +53,11 @@ WORKDIR /app
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 
+# Copy Prisma schema + generated client for migrations
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
+COPY --from=builder /app/src/generated ./src/generated
+
 # Create the public directory and subdirectories the app needs
 RUN mkdir -p public/uploads public/outputs public/music
 
@@ -63,5 +68,5 @@ ENV HOSTNAME=0.0.0.0
 
 EXPOSE 3000
 
-# Standalone mode uses server.js instead of next start
-CMD ["node", "server.js"]
+# Run Prisma migrations then start the app
+CMD ["sh", "-c", "npx prisma migrate deploy 2>/dev/null; node server.js"]

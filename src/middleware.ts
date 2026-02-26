@@ -1,18 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getToken } from 'next-auth/jwt';
 
 // ─── Rate Limiting ──────────────────────────────────────────────────────────
 
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 
-// Different limits for different route categories
 const RATE_LIMITS: Record<string, { maxRequests: number; windowMs: number }> = {
-  '/api/generate-ads': { maxRequests: 5, windowMs: 60_000 },      // 5/min (costs money)
-  '/api/generate-video': { maxRequests: 3, windowMs: 60_000 },    // 3/min (costs money)
-  '/api/render': { maxRequests: 10, windowMs: 60_000 },           // 10/min (CPU-intensive)
-  '/api/upload': { maxRequests: 20, windowMs: 60_000 },           // 20/min
-  '/api/upload-music': { maxRequests: 20, windowMs: 60_000 },     // 20/min
-  '/api/log': { maxRequests: 60, windowMs: 60_000 },              // 60/min (client logging)
-  '/api/logs': { maxRequests: 30, windowMs: 60_000 },             // 30/min (log viewing)
+  '/api/generate-ads': { maxRequests: 5, windowMs: 60_000 },
+  '/api/generate-video': { maxRequests: 3, windowMs: 60_000 },
+  '/api/render': { maxRequests: 10, windowMs: 60_000 },
+  '/api/upload': { maxRequests: 20, windowMs: 60_000 },
+  '/api/upload-music': { maxRequests: 20, windowMs: 60_000 },
+  '/api/log': { maxRequests: 60, windowMs: 60_000 },
+  '/api/logs': { maxRequests: 30, windowMs: 60_000 },
 };
 
 function getClientIp(request: NextRequest): string {
@@ -21,16 +21,16 @@ function getClientIp(request: NextRequest): string {
     || '127.0.0.1';
 }
 
-function checkRateLimit(ip: string, routeKey: string): { allowed: boolean; retryAfterMs: number } {
+function checkRateLimit(key: string, routeKey: string): { allowed: boolean; retryAfterMs: number } {
   const limit = RATE_LIMITS[routeKey];
   if (!limit) return { allowed: true, retryAfterMs: 0 };
 
-  const key = `${ip}:${routeKey}`;
+  const fullKey = `${key}:${routeKey}`;
   const now = Date.now();
-  const entry = rateLimitStore.get(key);
+  const entry = rateLimitStore.get(fullKey);
 
   if (!entry || now > entry.resetAt) {
-    rateLimitStore.set(key, { count: 1, resetAt: now + limit.windowMs });
+    rateLimitStore.set(fullKey, { count: 1, resetAt: now + limit.windowMs });
     return { allowed: true, retryAfterMs: 0 };
   }
 
@@ -60,8 +60,8 @@ const SECURITY_HEADERS: Record<string, string> = {
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
   'Content-Security-Policy': [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-eval' 'unsafe-inline'",   // Next.js requires unsafe-eval in dev
-    "style-src 'self' 'unsafe-inline'",                   // Tailwind uses inline styles
+    "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "media-src 'self' blob:",
     "font-src 'self'",
@@ -74,63 +74,54 @@ const SECURITY_HEADERS: Record<string, string> = {
 
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'http://localhost:3000';
 
-// ─── Password Protection ────────────────────────────────────────────────────
+// ─── Public Routes (no auth required) ───────────────────────────────────────
 
-const APP_PASSWORD = process.env.APP_PASSWORD; // Set in Railway to protect the app
+const PUBLIC_ROUTES = ['/login', '/register', '/api/auth'];
 
-function checkAuth(request: NextRequest): NextResponse | null {
-  if (!APP_PASSWORD) return null; // No password set = no protection
-
-  const authCookie = request.cookies.get('app_auth')?.value;
-  if (authCookie === APP_PASSWORD) return null; // Already authenticated
-
-  return null; // Auth check is handled by the login page
+function isPublicRoute(pathname: string): boolean {
+  return PUBLIC_ROUTES.some((route) => pathname.startsWith(route));
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Only process API routes and page requests
+  // Skip static assets
   if (pathname.startsWith('/_next') || pathname.startsWith('/favicon')) {
     return NextResponse.next();
   }
 
-  // Password protection — redirect to login if not authenticated
-  if (APP_PASSWORD) {
-    const isLoginRoute = pathname === '/login' || pathname === '/api/auth';
-    const authCookie = request.cookies.get('app_auth')?.value;
-    const isAuthed = authCookie === Buffer.from(APP_PASSWORD).toString('base64');
-
-    if (!isAuthed && !isLoginRoute && !pathname.startsWith('/_next')) {
+  // ── Auth: redirect unauthenticated users to /login ──
+  if (!isPublicRoute(pathname)) {
+    const token = await getToken({ req: request });
+    if (!token) {
       const loginUrl = new URL('/login', request.url);
       return NextResponse.redirect(loginUrl);
     }
   }
 
   // ── Rate limiting for API routes ──
-  if (pathname.startsWith('/api/')) {
-    const ip = getClientIp(request);
+  if (pathname.startsWith('/api/') && !pathname.startsWith('/api/auth')) {
+    // Use userId from token if available, fall back to IP
+    const token = await getToken({ req: request });
+    const rateLimitKey = token?.sub || getClientIp(request);
 
-    // Find matching rate limit key
     const routeKey = Object.keys(RATE_LIMITS).find((key) => pathname.startsWith(key));
     if (routeKey) {
-      const { allowed, retryAfterMs } = checkRateLimit(ip, routeKey);
+      const { allowed, retryAfterMs } = checkRateLimit(rateLimitKey, routeKey);
       if (!allowed) {
         return NextResponse.json(
           { error: 'Too many requests. Please wait before trying again.' },
           {
             status: 429,
-            headers: {
-              'Retry-After': String(Math.ceil(retryAfterMs / 1000)),
-            },
+            headers: { 'Retry-After': String(Math.ceil(retryAfterMs / 1000)) },
           }
         );
       }
     }
 
-    // ── CORS for API routes ──
+    // CORS preflight
     if (request.method === 'OPTIONS') {
       return new NextResponse(null, {
         status: 204,
@@ -151,7 +142,6 @@ export function middleware(request: NextRequest) {
     response.headers.set(key, value);
   }
 
-  // CORS header on API responses
   if (pathname.startsWith('/api/')) {
     response.headers.set('Access-Control-Allow-Origin', ALLOWED_ORIGIN);
   }
@@ -161,7 +151,6 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Match all paths except static files
     '/((?!_next/static|_next/image|favicon.ico).*)',
   ],
 };

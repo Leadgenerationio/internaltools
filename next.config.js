@@ -6,6 +6,8 @@ const nextConfig = {
     serverComponentsExternalPackages: [
       '@ffmpeg-installer/ffmpeg',
       '@napi-rs/canvas',
+      '@prisma/client',
+      'bcryptjs',
     ],
     serverActions: {
       bodySizeLimit: '500mb',

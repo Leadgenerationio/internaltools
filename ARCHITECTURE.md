@@ -2,27 +2,40 @@
 
 ## Overview
 
-A Next.js web app that generates funnel-based ad copy via AI, lets you review and edit it, then batch-renders video ads with timed text overlays and background music using server-side FFmpeg.
+A multi-tenant SaaS platform built on Next.js that generates funnel-based ad copy via AI, lets teams review and edit it, then batch-renders video ads with timed text overlays and background music using server-side FFmpeg.
 
-Built for producing Facebook/Meta ad content at scale — enter a brief, get 10 ad scripts across three funnel stages, approve the ones you like, drop in background videos and music, render.
+Built for producing Facebook/Meta ad content at scale — users create accounts by company, manage team members with role-based access (OWNER/ADMIN/MEMBER), track API usage and costs in real-time, enter a brief, get 10 ad scripts across three funnel stages, approve the ones you like, drop in background videos and music, render.
 
 ## System Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        Browser (React)                       │
-│                                                              │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
-│  │ 1. Brief │→│ 2. Review │→│ 3. Media  │→│ 4. Render │   │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘   │
-│       │              │              │              │          │
-└───────┼──────────────┼──────────────┼──────────────┼──────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                          Browser (React)                                │
+│                                                                         │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
+│  │ /login   │  │ /register│  │ /usage   │  │ /settings│              │
+│  │ /company │  │ /users   │  │ (sidebar)│  │ (sidebar)│              │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘              │
+│                                                                         │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
+│  │ 1. Brief │→│ 2. Review │→│ 3. Media  │→│ 4. Render │              │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘              │
+│       │              │              │              │                    │
+└───────┼──────────────┼──────────────┼──────────────┼────────────────────┘
         │              │              │              │
         ▼              ▼              ▼              ▼
   /api/generate-ads  /api/generate-ads  /api/upload     /api/render
   (Claude API)       (regenerate)    /api/upload-music  (FFmpeg)
-                                     /api/generate-video
+  (Cost tracking)                    /api/generate-video (Cost tracking)
                                      (Google Veo)
+                                     (Cost tracking)
+        │
+        ▼
+  PostgreSQL (Prisma)
+  - Companies
+  - Users (roles: OWNER/ADMIN/MEMBER)
+  - API usage logs (per-call tracking in cents)
+  - Sessions (JWT)
 ```
 
 ## Tech Stack
@@ -32,12 +45,42 @@ Built for producing Facebook/Meta ad content at scale — enter a brief, get 10 
 | Framework | Next.js 14 (App Router) | Server + client, API routes |
 | Language | TypeScript | Type safety |
 | Styling | Tailwind CSS | Utility-first dark theme |
+| Database | PostgreSQL + Prisma ORM | Multi-tenant data, users, API usage tracking |
+| Authentication | NextAuth v5 | JWT sessions, credentials provider, user/session management |
 | Video processing | FFmpeg (shell exec) | Compositing, scaling, audio mixing |
 | Overlay rendering | @napi-rs/canvas | Text-to-PNG with emoji support |
 | AI copy generation | Anthropic SDK (Claude Sonnet) | TOFU/MOFU/BOFU ad scripts |
 | AI video generation | Google Veo 3.1 | Optional AI background videos |
+| Cost tracking | Prisma + Winston | Per-call API usage logging in cents, monthly aggregation |
 | Logging | Winston + daily-rotate-file | Server-side structured logs |
 | IDs | uuid v4 | Unique file and entity IDs |
+
+## Authentication & Multi-Tenancy
+
+### User Registration & Login
+- `/register` — New user registration with email, password, company name
+- `/login` — Email + password authentication via NextAuth credentials provider
+- JWT sessions stored in httpOnly cookies
+- Middleware verifies JWT on every request, redirects unauthenticated users to `/login`
+
+### Multi-Tenant Structure
+- **Company** record owns users, projects, API usage
+- **User** roles within a company: OWNER (full access), ADMIN (manage team + settings), MEMBER (create projects, view own usage)
+- All data queries filtered by company_id from session
+- Company users can be invited via `/api/company/invite` (email-based invitations)
+
+### API Cost Tracking
+- **Per-call logging**: Each call to generate-ads, generate-video, render records:
+  - API name, timestamp, user_id, company_id, input/output tokens (or units)
+  - Cost in cents (calculated from model pricing + actual usage)
+- **Monthly aggregation**: `/api/usage` endpoint returns:
+  - Total spend (current month), per-service breakdown, per-user breakdown
+  - Historical monthly trends
+  - Warnings if approaching monthly spend limits (configurable per company)
+- **Usage tracking helper** (`src/lib/track-usage.ts`):
+  - `trackUsage(apiName, costInCents, metadata)` — logs to database after operation
+  - `getMonthlyUsage(companyId, month)` — retrieves aggregated data
+  - `getServiceBreakdown(companyId)` — costs per service for current month
 
 ## App Flow
 
@@ -83,40 +126,62 @@ Each ad has 4-5 editable text boxes. User can:
 ```
 src/
 ├── app/
-│   ├── page.tsx                    # Main 4-step flow controller
-│   ├── layout.tsx                  # Root layout + metadata
-│   ├── globals.css                 # Tailwind + custom styles
+│   ├── page.tsx                      # Main 4-step flow controller (requires auth)
+│   ├── layout.tsx                    # Root layout + metadata
+│   ├── globals.css                   # Tailwind + custom styles
 │   ├── login/
-│   │   └── page.tsx                # Password login page
+│   │   └── page.tsx                  # NextAuth login page (email + password)
+│   ├── register/
+│   │   └── page.tsx                  # Registration page (new company + user)
+│   ├── usage/
+│   │   └── page.tsx                  # Dashboard: monthly spend, per-service breakdown
+│   ├── settings/
+│   │   └── page.tsx                  # Company settings: users, invitations, spend limits
 │   └── api/
-│       ├── auth/route.ts           # Password authentication endpoint
-│       ├── generate-ads/route.ts   # Claude API → ad copy
-│       ├── generate-video/route.ts # Google Veo → AI videos
-│       ├── render/route.ts         # FFmpeg batch render + cloud storage upload
-│       ├── upload/route.ts         # Video file upload
-│       ├── upload-music/route.ts   # Music file upload
-│       ├── download-zip/route.ts   # Bundle outputs into ZIP
-│       ├── log/route.ts            # Client log ingestion
-│       └── logs/route.ts           # Log retrieval
+│       ├── auth/[...nextauth]/
+│       │   └── route.ts              # NextAuth v5 credentials provider
+│       ├── auth/register/route.ts    # Register new user + company
+│       ├── company/users/route.ts    # List, add, remove users from company
+│       ├── company/invite/route.ts   # Send email invitations to join company
+│       ├── usage/route.ts            # Get monthly spend + service breakdown
+│       ├── generate-ads/route.ts     # Claude API → ad copy (+ cost tracking)
+│       ├── generate-video/route.ts   # Google Veo → AI videos (+ cost tracking)
+│       ├── render/route.ts           # FFmpeg batch render + cloud storage (+ cost tracking)
+│       ├── upload/route.ts           # Video file upload
+│       ├── upload-music/route.ts     # Music file upload
+│       ├── download-zip/route.ts     # Bundle outputs into ZIP
+│       ├── log/route.ts              # Client log ingestion
+│       └── logs/route.ts             # Log retrieval
 ├── components/
-│   ├── AdBriefForm.tsx             # Brief input (6 fields)
-│   ├── FunnelReview.tsx            # Tabbed ad review + approve/edit/regen + copy text
-│   ├── StyleConfigurator.tsx       # Overlay style presets + custom controls + template library
-│   ├── VideoSourceTabs.tsx         # Upload vs AI generate tabs
-│   ├── VideoUploader.tsx           # Drag-drop video upload with cancel
-│   ├── VideoGenerator.tsx          # Veo video generation with cancel
-│   ├── MusicSelector.tsx           # Upload and configure background music
-│   ├── VideoPreview.tsx            # Real-time 9:16 preview + trim controls
-│   ├── TextOverlayEditor.tsx       # Manual overlay editor
-│   └── LogViewer.tsx               # Debug log viewer
-├── middleware.ts                    # Auth, rate limiting, CORS, security headers
-└── lib/
-    ├── types.ts                    # All TypeScript interfaces + constants
-    ├── ffmpeg-renderer.ts          # FFmpeg render pipeline (draft/final quality, trim)
-    ├── overlay-renderer.ts         # Canvas → PNG overlay generation
-    ├── get-video-info.ts           # ffprobe metadata + FFmpeg check
-    ├── storage.ts                  # Cloud storage abstraction (local FS / S3 / R2)
-    └── logger.ts                   # Winston logger config
+│   ├── AdBriefForm.tsx               # Brief input (6 fields)
+│   ├── FunnelReview.tsx              # Tabbed ad review + approve/edit/regen + copy text
+│   ├── StyleConfigurator.tsx         # Overlay style presets + custom controls + template library
+│   ├── VideoSourceTabs.tsx           # Upload vs AI generate tabs
+│   ├── VideoUploader.tsx             # Drag-drop video upload with cancel
+│   ├── VideoGenerator.tsx            # Veo video generation with cancel
+│   ├── MusicSelector.tsx             # Upload and configure background music
+│   ├── VideoPreview.tsx              # Real-time 9:16 preview + trim controls
+│   ├── TextOverlayEditor.tsx         # Manual overlay editor
+│   ├── LogViewer.tsx                 # Debug log viewer
+│   ├── UsageWidget.tsx               # Real-time cost display during operations
+│   └── SettingsPanel.tsx             # Company users, invitations, spend limits
+├── middleware.ts                     # Auth verification, JWT validation, rate limiting
+├── lib/
+│   ├── types.ts                      # All TypeScript interfaces + constants
+│   ├── ffmpeg-renderer.ts            # FFmpeg render pipeline (draft/final quality, trim)
+│   ├── overlay-renderer.ts           # Canvas → PNG overlay generation
+│   ├── get-video-info.ts             # ffprobe metadata + FFmpeg check
+│   ├── storage.ts                    # Cloud storage abstraction (local FS / S3 / R2)
+│   ├── logger.ts                     # Winston logger config
+│   ├── prisma.ts                     # Prisma client singleton
+│   ├── auth.ts                       # NextAuth session helpers, user context
+│   ├── pricing.ts                    # API cost calculation per model/tokens
+│   ├── track-usage.ts                # Per-call usage logging, monthly aggregation
+│   └── api-auth.ts                   # Auth middleware helpers for API routes
+├── prisma/
+│   ├── schema.prisma                 # Data models: Company, User, Session, ApiUsage
+│   └── migrations/                   # Database migrations
+└── auth.config.ts                    # NextAuth v5 configuration
 ```
 
 ## Rendering Pipeline
@@ -162,36 +227,63 @@ FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to 
 
 ## API Routes
 
-| Route | Method | Purpose | Timeout |
-|-------|--------|---------|---------|
-| `/api/generate-ads` | POST | Generate ad copy via Claude | 60s |
-| `/api/generate-video` | POST | Generate video via Veo | 300s |
-| `/api/upload` | POST | Upload video files (max 500MB each) | 60s |
-| `/api/upload-music` | POST | Upload music (max 50MB, validated formats) | default |
-| `/api/render` | POST | Batch FFmpeg render (supports draft/final quality, trim) | 300s |
-| `/api/download-zip` | POST | Bundle rendered videos into a ZIP file | default |
-| `/api/auth` | POST | Password authentication (sets httpOnly cookie) | default |
-| `/api/log` | POST | Ingest client-side logs | default |
-| `/api/logs` | GET | Retrieve recent log lines | default |
+| Route | Method | Purpose | Timeout | Auth |
+|-------|--------|---------|---------|------|
+| `/api/auth/[...nextauth]` | GET/POST | NextAuth v5 endpoints (login, callback, signout) | default | public |
+| `/api/auth/register` | POST | Create new user + company | default | public |
+| `/api/company/users` | GET/POST | List/add users to company | default | required (OWNER/ADMIN) |
+| `/api/company/invite` | POST | Send email invitation to join company | default | required (OWNER/ADMIN) |
+| `/api/usage` | GET | Get monthly spend + service breakdown | default | required |
+| `/api/generate-ads` | POST | Generate ad copy via Claude | 60s | required + cost tracking |
+| `/api/generate-video` | POST | Generate video via Veo | 300s | required + cost tracking |
+| `/api/upload` | POST | Upload video files (max 500MB each) | 60s | required |
+| `/api/upload-music` | POST | Upload music (max 50MB, validated formats) | default | required |
+| `/api/render` | POST | Batch FFmpeg render (supports draft/final quality, trim) | 300s | required + cost tracking |
+| `/api/download-zip` | POST | Bundle rendered videos into a ZIP file | default | required |
+| `/api/log` | POST | Ingest client-side logs | default | public |
+| `/api/logs` | GET | Retrieve recent log lines | default | required |
 
 ## Environment Variables
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...    # Required for ad copy generation
+# Database
+DATABASE_URL=postgresql://...    # Required — PostgreSQL connection string for Prisma
+
+# Authentication & Sessions
+NEXTAUTH_SECRET=...              # Required — 32+ char random string for JWT signing
+NEXTAUTH_URL=http://localhost:3000  # Required — Base URL for NextAuth callbacks
+
+# API Keys
+ANTHROPIC_API_KEY=sk-ant-...     # Required for ad copy generation
 GOOGLE_API_KEY=...               # Optional for Veo video generation
-APP_PASSWORD=...                 # Optional — password-protect the entire app
+
+# Cloud Storage (optional)
 S3_BUCKET=your-bucket            # Optional — enable cloud storage (S3/R2)
 S3_ENDPOINT=https://...          # Required with S3_BUCKET
 S3_ACCESS_KEY_ID=...             # Required with S3_BUCKET
 S3_SECRET_ACCESS_KEY=...         # Required with S3_BUCKET
 S3_PUBLIC_URL=https://...        # Optional — public URL prefix for S3 files
+
+# Email (for invitations)
+EMAIL_FROM=noreply@example.com   # Required for company invitations
+SMTP_HOST=smtp.example.com       # Required for email invitations
+SMTP_PORT=587                    # Required for email invitations
+SMTP_USER=...                    # Required for email invitations
+SMTP_PASS=...                    # Required for email invitations
 ```
 
 ## Security
 
+### Authentication & Authorization
+- **JWT sessions**: NextAuth v5 credentials provider, httpOnly cookies with JWT tokens
+- **Middleware verification** (`src/middleware.ts`): Verifies JWT on every request, redirects to `/login` if invalid
+- **Company isolation**: All data queries filtered by `session.user.company_id`, enforces multi-tenant data boundaries
+- **Role-based access control**: OWNER (full access), ADMIN (manage team + settings), MEMBER (create projects only)
+- **Password hashing**: bcryptjs for secure password storage
+
 ### Middleware (`src/middleware.ts`)
-- **Password protection**: Optional `APP_PASSWORD` env var — redirects unauthenticated users to `/login`, sets httpOnly cookie
-- **Rate limiting**: Per-IP rate limits on all API routes (configurable per-route)
+- **JWT verification**: Validates session tokens, refreshes if needed
+- **Rate limiting**: Per-IP rate limits on all API routes (configurable per-route), stricter limits on costly operations (generate-ads, render)
 - **CORS**: Explicit `Access-Control-Allow-Origin` restricted to allowed origins
 - **Security headers**: X-Frame-Options, X-Content-Type-Options, Referrer-Policy, X-XSS-Protection, Permissions-Policy, Content-Security-Policy
 - **Preflight handling**: OPTIONS requests for CORS
@@ -343,6 +435,9 @@ Optional app-wide password protection via `APP_PASSWORD` env var:
 ## Prerequisites
 
 - Node.js 18+
+- PostgreSQL 14+ (local or remote)
 - FFmpeg installed (`brew install ffmpeg` / `apt install ffmpeg`)
 - Anthropic API key for ad copy generation
 - Google API key for Veo video generation (optional)
+- SMTP server for email invitations (or use sendgrid/mailgun with adapter)
+- 32+ char random string for `NEXTAUTH_SECRET`

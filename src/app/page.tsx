@@ -9,6 +9,7 @@ import MusicSelector from '@/components/MusicSelector';
 import VideoPreview from '@/components/VideoPreview';
 import StyleConfigurator from '@/components/StyleConfigurator';
 import LogViewer from '@/components/LogViewer';
+import UserMenu from '@/components/UserMenu';
 import type {
   AdBrief,
   GeneratedAd,
@@ -469,6 +470,7 @@ export default function Home() {
               Reset
             </button>
           </div>
+          <UserMenu />
         </div>
       </header>
 

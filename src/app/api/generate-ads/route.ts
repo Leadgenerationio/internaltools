@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import type { AdBrief, FunnelStage } from '@/lib/types';
+import { getAuthContext } from '@/lib/api-auth';
+import { trackAnthropicUsage } from '@/lib/track-usage';
 
 export const maxDuration = 60;
 
@@ -127,6 +129,11 @@ async function callClaude(userPrompt: string): Promise<{
 }
 
 export async function POST(request: NextRequest) {
+  // Auth check
+  const authResult = await getAuthContext();
+  if (authResult.error) return authResult.error;
+  const { userId, companyId } = authResult.auth;
+
   if (!process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json(
       { error: 'ANTHROPIC_API_KEY not set. Add it to .env.local' },
@@ -157,6 +164,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Product/service is required' }, { status: 400 });
     }
 
+    const startTime = Date.now();
     let result;
     if (regenerateStage) {
       const validStages: FunnelStage[] = ['tofu', 'mofu', 'bofu'];
@@ -167,9 +175,22 @@ export async function POST(request: NextRequest) {
     } else {
       result = await callClaude(buildUserPrompt(brief));
     }
+    const durationMs = Date.now() - startTime;
 
     // Log token usage
     console.log('[generate-ads] Tokens used:', result.tokensUsed);
+
+    // Track API cost (fire-and-forget)
+    trackAnthropicUsage({
+      companyId,
+      userId,
+      model: 'claude-sonnet-4-20250514',
+      inputTokens: result.tokensUsed.input,
+      outputTokens: result.tokensUsed.output,
+      endpoint: regenerateStage ? `generate-ads/regen-${regenerateStage}` : 'generate-ads',
+      durationMs,
+      success: true,
+    });
 
     if (!result.ads || !Array.isArray(result.ads)) {
       return NextResponse.json({ error: 'Invalid response from AI — missing ads array. Try again.' }, { status: 500 });
@@ -186,7 +207,19 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error('Generate ads error:', error);
 
-    // Give user-friendly messages for common errors
+    // Track failed call
+    trackAnthropicUsage({
+      companyId,
+      userId,
+      model: 'claude-sonnet-4-20250514',
+      inputTokens: 0,
+      outputTokens: 0,
+      endpoint: 'generate-ads',
+      durationMs: 0,
+      success: false,
+      errorMessage: error.message,
+    });
+
     if (error.status === 401) {
       return NextResponse.json({ error: 'Invalid API key. Check ANTHROPIC_API_KEY in .env.local' }, { status: 500 });
     }
