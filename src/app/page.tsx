@@ -656,23 +656,37 @@ export default function Home() {
                     ? 'bg-red-950/50 border-red-800'
                     : rendering
                     ? 'bg-blue-950/30 border-blue-800'
+                    : renderProgress.includes('Cancelled')
+                    ? 'bg-yellow-950/30 border-yellow-800'
                     : 'bg-green-950/30 border-green-800'
                 }`}
               >
-                <p
-                  className={`text-sm ${
-                    renderProgress.startsWith('Error') || renderProgress.includes('failed')
-                      ? 'text-red-300'
-                      : rendering
-                      ? 'text-blue-300'
-                      : 'text-green-300'
-                  }`}
-                >
+                <div className="flex items-center justify-between gap-3">
+                  <p
+                    className={`text-sm ${
+                      renderProgress.startsWith('Error') || renderProgress.includes('failed')
+                        ? 'text-red-300'
+                        : rendering
+                        ? 'text-blue-300'
+                        : renderProgress.includes('Cancelled')
+                        ? 'text-yellow-300'
+                        : 'text-green-300'
+                    }`}
+                  >
+                    {rendering && (
+                      <span className="inline-block w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mr-2 align-middle" />
+                    )}
+                    {renderProgress}
+                  </p>
                   {rendering && (
-                    <span className="inline-block w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mr-2 align-middle" />
+                    <button
+                      onClick={handleCancelRender}
+                      className="shrink-0 px-3 py-1.5 text-xs font-medium text-red-400 hover:text-red-300 bg-red-950/50 hover:bg-red-950/70 border border-red-800 rounded-lg transition-colors"
+                    >
+                      Cancel
+                    </button>
                   )}
-                  {renderProgress}
-                </p>
+                </div>
               </div>
             )}
 
@@ -685,9 +699,17 @@ export default function Home() {
                   {results.length > 1 && (
                     <button
                       onClick={handleDownloadAll}
-                      className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-sm font-medium rounded-lg transition-colors"
+                      disabled={downloadingZip}
+                      className="px-4 py-2 bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-400 text-white text-sm font-medium rounded-lg transition-colors"
                     >
-                      Download All ({results.length})
+                      {downloadingZip ? (
+                        <span className="flex items-center gap-2">
+                          <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          Creating ZIP...
+                        </span>
+                      ) : (
+                        `Download All as ZIP (${results.length})`
+                      )}
                     </button>
                   )}
                 </div>
