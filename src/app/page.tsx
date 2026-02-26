@@ -467,6 +467,16 @@ export default function Home() {
         {step === 'brief' && (
           <div className="max-w-2xl mx-auto">
             <AdBriefForm onGenerate={handleGenerate} generating={generating} initialBrief={brief} />
+            {generating && (
+              <div className="mt-4 flex justify-center">
+                <button
+                  onClick={handleCancelGenerate}
+                  className="px-4 py-2 text-sm font-medium text-red-400 hover:text-red-300 bg-red-950/30 hover:bg-red-950/50 border border-red-800 rounded-lg transition-colors"
+                >
+                  Cancel Generation
+                </button>
+              </div>
+            )}
             {generateError && (
               <div className="mt-4 p-4 rounded-xl bg-red-950/50 border border-red-800">
                 <p className="text-sm text-red-300">{generateError}</p>
