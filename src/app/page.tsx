@@ -80,7 +80,12 @@ export default function Home() {
   const [renderCurrent, setRenderCurrent] = useState(0);
   const [renderTotal, setRenderTotal] = useState(0);
   const [results, setResults] = useState<RenderResult[]>([]);
+  const [downloadingZip, setDownloadingZip] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
+
+  // AbortControllers for cancellable operations
+  const generateAbortRef = useRef<AbortController | null>(null);
+  const renderAbortRef = useRef<AbortController | null>(null);
 
   // Preview state
   const [previewAdId, setPreviewAdId] = useState<string | null>(null);
