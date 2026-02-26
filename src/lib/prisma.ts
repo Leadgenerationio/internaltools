@@ -1,10 +1,12 @@
 import { PrismaClient } from '@/generated/prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
 
 const globalForPrisma = globalThis as unknown as { prisma: any };
 
 function createPrismaClient(): any {
-  // PrismaClient reads DATABASE_URL from the environment automatically
-  return new (PrismaClient as any)();
+  // Prisma 7 with prisma-client generator requires a driver adapter
+  const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+  return new (PrismaClient as any)({ adapter });
 }
 
 // Lazy initialization — only connect when first accessed
