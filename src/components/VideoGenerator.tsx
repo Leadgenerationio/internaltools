@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import type { UploadedVideo } from '@/lib/types';
 
 const log = async (level: string, message: string, meta?: object) => {
@@ -43,6 +43,7 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState('');
   const [batches, setBatches] = useState<GenerationBatch[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
 
   const canGenerate = prompt.trim().length > 0 && !generating;
   const aiVideoCount = videos.filter((v) => v.originalName.startsWith('AI:')).length;
