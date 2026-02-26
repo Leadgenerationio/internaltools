@@ -275,6 +275,9 @@ export default function Home() {
   const handleRender = async () => {
     if (approvedAds.length === 0 || videos.length === 0) return;
 
+    const abort = new AbortController();
+    renderAbortRef.current = abort;
+
     setRendering(true);
     setResults([]);
     const totalCount = approvedAds.length * videos.length;
@@ -284,9 +287,16 @@ export default function Home() {
 
     const allResults: RenderResult[] = [];
     let completed = 0;
+    let cancelled = false;
 
     for (const ad of approvedAds) {
+      if (cancelled) break;
       for (const vid of videos) {
+        if (abort.signal.aborted) {
+          cancelled = true;
+          break;
+        }
+
         // Compute overlays per-video so timing matches each video's actual duration
         const overlays = adsToOverlays(ad, vid.duration, overlayStyle, staggerSeconds);
 
@@ -297,6 +307,7 @@ export default function Home() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ videos: [vid], overlays, music }),
+            signal: abort.signal,
           });
 
           const data = await res.json();
@@ -319,6 +330,7 @@ export default function Home() {
 
           setRenderProgress(`Rendered ${completed} of ${totalCount}...`);
         } catch (err: any) {
+          if (err.name === 'AbortError') { cancelled = true; break; }
           setRenderProgress(`Error on "${ad.variationLabel}" — ${vid.originalName}: ${err.message}`);
           completed++;
           setRenderCurrent(completed);
@@ -327,13 +339,20 @@ export default function Home() {
     }
 
     setResults(allResults);
-    setRenderProgress(
-      allResults.length === totalCount
-        ? `Done! ${allResults.length} video${allResults.length !== 1 ? 's' : ''} rendered.`
-        : `Done with ${allResults.length} of ${totalCount} videos (some failed).`
-    );
+    if (!cancelled) {
+      setRenderProgress(
+        allResults.length === totalCount
+          ? `Done! ${allResults.length} video${allResults.length !== 1 ? 's' : ''} rendered.`
+          : `Done with ${allResults.length} of ${totalCount} videos (some failed).`
+      );
+    } else if (allResults.length > 0) {
+      setRenderProgress(`Cancelled. ${allResults.length} video${allResults.length !== 1 ? 's' : ''} completed before cancellation.`);
+    }
+    renderAbortRef.current = null;
     setRendering(false);
-    resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (allResults.length > 0) {
+      resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   };
 
   const handleDownloadAll = () => {
