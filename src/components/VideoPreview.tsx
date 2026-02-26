@@ -159,9 +159,17 @@ export default function VideoPreview({ video, videos, activeIndex, onVideoChange
           onError={(e) => console.error('Video load error:', video.path, e)}
         />
 
-        {/* Text overlay previews — scale constants here (0.5, 0.6, 10%, 0.9em, 1.5 line-height)
+        {/* Safe zone guides — shows where Facebook/Instagram UI covers the video */}
+        <div className="absolute inset-x-0 top-0 pointer-events-none border-b border-dashed border-red-500/20" style={{ height: '15%' }}>
+          <span className="absolute bottom-1 right-2 text-[8px] text-red-400/40 font-medium">SAFE ZONE</span>
+        </div>
+        <div className="absolute inset-x-0 bottom-0 pointer-events-none border-t border-dashed border-red-500/20" style={{ height: '35%' }}>
+          <span className="absolute top-1 right-2 text-[8px] text-red-400/40 font-medium">SAFE ZONE</span>
+        </div>
+
+        {/* Text overlay previews — scale constants here (0.5, 0.6, 15%, 0.9em, 1.5 line-height)
             MUST stay in sync with overlay-renderer.ts PREVIEW_* constants */}
-        <div className="absolute inset-0 flex flex-col items-center pointer-events-none" style={{ paddingTop: '10%' }}>
+        <div className="absolute inset-0 flex flex-col items-center pointer-events-none" style={{ paddingTop: '15%' }}>
           {overlays.map((overlay, i) => {
             const isVisible = currentTime >= overlay.startTime && currentTime <= overlay.endTime;
             return (

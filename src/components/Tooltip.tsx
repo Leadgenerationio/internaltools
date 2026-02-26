@@ -11,6 +11,7 @@ export default function Tooltip({ text, position = 'top' }: TooltipProps) {
   const [visible, setVisible] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tooltipRef = useRef<HTMLSpanElement>(null);
+  const popupRef = useRef<HTMLSpanElement>(null);
 
   // Close on outside tap (mobile support)
   useEffect(() => {
@@ -26,6 +27,18 @@ export default function Tooltip({ text, position = 'top' }: TooltipProps) {
       document.removeEventListener('mousedown', handleOutside);
       document.removeEventListener('touchstart', handleOutside);
     };
+  }, [visible]);
+
+  // Reposition if overflowing viewport
+  useEffect(() => {
+    if (!visible || !popupRef.current) return;
+    const el = popupRef.current;
+    const rect = el.getBoundingClientRect();
+    if (rect.left < 8) {
+      el.style.transform = `translateX(${8 - rect.left}px)`;
+    } else if (rect.right > window.innerWidth - 8) {
+      el.style.transform = `translateX(${window.innerWidth - 8 - rect.right}px)`;
+    }
   }, [visible]);
 
   // Cleanup timeout on unmount
@@ -56,10 +69,10 @@ export default function Tooltip({ text, position = 'top' }: TooltipProps) {
   };
 
   const arrowClasses: Record<string, string> = {
-    top: 'top-full left-1/2 -translate-x-1/2 border-t-gray-700 border-l-transparent border-r-transparent border-b-transparent',
-    bottom: 'bottom-full left-1/2 -translate-x-1/2 border-b-gray-700 border-l-transparent border-r-transparent border-t-transparent',
-    left: 'left-full top-1/2 -translate-y-1/2 border-l-gray-700 border-t-transparent border-b-transparent border-r-transparent',
-    right: 'right-full top-1/2 -translate-y-1/2 border-r-gray-700 border-t-transparent border-b-transparent border-l-transparent',
+    top: 'top-full left-1/2 -translate-x-1/2 border-t-gray-800 border-l-transparent border-r-transparent border-b-transparent',
+    bottom: 'bottom-full left-1/2 -translate-x-1/2 border-b-gray-800 border-l-transparent border-r-transparent border-t-transparent',
+    left: 'left-full top-1/2 -translate-y-1/2 border-l-gray-800 border-t-transparent border-b-transparent border-r-transparent',
+    right: 'right-full top-1/2 -translate-y-1/2 border-r-gray-800 border-t-transparent border-b-transparent border-l-transparent',
   };
 
   return (
@@ -70,10 +83,9 @@ export default function Tooltip({ text, position = 'top' }: TooltipProps) {
       onMouseLeave={hide}
       onClick={toggle}
     >
-      {/* Info icon — circle with "i" */}
       <svg
         className={`w-4 h-4 cursor-help transition-colors ${
-          visible ? 'text-blue-400' : 'text-gray-400 hover:text-blue-400'
+          visible ? 'text-blue-400' : 'text-gray-500 hover:text-blue-400'
         }`}
         fill="none"
         viewBox="0 0 20 20"
@@ -93,13 +105,13 @@ export default function Tooltip({ text, position = 'top' }: TooltipProps) {
         </text>
       </svg>
 
-      {/* Tooltip popup */}
       {visible && (
         <span
+          ref={popupRef}
           className={`absolute z-50 ${positionClasses[position]} pointer-events-none`}
           role="tooltip"
         >
-          <span className="block bg-gray-700 text-white text-xs leading-relaxed rounded-lg shadow-lg px-3 py-2 max-w-xs whitespace-normal animate-tooltip-fade">
+          <span className="block w-72 bg-gray-800 border border-gray-600 text-gray-200 text-[13px] leading-relaxed rounded-lg shadow-xl px-3.5 py-2.5 whitespace-normal animate-tooltip-fade">
             {text}
           </span>
           <span

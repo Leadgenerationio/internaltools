@@ -110,13 +110,18 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
     const overlayFilterParts: string[] = [];
     let prevLabel = '[base]';
 
+    // Safe zone: 15% from top, 35% from bottom (Facebook/Instagram Reels/Stories UI)
+    const SAFE_TOP = Math.round(OUTPUT_HEIGHT * 0.15);
+    const SAFE_BOTTOM = Math.round(OUTPUT_HEIGHT * 0.65); // content must stay above this
+
     sorted.forEach((overlay, index) => {
       const inputIndex = firstOverlayIndex + index;
-      // CSS paddingTop: 10% is relative to element *width*, not height
-      let yPos = Math.round(OUTPUT_WIDTH * 0.10);
+      let yPos = SAFE_TOP;
       for (let j = 0; j < index; j++) {
         yPos += getOverlayHeight(sorted[j], OUTPUT_WIDTH);
       }
+      // Clamp so overlays don't overflow into the bottom safe zone
+      if (yPos > SAFE_BOTTOM) yPos = SAFE_BOTTOM;
       const nextLabel = index === sorted.length - 1 ? '[outv]' : `[v${index}]`;
       overlayFilterParts.push(
         `${prevLabel}[${inputIndex}:v]overlay=x=(main_w-overlay_w)/2:y=${yPos}:enable='between(t,${overlay.startTime},${overlay.endTime})'${nextLabel}`
