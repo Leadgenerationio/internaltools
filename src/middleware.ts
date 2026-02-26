@@ -12,7 +12,7 @@ const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMITS: Record<string, { maxRequests: number; windowMs: number }> = {
   '/api/generate-ads': { maxRequests: 5, windowMs: 60_000 },
   '/api/generate-video': { maxRequests: 3, windowMs: 60_000 },
-  '/api/render': { maxRequests: 10, windowMs: 60_000 },
+  '/api/render': { maxRequests: 50, windowMs: 60_000 },
   '/api/upload': { maxRequests: 20, windowMs: 60_000 },
   '/api/upload-music': { maxRequests: 20, windowMs: 60_000 },
   '/api/log': { maxRequests: 60, windowMs: 60_000 },
