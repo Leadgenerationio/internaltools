@@ -231,25 +231,33 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
         </div>
       </div>
 
-      {/* Generate button */}
-      <button
-        onClick={handleGenerate}
-        disabled={!canGenerate}
-        className={`w-full py-2.5 rounded-xl font-semibold text-sm transition-all focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 focus:ring-offset-gray-950 ${
-          !canGenerate
-            ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
-            : 'bg-green-600 hover:bg-green-500 text-white shadow-lg shadow-green-600/20'
-        }`}
-      >
-        {generating ? (
-          <span className="flex items-center justify-center gap-2">
+      {/* Generate / Cancel button */}
+      {generating ? (
+        <div className="flex gap-2">
+          <div className="flex-1 py-2.5 rounded-xl font-semibold text-sm bg-gray-700 text-gray-300 flex items-center justify-center gap-2">
             <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
             Generating...
-          </span>
-        ) : (
-          `Generate ${count} Video${count > 1 ? 's' : ''}`
-        )}
-      </button>
+          </div>
+          <button
+            onClick={handleCancel}
+            className="px-4 py-2.5 rounded-xl font-semibold text-sm text-red-400 hover:text-red-300 bg-red-950/30 hover:bg-red-950/50 border border-red-800 transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={handleGenerate}
+          disabled={!canGenerate}
+          className={`w-full py-2.5 rounded-xl font-semibold text-sm transition-all focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 focus:ring-offset-gray-950 ${
+            !canGenerate
+              ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+              : 'bg-green-600 hover:bg-green-500 text-white shadow-lg shadow-green-600/20'
+          }`}
+        >
+          {`Generate ${count} Video${count > 1 ? 's' : ''}`}
+        </button>
+      )}
 
       {/* Status message */}
       {statusMessage && (

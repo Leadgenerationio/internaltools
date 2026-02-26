@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState, useEffect } from 'react';
 import type { UploadedVideo } from '@/lib/types';
 
 const log = async (level: string, message: string, meta?: object) => {
