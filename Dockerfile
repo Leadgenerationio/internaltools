@@ -59,7 +59,8 @@ COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 COPY --from=builder /app/src/generated ./src/generated
 
 # Install prisma CLI for migrations (has many transitive deps, easier to install fresh)
-RUN npm install prisma@latest --save-dev --ignore-scripts
+# Pin to the same version as package.json to avoid compatibility issues
+RUN npm install prisma@7.4.1 --save-dev
 
 # Create the public directory and subdirectories the app needs
 RUN mkdir -p public/uploads public/outputs public/music public/logos
@@ -72,4 +73,5 @@ ENV HOSTNAME=0.0.0.0
 EXPOSE 3000
 
 # Run Prisma migrations then start the app
-CMD ["sh", "-c", "npx prisma migrate deploy && node server.js"]
+# Pre-flight check: fail fast with a clear message if DATABASE_URL is missing
+CMD ["sh", "-c", "if [ -z \"$DATABASE_URL\" ]; then echo 'FATAL: DATABASE_URL is not set. Add it in Railway variables.' && exit 1; fi && npx prisma migrate deploy && node server.js"]

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 
 export default function ResetPasswordPage() {
@@ -13,16 +13,14 @@ export default function ResetPasswordPage() {
   const [loading, setLoading] = useState(false);
 
   // Check URL for token on mount
-  useState(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const t = params.get('token');
-      if (t) {
-        setToken(t);
-        setStep('reset');
-      }
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const t = params.get('token');
+    if (t) {
+      setToken(t);
+      setStep('reset');
     }
-  });
+  }, []);
 
   const handleRequestReset = async (e: React.FormEvent) => {
     e.preventDefault();
