@@ -17,6 +17,9 @@ const RATE_LIMITS: Record<string, { maxRequests: number; windowMs: number }> = {
   '/api/upload-music': { maxRequests: 20, windowMs: 60_000 },
   '/api/log': { maxRequests: 60, windowMs: 60_000 },
   '/api/logs': { maxRequests: 30, windowMs: 60_000 },
+  '/api/tickets': { maxRequests: 30, windowMs: 60_000 },
+  '/api/admin/tickets': { maxRequests: 30, windowMs: 60_000 },
+  '/api/integrations/google-drive/export': { maxRequests: 5, windowMs: 60_000 },
 };
 
 function getClientIp(request: NextRequest): string {
@@ -80,7 +83,7 @@ const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'http://localhost:3000';
 
 // ─── Public Routes (no auth required) ───────────────────────────────────────
 
-const PUBLIC_ROUTES = ['/login', '/register', '/welcome', '/reset-password', '/api/auth', '/api/health', '/api/webhooks', '/privacy', '/terms', '/help'];
+const PUBLIC_ROUTES = ['/login', '/register', '/welcome', '/reset-password', '/suspended', '/api/auth', '/api/health', '/api/webhooks', '/api/integrations/google-drive/callback', '/privacy', '/terms', '/help'];
 
 function isPublicRoute(pathname: string): boolean {
   return PUBLIC_ROUTES.some((route) => pathname.startsWith(route));

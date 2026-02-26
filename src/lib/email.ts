@@ -384,3 +384,367 @@ export async function sendPaymentReceiptEmail(
     return { success: false };
   }
 }
+
+// ---------------------------------------------------------------------------
+// 6. Team Invite Email
+// ---------------------------------------------------------------------------
+
+export async function sendTeamInviteEmail(
+  to: string,
+  name: string,
+  companyName: string,
+  tempPassword: string,
+  loginUrl: string
+): Promise<{ success: boolean }> {
+  try {
+    const resend = getResend();
+    if (!resend) return { success: false };
+
+    const displayName = esc(name || 'there');
+    const escapedCompany = esc(companyName);
+
+    const html = wrapHtml('You\'ve Been Invited', `
+      <h2 style="margin:0 0 16px;font-size:20px;color:#ffffff;">You've been invited!</h2>
+      <p style="margin:0 0 16px;font-size:15px;color:#d1d5db;line-height:1.6;">
+        Hi ${displayName}, you've been invited to join <strong style="color:#ffffff;">${escapedCompany}</strong> on Ad Maker.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;background:#262626;border-radius:8px;overflow:hidden;">
+        <tr>
+          <td style="padding:20px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="font-size:14px;color:#9ca3af;">Email</td>
+                <td align="right" style="font-size:15px;color:#ffffff;">${esc(to)}</td>
+              </tr>
+              <tr>
+                <td style="padding-top:12px;font-size:14px;color:#9ca3af;">Temporary password</td>
+                <td align="right" style="padding-top:12px;font-size:15px;color:#22c55e;font-weight:600;font-family:monospace;">${esc(tempPassword)}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+      <p style="margin:0 0 8px;font-size:14px;color:#f59e0b;line-height:1.6;">
+        <strong>Important:</strong> Please change your password after your first login.
+      </p>
+      <div style="margin:24px 0 0;text-align:center;">
+        ${button('Log In to Ad Maker', loginUrl)}
+      </div>
+      <p style="margin:16px 0 0;font-size:13px;color:#6b7280;line-height:1.6;word-break:break-all;">
+        If the button doesn't work, copy and paste this URL:<br />
+        <a href="${loginUrl}" style="color:#3b82f6;text-decoration:none;">${loginUrl}</a>
+      </p>
+    `);
+
+    await resend.emails.send({
+      from: getFromEmail(),
+      to,
+      subject: `You've been invited to join ${escapedCompany} on Ad Maker`,
+      html,
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('[Email] Failed to send team invite email:', error);
+    return { success: false };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 7. Render Complete Email
+// ---------------------------------------------------------------------------
+
+export async function sendRenderCompleteEmail(
+  to: string,
+  name: string,
+  videoCount: number,
+  projectName?: string,
+  downloadUrl?: string
+): Promise<{ success: boolean }> {
+  try {
+    const resend = getResend();
+    if (!resend) return { success: false };
+
+    const displayName = esc(name || 'there');
+    const appUrl = getAppUrl();
+    const projectLabel = projectName ? esc(projectName) : 'your project';
+    const viewUrl = downloadUrl || appUrl;
+
+    const html = wrapHtml('Your Videos Are Ready', `
+      <h2 style="margin:0 0 16px;font-size:20px;color:#ffffff;">Your ${videoCount} video${videoCount !== 1 ? 's are' : ' is'} ready!</h2>
+      <p style="margin:0 0 16px;font-size:15px;color:#d1d5db;line-height:1.6;">
+        Hi ${displayName}, the render for <strong style="color:#ffffff;">${projectLabel}</strong> has finished.
+        ${videoCount} video${videoCount !== 1 ? 's have' : ' has'} been rendered and ${videoCount !== 1 ? 'are' : 'is'} ready to download.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;background:#262626;border-radius:8px;overflow:hidden;">
+        <tr>
+          <td style="padding:20px 24px;text-align:center;">
+            <span style="font-size:36px;font-weight:700;color:#22c55e;">${videoCount}</span>
+            <p style="margin:4px 0 0;font-size:14px;color:#9ca3af;">video${videoCount !== 1 ? 's' : ''} rendered</p>
+          </td>
+        </tr>
+      </table>
+      <div style="margin:24px 0 0;text-align:center;">
+        ${button('View & Download', viewUrl)}
+      </div>
+    `);
+
+    await resend.emails.send({
+      from: getFromEmail(),
+      to,
+      subject: `Your ${videoCount} video${videoCount !== 1 ? 's are' : ' is'} ready — Ad Maker`,
+      html,
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('[Email] Failed to send render complete email:', error);
+    return { success: false };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 8. Render Failed Email
+// ---------------------------------------------------------------------------
+
+export async function sendRenderFailedEmail(
+  to: string,
+  name: string,
+  failedCount: number,
+  totalCount: number,
+  projectName?: string
+): Promise<{ success: boolean }> {
+  try {
+    const resend = getResend();
+    if (!resend) return { success: false };
+
+    const displayName = esc(name || 'there');
+    const appUrl = getAppUrl();
+    const projectLabel = projectName ? esc(projectName) : 'your project';
+    const successCount = totalCount - failedCount;
+
+    const html = wrapHtml('Render Issues', `
+      <h2 style="margin:0 0 16px;font-size:20px;color:#ffffff;">Render partially failed</h2>
+      <p style="margin:0 0 16px;font-size:15px;color:#d1d5db;line-height:1.6;">
+        Hi ${displayName}, <strong style="color:#ef4444;">${failedCount} of ${totalCount}</strong> renders
+        for <strong style="color:#ffffff;">${projectLabel}</strong> encountered errors.
+        ${successCount > 0 ? `The other ${successCount} video${successCount !== 1 ? 's' : ''} rendered successfully.` : ''}
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;background:#262626;border-radius:8px;overflow:hidden;">
+        <tr>
+          <td style="padding:20px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="font-size:14px;color:#9ca3af;">Succeeded</td>
+                <td align="right" style="font-size:15px;color:#22c55e;font-weight:600;">${successCount}</td>
+              </tr>
+              <tr>
+                <td style="padding-top:12px;font-size:14px;color:#9ca3af;">Failed</td>
+                <td align="right" style="padding-top:12px;font-size:15px;color:#ef4444;font-weight:600;">${failedCount}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+      <p style="margin:0 0 8px;font-size:15px;color:#d1d5db;line-height:1.6;">
+        You can retry the failed renders from the app.
+      </p>
+      <div style="margin:24px 0 0;text-align:center;">
+        ${button('Retry in App', appUrl)}
+      </div>
+    `);
+
+    await resend.emails.send({
+      from: getFromEmail(),
+      to,
+      subject: `${failedCount} of ${totalCount} renders failed — Ad Maker`,
+      html,
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('[Email] Failed to send render failed email:', error);
+    return { success: false };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 9. Subscription Renewal Email
+// ---------------------------------------------------------------------------
+
+export async function sendSubscriptionRenewalEmail(
+  to: string,
+  name: string,
+  plan: string,
+  tokensAdded: number
+): Promise<{ success: boolean }> {
+  try {
+    const resend = getResend();
+    if (!resend) return { success: false };
+
+    const displayName = esc(name || 'there');
+    const escapedPlan = esc(plan);
+    const appUrl = getAppUrl();
+
+    const html = wrapHtml('Subscription Renewed', `
+      <h2 style="margin:0 0 16px;font-size:20px;color:#ffffff;">Subscription renewed</h2>
+      <p style="margin:0 0 16px;font-size:15px;color:#d1d5db;line-height:1.6;">
+        Hi ${displayName}, your <strong style="color:#3b82f6;">${escapedPlan}</strong> subscription
+        has been renewed and your tokens have been topped up.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;background:#262626;border-radius:8px;overflow:hidden;">
+        <tr>
+          <td style="padding:20px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="font-size:14px;color:#9ca3af;">Plan</td>
+                <td align="right" style="font-size:15px;color:#ffffff;font-weight:600;">${escapedPlan}</td>
+              </tr>
+              <tr>
+                <td style="padding-top:12px;font-size:14px;color:#9ca3af;">Tokens added</td>
+                <td align="right" style="padding-top:12px;font-size:15px;color:#22c55e;font-weight:600;">+${tokensAdded.toLocaleString()} tokens</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+      <p style="margin:0 0 8px;font-size:15px;color:#d1d5db;line-height:1.6;">
+        Your team can continue creating video ads. Visit the billing page to see your current balance.
+      </p>
+      <div style="margin:24px 0 0;text-align:center;">
+        ${button('View Billing', `${appUrl}/billing`)}
+      </div>
+    `);
+
+    await resend.emails.send({
+      from: getFromEmail(),
+      to,
+      subject: `${escapedPlan} subscription renewed — ${tokensAdded} tokens added — Ad Maker`,
+      html,
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('[Email] Failed to send subscription renewal email:', error);
+    return { success: false };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 10. Ticket Created Confirmation Email
+// ---------------------------------------------------------------------------
+
+export async function sendTicketCreatedEmail(
+  to: string,
+  name: string,
+  ticketNumber: string,
+  subject: string
+): Promise<{ success: boolean }> {
+  try {
+    const resend = getResend();
+    if (!resend) return { success: false };
+
+    const displayName = esc(name || 'there');
+    const escapedSubject = esc(subject);
+    const appUrl = getAppUrl();
+
+    const html = wrapHtml('Support Ticket Created', `
+      <h2 style="margin:0 0 16px;font-size:20px;color:#ffffff;">We received your ticket</h2>
+      <p style="margin:0 0 16px;font-size:15px;color:#d1d5db;line-height:1.6;">
+        Hi ${displayName}, your support ticket has been created. We'll get back to you as soon as possible.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;background:#262626;border-radius:8px;overflow:hidden;">
+        <tr>
+          <td style="padding:20px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="font-size:14px;color:#9ca3af;">Ticket</td>
+                <td align="right" style="font-size:15px;color:#3b82f6;font-weight:600;">#${esc(ticketNumber)}</td>
+              </tr>
+              <tr>
+                <td style="padding-top:12px;font-size:14px;color:#9ca3af;">Subject</td>
+                <td align="right" style="padding-top:12px;font-size:15px;color:#ffffff;font-weight:600;">${escapedSubject}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+      <div style="margin:24px 0 0;text-align:center;">
+        ${button('View Ticket', `${appUrl}/tickets`)}
+      </div>
+    `);
+
+    await resend.emails.send({
+      from: getFromEmail(),
+      to,
+      subject: `Ticket #${ticketNumber} created — ${subject} — Ad Maker`,
+      html,
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('[Email] Failed to send ticket created email:', error);
+    return { success: false };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 11. Ticket Reply Notification Email
+// ---------------------------------------------------------------------------
+
+export async function sendTicketReplyEmail(
+  to: string,
+  name: string,
+  ticketNumber: string,
+  subject: string
+): Promise<{ success: boolean }> {
+  try {
+    const resend = getResend();
+    if (!resend) return { success: false };
+
+    const displayName = esc(name || 'there');
+    const escapedSubject = esc(subject);
+    const appUrl = getAppUrl();
+
+    const html = wrapHtml('New Reply on Your Ticket', `
+      <h2 style="margin:0 0 16px;font-size:20px;color:#ffffff;">New reply on your ticket</h2>
+      <p style="margin:0 0 16px;font-size:15px;color:#d1d5db;line-height:1.6;">
+        Hi ${displayName}, our support team has replied to your ticket.
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;background:#262626;border-radius:8px;overflow:hidden;">
+        <tr>
+          <td style="padding:20px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="font-size:14px;color:#9ca3af;">Ticket</td>
+                <td align="right" style="font-size:15px;color:#3b82f6;font-weight:600;">#${esc(ticketNumber)}</td>
+              </tr>
+              <tr>
+                <td style="padding-top:12px;font-size:14px;color:#9ca3af;">Subject</td>
+                <td align="right" style="padding-top:12px;font-size:15px;color:#ffffff;font-weight:600;">${escapedSubject}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+      <p style="margin:0 0 8px;font-size:15px;color:#d1d5db;line-height:1.6;">
+        Log in to view the full reply and respond.
+      </p>
+      <div style="margin:24px 0 0;text-align:center;">
+        ${button('View Ticket', `${appUrl}/tickets`)}
+      </div>
+    `);
+
+    await resend.emails.send({
+      from: getFromEmail(),
+      to,
+      subject: `Reply on ticket #${ticketNumber} — ${subject} — Ad Maker`,
+      html,
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('[Email] Failed to send ticket reply email:', error);
+    return { success: false };
+  }
+}

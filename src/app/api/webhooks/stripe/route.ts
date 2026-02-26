@@ -4,6 +4,8 @@ import { stripe } from '@/lib/stripe';
 import { prisma } from '@/lib/prisma';
 import { creditTokens } from '@/lib/token-balance';
 import { getPlanLimits, type PlanKey } from '@/lib/plans';
+import { sendSubscriptionRenewalEmail } from '@/lib/email';
+import { createCompanyNotification } from '@/lib/notifications';
 
 export const dynamic = 'force-dynamic';
 
@@ -144,6 +146,33 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     reason: 'PLAN_ALLOCATION',
     description: `Monthly renewal — ${planLimits.label} plan: ${planLimits.monthlyTokens} tokens`,
   });
+
+  // Send renewal email to the company owner (fire-and-forget)
+  try {
+    const owner = await prisma.user.findFirst({
+      where: { companyId: company.id, role: 'OWNER' },
+      select: { email: true, name: true },
+    });
+    if (owner) {
+      sendSubscriptionRenewalEmail(
+        owner.email,
+        owner.name || '',
+        planLimits.label,
+        planLimits.monthlyTokens
+      );
+    }
+  } catch {
+    // Ignore — email is non-critical
+  }
+
+  // In-app notification for all company users (fire-and-forget)
+  createCompanyNotification(
+    company.id,
+    'PLAN_CHANGED',
+    'Subscription renewed',
+    `Your ${planLimits.label} plan has renewed. ${planLimits.monthlyTokens} tokens have been added.`,
+    '/billing'
+  );
 
   console.log(`Stripe: Monthly renewal for company ${company.id} (${company.plan}), credited ${planLimits.monthlyTokens} tokens`);
 }

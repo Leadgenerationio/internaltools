@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { signOut, useSession } from 'next-auth/react';
 import Link from 'next/link';
+import NotificationBell from '@/components/NotificationBell';
 
 export default function UserMenu() {
   const { data: session } = useSession();
@@ -31,7 +32,9 @@ export default function UserMenu() {
   const isAdmin = session.user.role === 'OWNER' || session.user.role === 'ADMIN';
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="flex items-center gap-2">
+      <NotificationBell />
+      <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen(!open)}
         className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 transition-colors"
@@ -91,6 +94,13 @@ export default function UserMenu() {
               </>
             )}
             <Link
+              href="/tickets"
+              onClick={() => setOpen(false)}
+              className="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
+            >
+              Support Tickets
+            </Link>
+            <Link
               href="/help"
               onClick={() => setOpen(false)}
               className="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white"
@@ -106,6 +116,7 @@ export default function UserMenu() {
           </div>
         </div>
       )}
+    </div>
     </div>
   );
 }

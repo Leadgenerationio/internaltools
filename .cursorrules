@@ -11,7 +11,7 @@ After any new feature or major change, always update `ARCHITECTURE.md`, `CLAUDE.
 - **Multi-tenancy**: Companies with users (roles: OWNER/ADMIN/MEMBER), data filtered by company_id
 - **Token billing**: Token-based billing system (`src/lib/token-pricing.ts`, `src/lib/token-balance.ts`). 1 token = 1 finished video, 10 tokens = 1 Veo AI video (bundled with renders). Ad copy generation is FREE.
 - **Payments**: Stripe Checkout + Customer Portal for subscriptions and token top-ups (`src/lib/stripe.ts`, `/api/billing/create-checkout`, `/api/billing/manage`, `/api/webhooks/stripe`)
-- **Email**: Resend SDK for transactional emails — welcome, reset, upgrade, budget alerts, receipts (`src/lib/email.ts`)
+- **Email**: Resend SDK for transactional emails — 11 templates including welcome, reset, upgrade, budget alerts, receipts, team invite, render complete/failed, subscription renewal, ticket created/reply (`src/lib/email.ts`)
 - **Internal cost tracking**: Per-call API usage logging in cents (`src/lib/track-usage.ts`, `src/lib/pricing.ts`) — admin-only, hidden from users
 - **Video processing**: FFmpeg via shell exec (server-side), @napi-rs/canvas for emoji-supporting overlay PNGs
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) for generating TOFU/MOFU/BOFU ad text
@@ -22,6 +22,12 @@ After any new feature or major change, always update `ARCHITECTURE.md`, `CLAUDE.
 - **State**: React useState (no external state management)
 - **Logging**: Winston with daily-rotate-file, client-side logs forwarded via `/api/log`
 - **Deployment**: Railway with Docker, Next.js standalone output, Railway Volume for persistent file storage
+- **Admin dashboard**: Super admin panel at `/admin` with 5 tabs (Overview, Companies, Users, Transactions, Support). Auth via `src/lib/admin-auth.ts`. Audit logging via `AdminAuditLog` model.
+- **Support ticketing**: User pages at `/tickets/*`, admin routes at `/api/admin/tickets/*`. Auto-incrementing numbers, email notifications, `src/lib/sanitize.ts` for input sanitization.
+- **Google Drive export**: OAuth2 integration with 6 routes at `/api/integrations/google-drive/*`. `GoogleDriveButton` component in render results. User model stores Drive tokens.
+- **In-app notifications**: `NotificationBell` component with 30s polling. API at `/api/notifications/*`. `Notification` model in Prisma.
+- **Onboarding**: 5-step `OnboardingChecklist` for accounts <7 days old. API at `/api/onboarding`.
+- **Project templates**: 6 system + company-owned templates. `TemplatePickerModal` + `SaveAsTemplateModal` in Brief step. Seed via `scripts/seed-templates.ts`. API at `/api/templates/*`.
 
 ## App Flow (4 Steps)
 
@@ -69,9 +75,15 @@ src/
     usage/
       page.tsx                    — Token usage dashboard (balance, by-reason, by-user)
     settings/
-      page.tsx                    — Company settings (users, invitations, token budget)
+      page.tsx                    — Company settings (users, invitations, token budget, password, Google Drive, templates)
     admin/
-      page.tsx                    — Super admin dashboard (all companies, revenue, API calls)
+      page.tsx                    — Super admin dashboard (5 tabs: Overview, Companies, Users, Transactions, Support)
+    tickets/
+      page.tsx                    — Support ticket list (filterable)
+      new/page.tsx                — Create new support ticket
+      [id]/page.tsx               — Ticket detail with threaded messages
+    suspended/
+      page.tsx                    — Suspended company landing page
     billing/
       page.tsx                    — Plan comparison, Stripe Checkout, token top-ups
       layout.tsx                  — Metadata + Suspense boundary
@@ -101,7 +113,33 @@ src/
       webhooks/stripe/route.ts    — Stripe webhook handler (POST)
       usage/route.ts              — Token usage dashboard (balance, by-reason, by-user, transactions)
       usage/export/route.ts       — CSV export of token transactions
+      auth/change-password/route.ts — Authenticated password change
       admin/route.ts              — Super admin platform-wide stats + company breakdown
+      admin/companies/route.ts    — Admin: list all companies
+      admin/companies/[id]/route.ts — Admin: get/update company (plan, suspension)
+      admin/companies/[id]/grant-tokens/route.ts — Admin: grant tokens
+      admin/users/route.ts        — Admin: list all users
+      admin/impersonate/route.ts  — Admin: impersonate user
+      admin/transactions/route.ts — Admin: platform-wide transactions
+      admin/tickets/route.ts      — Admin: list support tickets
+      admin/tickets/[id]/route.ts — Admin: manage ticket
+      admin/tickets/stats/route.ts — Admin: ticket statistics
+      tickets/route.ts            — User: list/create tickets
+      tickets/[id]/route.ts       — User: ticket detail
+      tickets/[id]/messages/route.ts — User: send ticket message
+      notifications/route.ts      — List notifications
+      notifications/[id]/read/route.ts — Mark notification read
+      notifications/mark-all-read/route.ts — Mark all read
+      integrations/google-drive/auth/route.ts — Google Drive OAuth2 start
+      integrations/google-drive/callback/route.ts — Google Drive OAuth2 callback
+      integrations/google-drive/disconnect/route.ts — Disconnect Google Drive
+      integrations/google-drive/status/route.ts — Google Drive connection status
+      integrations/google-drive/folders/route.ts — List Drive folders
+      integrations/google-drive/export/route.ts — Export video to Drive
+      templates/route.ts          — List/create project templates
+      templates/[id]/route.ts     — CRUD template
+      templates/[id]/use/route.ts — Use template for brief
+      onboarding/route.ts         — Get/update onboarding checklist
       health/route.ts             — Health check (DB + FFmpeg)
       projects/route.ts           — List + create projects (GET/POST)
       projects/[id]/route.ts     — Get, update, delete project (GET/PUT/DELETE)
@@ -130,6 +168,11 @@ src/
     SettingsPanel.tsx             — Company users, invitations, limits
     Tooltip.tsx                   — Reusable info tooltip (hover/tap, CSS-only)
     InfoBanner.tsx                — Info/tip/warning banners with icons
+    NotificationBell.tsx          — In-app notification bell with badge + dropdown (30s polling)
+    GoogleDriveButton.tsx         — Export-to-Google-Drive button (render results)
+    OnboardingChecklist.tsx       — 5-step onboarding checklist (accounts <7 days)
+    TemplatePickerModal.tsx       — Template picker modal (system + company)
+    SaveAsTemplateModal.tsx       — Save brief as reusable template
   lib/
     types.ts                      — TypeScript interfaces, presets, funnel types
     ffmpeg-renderer.ts            — Core FFmpeg rendering (overlay, audio, trim, quality)
@@ -147,13 +190,15 @@ src/
     check-limits.ts               — Token balance + user limit enforcement
     spend-alerts.ts               — Token-based budget alerts (50%/80%/100%) + email
     stripe.ts                     — Stripe client singleton (lazy-loaded)
-    email.ts                      — Resend transactional emails (5 templates)
+    email.ts                      — Resend transactional emails (11 templates)
     api-auth.ts                   — Auth middleware helpers for API routes
+    admin-auth.ts                 — Super admin auth helper (SUPER_ADMIN_EMAILS check)
+    sanitize.ts                   — HTML stripping for ticket/message input sanitization
     file-url.ts                   — Helper to convert paths to /api/files URLs
   middleware.ts                   — JWT verification, rate limiting, security headers
   auth.config.ts                  — NextAuth v5 configuration
 prisma/
-  schema.prisma                   — Data models: Company, User, Session, ApiUsage, TokenTransaction, TokenTopup
+  schema.prisma                   — Data models: Company, User, Session, ApiUsage, TokenTransaction, TokenTopup, SupportTicket, TicketMessage, AdminAuditLog, Notification, ProjectTemplate
   migrations/                     — Database migrations
 ```
 
@@ -193,3 +238,4 @@ prisma/
 - `SPEND_ALERT_WEBHOOK_URL` for budget alert webhooks (optional)
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_PRO` for payments
 - `RESEND_API_KEY`, `EMAIL_FROM` for transactional emails (Resend)
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` for Google Drive export (optional)

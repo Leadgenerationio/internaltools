@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import UserMenu from '@/components/UserMenu';
+import TemplatePickerModal from '@/components/TemplatePickerModal';
 
 interface ProjectSummary {
   id: string;
@@ -48,6 +49,9 @@ export default function ProjectsPage() {
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [duplicating, setDuplicating] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const fetchProjects = useCallback(async (pageNum: number) => {
@@ -109,6 +113,13 @@ export default function ProjectsPage() {
     return () => clearTimeout(timer);
   }, [confirmDelete]);
 
+  // Auto-dismiss success message after 5s
+  useEffect(() => {
+    if (!successMessage) return;
+    const timer = setTimeout(() => setSuccessMessage(''), 5000);
+    return () => clearTimeout(timer);
+  }, [successMessage]);
+
   const handleNewProject = async () => {
     setCreating(true);
     setError('');
@@ -129,6 +140,33 @@ export default function ProjectsPage() {
       setError(err.message || 'Failed to create project');
       setCreating(false);
     }
+  };
+
+  const handleTemplateSelect = async (templateId: string) => {
+    setCreating(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/templates/${templateId}/use`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to create project from template');
+      }
+      const data = await res.json();
+      setShowTemplateModal(false);
+      router.push(`/?projectId=${data.project.id}`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to create project from template');
+      setCreating(false);
+    }
+  };
+
+  const handleStartFromScratch = () => {
+    setShowTemplateModal(false);
+    handleNewProject();
   };
 
   const handleDelete = async (projectId: string) => {
@@ -157,6 +195,31 @@ export default function ProjectsPage() {
     }
   };
 
+  const handleDuplicate = async (projectId: string) => {
+    setDuplicating(projectId);
+    setError('');
+    try {
+      const res = await fetch(`/api/projects/${projectId}/duplicate`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to duplicate project');
+      }
+      const data = await res.json();
+      // Add the duplicate to the top of the list
+      setProjects((prev) => [data.project, ...prev]);
+      if (pagination) {
+        setPagination({ ...pagination, totalCount: pagination.totalCount + 1 });
+      }
+      setSuccessMessage(`Project duplicated! "${data.project.name}"`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to duplicate project');
+    } finally {
+      setDuplicating(null);
+    }
+  };
+
   if (status === 'loading') {
     return (
       <main className="min-h-screen bg-gray-950 flex items-center justify-center">
@@ -181,7 +244,7 @@ export default function ProjectsPage() {
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={handleNewProject}
+              onClick={() => setShowTemplateModal(true)}
               disabled={creating}
               className="px-4 py-2 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
             >
@@ -199,6 +262,18 @@ export default function ProjectsPage() {
             <button
               onClick={() => setError('')}
               className="ml-3 text-red-400 hover:text-red-200 underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="mb-6 p-4 bg-green-900/30 border border-green-700 rounded-xl text-green-300 text-sm flex items-center justify-between">
+            <span>{successMessage}</span>
+            <button
+              onClick={() => setSuccessMessage('')}
+              className="ml-3 text-green-400 hover:text-green-200 text-xs"
             >
               Dismiss
             </button>
@@ -232,7 +307,7 @@ export default function ProjectsPage() {
               custom overlays, and background music.
             </p>
             <button
-              onClick={handleNewProject}
+              onClick={() => setShowTemplateModal(true)}
               disabled={creating}
               className="px-5 py-2.5 bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white font-medium rounded-lg transition-colors"
             >
@@ -286,7 +361,25 @@ export default function ProjectsPage() {
                     </p>
                   </Link>
 
-                  <div className="border-t border-gray-700/50 px-5 py-2.5 flex justify-end">
+                  <div className="border-t border-gray-700/50 px-5 py-2.5 flex justify-end gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleDuplicate(project.id);
+                      }}
+                      disabled={duplicating === project.id}
+                      className="text-xs px-2.5 py-1 rounded-md transition-colors text-gray-500 hover:text-blue-400 hover:bg-gray-700/50 disabled:opacity-50"
+                    >
+                      {duplicating === project.id ? (
+                        <span className="flex items-center gap-1">
+                          <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                          Duplicating...
+                        </span>
+                      ) : (
+                        'Duplicate'
+                      )}
+                    </button>
                     <button
                       onClick={(e) => {
                         e.preventDefault();
@@ -336,6 +429,15 @@ export default function ProjectsPage() {
           </>
         )}
       </div>
+
+      {/* Template Picker Modal */}
+      <TemplatePickerModal
+        open={showTemplateModal}
+        onClose={() => setShowTemplateModal(false)}
+        onSelectTemplate={handleTemplateSelect}
+        onStartFromScratch={handleStartFromScratch}
+        loading={creating}
+      />
     </main>
   );
 }

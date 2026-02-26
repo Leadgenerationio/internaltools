@@ -9,6 +9,9 @@ import { checkTokenBalance } from '@/lib/check-limits';
 import { deductTokens, refundTokens } from '@/lib/token-balance';
 import { checkTokenAlerts } from '@/lib/spend-alerts';
 import { calculateRenderTokens } from '@/lib/token-pricing';
+import { sendRenderCompleteEmail } from '@/lib/email';
+import { createNotification } from '@/lib/notifications';
+import { prisma } from '@/lib/prisma';
 import type { TextOverlay, MusicTrack, UploadedVideo } from '@/lib/types';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
@@ -165,6 +168,32 @@ export async function POST(request: NextRequest) {
 
     // Check token alerts after successful render
     checkTokenAlerts(authResult.auth.companyId);
+
+    // Send render-complete email + in-app notification (fire-and-forget)
+    const videoCount = results.length;
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: authResult.auth.userId },
+        select: { name: true, email: true },
+      });
+      if (user) {
+        sendRenderCompleteEmail(
+          user.email,
+          user.name || '',
+          videoCount
+        );
+      }
+    } catch {
+      // Ignore — email is non-critical
+    }
+
+    createNotification(
+      authResult.auth.userId,
+      'RENDER_COMPLETE',
+      `${videoCount} video${videoCount !== 1 ? 's' : ''} ready`,
+      `Your render is complete. ${videoCount} video${videoCount !== 1 ? 's are' : ' is'} ready to download.`,
+      '/'
+    );
 
     return NextResponse.json({ results, tokensUsed: tokenCost });
   } catch (error: any) {

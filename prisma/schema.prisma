@@ -27,12 +27,20 @@ model Company {
   tokenBalance       Int  @default(0)  // Current available tokens
   monthlyTokenBudget Int?              // Optional: monthly token usage cap
 
-  users             User[]
-  projects          Project[]
-  apiUsage          ApiUsageLog[]
-  files             StorageFile[]
-  tokenTransactions TokenTransaction[]
-  tokenTopups       TokenTopup[]
+  // Suspension (Admin agent)
+  suspended       Boolean   @default(false)
+  suspendedAt     DateTime?
+  suspendedReason String?
+
+  users              User[]
+  projects           Project[]
+  projectTemplates   ProjectTemplate[]
+  apiUsage           ApiUsageLog[]
+  files              StorageFile[]
+  tokenTransactions  TokenTransaction[]
+  tokenTopups        TokenTopup[]
+  supportTickets     SupportTicket[]
+  adminAuditLogs     AdminAuditLog[] @relation("AuditTargetCompany")
 
   @@index([slug])
 }
@@ -56,12 +64,21 @@ model User {
   updatedAt    DateTime  @updatedAt
   lastLoginAt  DateTime?
 
-  sessions          Session[]
-  accounts          Account[]
-  projects          Project[]
-  apiUsage          ApiUsageLog[]
-  tokenTransactions TokenTransaction[]
-  tokenTopups       TokenTopup[]
+  // Google Drive integration
+  googleDriveRefreshToken String?  @db.Text
+  googleDriveConnected    Boolean  @default(false)
+  googleDriveEmail        String?
+
+  sessions           Session[]
+  accounts           Account[]
+  projects           Project[]
+  projectTemplates   ProjectTemplate[]
+  apiUsage           ApiUsageLog[]
+  tokenTransactions  TokenTransaction[]
+  tokenTopups        TokenTopup[]
+  notifications      Notification[]
+  supportTickets     SupportTicket[]
+  ticketMessages     TicketMessage[]
 
   @@index([companyId])
   @@index([email])
@@ -325,4 +342,149 @@ enum TopupStatus {
   COMPLETED
   FAILED
   REFUNDED
+}
+
+// ─── Admin Audit Log ──────────────────────────────────────
+
+model AdminAuditLog {
+  id             String          @id @default(cuid())
+  adminUserId    String
+  action         AdminAction
+  targetCompanyId String?
+  targetCompany  Company?        @relation("AuditTargetCompany", fields: [targetCompanyId], references: [id], onDelete: SetNull)
+  targetUserId   String?
+  details        Json
+  createdAt      DateTime        @default(now())
+
+  @@index([adminUserId, createdAt])
+  @@index([targetCompanyId, createdAt])
+}
+
+enum AdminAction {
+  GRANT_TOKENS
+  CHANGE_PLAN
+  SUSPEND
+  UNSUSPEND
+  IMPERSONATE
+  ADJUST_BALANCE
+}
+
+// ─── Support Tickets ──────────────────────────────────────
+
+model SupportTicket {
+  id          String   @id @default(cuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+
+  ticketNumber Int     @unique @default(autoincrement())
+  subject      String
+  category     TicketCategory
+  priority     TicketPriority @default(NORMAL)
+  status       TicketStatus   @default(OPEN)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  closedAt    DateTime?
+
+  messages    TicketMessage[]
+
+  @@index([companyId, status])
+  @@index([userId])
+  @@index([status, createdAt])
+}
+
+model TicketMessage {
+  id        String   @id @default(cuid())
+  ticketId  String
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+
+  body      String
+  isStaff   Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([ticketId, createdAt])
+}
+
+enum TicketCategory {
+  BILLING
+  TECHNICAL
+  FEATURE_REQUEST
+  ACCOUNT
+  OTHER
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_ON_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+// ─── Notifications ────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type      NotificationType
+  title     String
+  body      String
+  link      String?
+  read      Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, read, createdAt])
+}
+
+enum NotificationType {
+  RENDER_COMPLETE
+  RENDER_FAILED
+  TOKEN_LOW
+  BUDGET_WARNING
+  PLAN_CHANGED
+  TEAM_JOINED
+  TICKET_REPLY
+  SYSTEM
+}
+
+// ─── Project Templates ──────────────────────────────────────
+
+model ProjectTemplate {
+  id          String   @id @default(cuid())
+  companyId   String?  // null = system template (visible to all)
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+
+  name        String
+  description String?
+  category    String?  // e.g. "E-commerce", "SaaS", "Real Estate"
+
+  brief          Json   // AdBrief object
+  overlayStyle   Json?  // TextStyle object
+  staggerSeconds Float  @default(2)
+
+  isSystem    Boolean @default(false) // System-provided templates
+  useCount    Int     @default(0)     // Track popularity
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([isSystem])
 }

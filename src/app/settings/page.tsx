@@ -15,6 +15,16 @@ interface CompanyUser {
   lastLoginAt: string | null;
 }
 
+interface TemplateItem {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  isSystem: boolean;
+  useCount: number;
+  createdAt: string;
+}
+
 export default function SettingsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
@@ -31,6 +41,26 @@ export default function SettingsPage() {
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoMessage, setLogoMessage] = useState('');
+
+  // Templates
+  const [templates, setTemplates] = useState<TemplateItem[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [deletingTemplate, setDeletingTemplate] = useState<string | null>(null);
+  const [templateMessage, setTemplateMessage] = useState('');
+
+  // Password change
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+
+  // Google Drive integration
+  const [driveConnected, setDriveConnected] = useState(false);
+  const [driveEmail, setDriveEmail] = useState<string | undefined>();
+  const [driveLoading, setDriveLoading] = useState(true);
+  const [driveDisconnecting, setDriveDisconnecting] = useState(false);
 
   // Invite form
   const [showInvite, setShowInvite] = useState(false);
@@ -55,6 +85,19 @@ export default function SettingsPage() {
     }
   }, []);
 
+  const loadTemplates = useCallback(async () => {
+    setLoadingTemplates(true);
+    try {
+      const res = await fetch('/api/templates?pageSize=100');
+      const data = await res.json();
+      if (data.templates) setTemplates(data.templates);
+    } catch {
+      // Non-critical — don't block the page
+    } finally {
+      setLoadingTemplates(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (status === 'unauthenticated') {
       router.push('/login');
@@ -69,6 +112,13 @@ export default function SettingsPage() {
     }
 
     loadUsers();
+    loadTemplates();
+    // Load Google Drive status
+    fetch('/api/integrations/google-drive/status')
+      .then(r => r.json())
+      .then(d => { setDriveConnected(d.connected); setDriveEmail(d.email); })
+      .catch(() => {})
+      .finally(() => setDriveLoading(false));
 
     // Load company settings
     fetch('/api/company/settings')
@@ -79,7 +129,7 @@ export default function SettingsPage() {
         }
       })
       .catch(() => {});
-  }, [status, session, router, loadUsers]);
+  }, [status, session, router, loadUsers, loadTemplates]);
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -136,6 +186,30 @@ export default function SettingsPage() {
       }
     } catch {
       alert('Something went wrong');
+    }
+  };
+
+  const handleDeleteTemplate = async (templateId: string) => {
+    if (!confirm('Delete this template? This cannot be undone.')) return;
+
+    setDeletingTemplate(templateId);
+    setTemplateMessage('');
+    try {
+      const res = await fetch(`/api/templates/${templateId}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setTemplateMessage(data.error || 'Failed to delete template');
+        return;
+      }
+      setTemplates((prev) => prev.filter((t) => t.id !== templateId));
+      setTemplateMessage('Template deleted');
+      setTimeout(() => setTemplateMessage(''), 5000);
+    } catch {
+      setTemplateMessage('Failed to delete template');
+    } finally {
+      setDeletingTemplate(null);
     }
   };
 
@@ -412,6 +486,172 @@ export default function SettingsPage() {
               </tbody>
             </table>
           </div>
+        </div>
+
+        {/* Security — Password Change */}
+        <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
+          <h2 className="text-lg font-semibold text-white mb-1">Security</h2>
+          <p className="text-sm text-gray-400 mb-4">Change your account password.</p>
+          {passwordMessage && <p className="text-sm text-green-400 mb-3">{passwordMessage}</p>}
+          {passwordError && <p className="text-sm text-red-400 mb-3">{passwordError}</p>}
+          <form onSubmit={async (e) => {
+            e.preventDefault();
+            setPasswordError(''); setPasswordMessage('');
+            if (newPassword !== confirmPassword) { setPasswordError('New passwords do not match'); return; }
+            if (newPassword.length < 8) { setPasswordError('New password must be at least 8 characters'); return; }
+            setChangingPassword(true);
+            try {
+              const res = await fetch('/api/auth/change-password', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ currentPassword, newPassword }),
+              });
+              const data = await res.json();
+              if (!res.ok) { setPasswordError(data.error || 'Failed to change password'); return; }
+              setPasswordMessage('Password changed successfully');
+              setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
+              setTimeout(() => setPasswordMessage(''), 5000);
+            } catch { setPasswordError('Failed to change password'); }
+            finally { setChangingPassword(false); }
+          }} className="space-y-3 max-w-md">
+            <input type="password" placeholder="Current password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)}
+              className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500" />
+            <input type="password" placeholder="New password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+              className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500" />
+            <input type="password" placeholder="Confirm new password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+              className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500" />
+            <button type="submit" disabled={changingPassword || !currentPassword || !newPassword || !confirmPassword}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-sm font-medium rounded-lg transition-colors">
+              {changingPassword ? 'Changing...' : 'Change Password'}
+            </button>
+          </form>
+        </div>
+
+        {/* Integrations — Google Drive */}
+        <div className="bg-gray-800 rounded-xl p-5 border border-gray-700">
+          <h2 className="text-lg font-semibold text-white mb-1">Integrations</h2>
+          <p className="text-sm text-gray-400 mb-4">Connect external services to your account.</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
+                <svg className="w-5 h-5 text-blue-400" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M7.71 3.5l1.63 2.83a1 1 0 01-.37 1.37l-2.83 1.63L7.71 3.5zm8.58 0l1.57 5.83-2.83-1.63a1 1 0 01-.37-1.37L16.29 3.5zM12 2L8.5 8.5 2 12l6.5 3.5L12 22l3.5-6.5L22 12l-6.5-3.5L12 2z"/>
+                </svg>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-white">Google Drive</p>
+                {driveLoading ? (
+                  <p className="text-xs text-gray-500">Checking...</p>
+                ) : driveConnected ? (
+                  <p className="text-xs text-green-400">Connected{driveEmail ? ` — ${driveEmail}` : ''}</p>
+                ) : (
+                  <p className="text-xs text-gray-500">Not connected</p>
+                )}
+              </div>
+            </div>
+            {!driveLoading && (
+              driveConnected ? (
+                <button onClick={async () => {
+                  if (!confirm('Disconnect Google Drive?')) return;
+                  setDriveDisconnecting(true);
+                  try {
+                    await fetch('/api/integrations/google-drive/disconnect', { method: 'POST' });
+                    setDriveConnected(false); setDriveEmail(undefined);
+                  } catch {} finally { setDriveDisconnecting(false); }
+                }} disabled={driveDisconnecting}
+                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded-lg transition-colors disabled:opacity-50">
+                  {driveDisconnecting ? 'Disconnecting...' : 'Disconnect'}
+                </button>
+              ) : (
+                <button onClick={async () => {
+                  try {
+                    const res = await fetch('/api/integrations/google-drive/auth');
+                    const data = await res.json();
+                    if (data.url) { const p = window.open(data.url, 'google-drive-auth', 'width=600,height=700'); if (!p) window.location.href = data.url; }
+                  } catch {}
+                }} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors">
+                  Connect
+                </button>
+              )
+            )}
+          </div>
+        </div>
+
+        {/* Project Templates */}
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Project Templates</h2>
+              <p className="text-sm text-gray-400 mt-0.5">
+                Manage reusable templates for your team. System templates are available to everyone.
+              </p>
+            </div>
+          </div>
+
+          {templateMessage && (
+            <p className={`text-sm mb-3 ${templateMessage.includes('Failed') || templateMessage.includes('failed') ? 'text-red-400' : 'text-green-400'}`}>
+              {templateMessage}
+            </p>
+          )}
+
+          {loadingTemplates ? (
+            <p className="text-gray-400 text-sm">Loading templates...</p>
+          ) : templates.length === 0 ? (
+            <div className="bg-gray-800 rounded-xl p-6 border border-gray-700 text-center">
+              <p className="text-gray-400 text-sm">
+                No templates yet. Save a brief as a template from the Brief step in the wizard.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {templates.map((template) => (
+                <div
+                  key={template.id}
+                  className="bg-gray-800 rounded-xl p-4 border border-gray-700 flex items-start justify-between gap-4"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <h3 className="text-sm font-medium text-white truncate">
+                        {template.name}
+                      </h3>
+                      {template.category && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-700 text-gray-300 whitespace-nowrap">
+                          {template.category}
+                        </span>
+                      )}
+                      {template.isSystem && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-900/30 text-blue-400 whitespace-nowrap">
+                          System
+                        </span>
+                      )}
+                    </div>
+                    {template.description && (
+                      <p className="text-xs text-gray-400 leading-relaxed">
+                        {template.description}
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-1">
+                      Used {template.useCount} time{template.useCount !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                  <div className="flex-shrink-0">
+                    {!template.isSystem ? (
+                      <button
+                        onClick={() => handleDeleteTemplate(template.id)}
+                        disabled={deletingTemplate === template.id}
+                        className="text-xs text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-red-950/30 transition-colors disabled:opacity-50"
+                      >
+                        {deletingTemplate === template.id ? 'Deleting...' : 'Delete'}
+                      </button>
+                    ) : (
+                      <span className="text-xs text-gray-600 px-2 py-1">
+                        Read-only
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </main>

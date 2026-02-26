@@ -3,6 +3,8 @@ import bcrypt from 'bcryptjs';
 import { getAuthContext } from '@/lib/api-auth';
 import { prisma } from '@/lib/prisma';
 import { checkUserLimit } from '@/lib/check-limits';
+import { sendTeamInviteEmail } from '@/lib/email';
+import { createNotification } from '@/lib/notifications';
 
 export async function POST(request: NextRequest) {
   const authResult = await getAuthContext();
@@ -82,6 +84,26 @@ export async function POST(request: NextRequest) {
         companyId,
       },
     });
+
+    // Fetch company name for email + notification
+    const company = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: { name: true },
+    });
+    const companyName = company?.name || 'your team';
+
+    // Send invite email (fire-and-forget — never block the response)
+    const loginUrl = `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/login`;
+    sendTeamInviteEmail(email.toLowerCase(), name || '', companyName, password, loginUrl);
+
+    // Create welcome notification for the new user (fire-and-forget)
+    createNotification(
+      user.id,
+      'TEAM_JOINED',
+      `Welcome to ${companyName}!`,
+      `You've been added to ${companyName}. Change your temporary password in Settings.`,
+      '/settings'
+    );
 
     return NextResponse.json({
       success: true,

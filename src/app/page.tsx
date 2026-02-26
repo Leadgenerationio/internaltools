@@ -12,6 +12,9 @@ import LogViewer from '@/components/LogViewer';
 import UserMenu from '@/components/UserMenu';
 import Tooltip from '@/components/Tooltip';
 import InfoBanner from '@/components/InfoBanner';
+import OnboardingChecklist from '@/components/OnboardingChecklist';
+import SaveAsTemplateModal from '@/components/SaveAsTemplateModal';
+import GoogleDriveButton from '@/components/GoogleDriveButton';
 import type {
   AdBrief,
   GeneratedAd,
@@ -96,6 +99,9 @@ export default function Home() {
   // Preview state
   const [previewAdId, setPreviewAdId] = useState<string | null>(null);
   const [previewVideoIndex, setPreviewVideoIndex] = useState(0);
+
+  // Save as template modal
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
 
   // Persist state to localStorage so user doesn't lose progress between refreshes
   const [isRestored, setIsRestored] = useState(false);
@@ -386,6 +392,9 @@ export default function Home() {
   const handleDownloadAll = async () => {
     if (results.length === 0) return;
 
+    // Track download for onboarding checklist
+    try { localStorage.setItem('onboarding_downloaded', 'true'); } catch {}
+
     setDownloadingZip(true);
     try {
       const files = results.map((r) => ({
@@ -494,7 +503,19 @@ export default function Home() {
         {/* Step 1: Brief */}
         {step === 'brief' && (
           <div className="max-w-2xl mx-auto">
+            <OnboardingChecklist onNavigate={setStep} />
             <AdBriefForm onGenerate={handleGenerate} generating={generating} initialBrief={brief} />
+            {/* Save as Template button — only show when brief has content */}
+            {brief && brief.productService && (
+              <div className="mt-4 flex justify-center">
+                <button
+                  onClick={() => setShowSaveTemplate(true)}
+                  className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg transition-colors"
+                >
+                  Save Brief as Template
+                </button>
+              </div>
+            )}
             {generating && (
               <div className="mt-4 flex justify-center">
                 <button
@@ -762,26 +783,37 @@ export default function Home() {
 
             {results.length > 0 && (
               <div ref={resultsRef} className="space-y-4 scroll-mt-8">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-3">
                   <h3 className="text-lg font-semibold text-white">
                     Rendered Videos ({results.length})
                   </h3>
-                  {results.length > 1 && (
-                    <button
-                      onClick={handleDownloadAll}
-                      disabled={downloadingZip}
-                      className="px-4 py-2 bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-400 text-white text-sm font-medium rounded-lg transition-colors"
-                    >
-                      {downloadingZip ? (
-                        <span className="flex items-center gap-2">
-                          <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          Creating ZIP...
-                        </span>
-                      ) : (
-                        `Download All as ZIP (${results.length})`
-                      )}
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {!rendering && results.length > 0 && (
+                      <GoogleDriveButton
+                        files={results.map((r) => ({
+                          url: r.outputUrl,
+                          name: `${r.adLabel.replace(/[^a-zA-Z0-9]/g, '_')}_${r.originalName}`,
+                        }))}
+                        disabled={rendering}
+                      />
+                    )}
+                    {results.length > 1 && (
+                      <button
+                        onClick={handleDownloadAll}
+                        disabled={downloadingZip}
+                        className="px-4 py-2 bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-400 text-white text-sm font-medium rounded-lg transition-colors"
+                      >
+                        {downloadingZip ? (
+                          <span className="flex items-center gap-2">
+                            <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            Creating ZIP...
+                          </span>
+                        ) : (
+                          `Download All as ZIP (${results.length})`
+                        )}
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
                   {results.map((r, i) => (
@@ -801,6 +833,9 @@ export default function Home() {
                         <a
                           href={r.outputUrl}
                           download
+                          onClick={() => {
+                            try { localStorage.setItem('onboarding_downloaded', 'true'); } catch {}
+                          }}
                           className="block text-center px-2 sm:px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-xs sm:text-sm font-medium rounded-lg transition-colors"
                         >
                           Download
@@ -833,6 +868,17 @@ export default function Home() {
 
         <LogViewer />
       </div>
+
+      {/* Save as Template Modal */}
+      {brief && (
+        <SaveAsTemplateModal
+          open={showSaveTemplate}
+          onClose={() => setShowSaveTemplate(false)}
+          brief={brief}
+          overlayStyle={overlayStyle}
+          staggerSeconds={staggerSeconds}
+        />
+      )}
     </main>
   );
 }

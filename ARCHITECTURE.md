@@ -16,11 +16,11 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 │  │ /welcome │  │ /login   │  │ /register│  │ /usage   │  │ /settings││
 │  │ (landing)│  │ /company │  │ /users   │  │ (sidebar)│  │ (sidebar)││
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘│
-│  ┌──────────┐  ┌──────────┐                                          │
-│  │ /admin   │  │/projects │ ← List, create, delete projects          │
-│  │ (platform│  │ (grid)   │                                          │
-│  │  health) │  └──────────┘                                          │
-│  └──────────┘                                                         │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                            │
+│  │ /admin   │  │/projects │  │/tickets  │ ← Support ticket system    │
+│  │ (super   │  │ (grid)   │  │ /new     │                            │
+│  │  admin)  │  └──────────┘  │ /[id]    │                            │
+│  └──────────┘                └──────────┘                            │
 │                                                                         │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
 │  │ 1. Brief │→│ 2. Review │→│ 3. Media  │→│ 4. Render │              │
@@ -37,13 +37,18 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
         │
         ▼
   PostgreSQL (Prisma)
-  - Companies (tokenBalance, monthlyTokenBudget)
-  - Users (roles: OWNER/ADMIN/MEMBER)
+  - Companies (tokenBalance, monthlyTokenBudget, suspended)
+  - Users (roles: OWNER/ADMIN/MEMBER, googleDriveRefreshToken, googleDriveConnected, googleDriveEmail)
   - Projects (with ads, videos, music, renders)
   - API usage logs (per-call tracking in cents — admin-only)
   - Token transactions (append-only ledger)
   - Token top-ups (Stripe purchase records)
   - Sessions (JWT)
+  - SupportTickets (auto-incrementing numbers, category/priority/status)
+  - TicketMessages (threaded replies)
+  - AdminAuditLog (admin action audit trail)
+  - Notifications (in-app, per-user, read/unread)
+  - ProjectTemplates (system + company-owned)
 ```
 
 ## Tech Stack
@@ -61,7 +66,8 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 | AI video generation | Google Veo 3.1 | Optional AI background videos |
 | Token billing | Prisma transactions | Atomic token deduction/credit, append-only ledger, budget alerts |
 | Payments | Stripe (Checkout + Customer Portal) | Subscriptions, one-time token top-ups, webhook handling |
-| Email | Resend SDK | Transactional emails (welcome, reset, budget alerts, receipts) |
+| Email | Resend SDK | Transactional emails (11 templates — welcome, reset, budget alerts, receipts, team invite, render complete/failed, subscription renewal, ticket created/reply) |
+| Google Drive | Google APIs (OAuth2 + Drive v3) | Export rendered videos to Google Drive |
 | Cost tracking | Prisma + Winston | Internal per-call API cost logging (admin-only) |
 | Logging | Winston + daily-rotate-file | Server-side structured logs |
 | IDs | uuid v4 | Unique file and entity IDs |
@@ -113,7 +119,7 @@ Users are billed in tokens, not raw API costs. This abstracts away internal cost
 
 ### Transactional Email (Resend)
 - Fire-and-forget emails via Resend SDK (`src/lib/email.ts`)
-- Templates: welcome, password reset, plan upgrade, token budget alert, payment receipt
+- 11 templates: welcome, password reset, plan upgrade, token budget alert, payment receipt, team invite, render complete, render failed, subscription renewal, ticket created, ticket reply
 - Dark-themed HTML email templates matching the app UI
 - **Env vars**: `RESEND_API_KEY`, `EMAIL_FROM`
 
@@ -175,9 +181,17 @@ src/
 │   ├── usage/
 │   │   └── page.tsx                  # Dashboard: monthly spend, per-service breakdown
 │   ├── settings/
-│   │   └── page.tsx                  # Company settings: users, invitations, spend limits
+│   │   └── page.tsx                  # Company settings: users, invitations, spend limits, password change, Google Drive, templates
 │   ├── admin/
-│   │   └── page.tsx                  # Super admin dashboard: all companies, revenue, API calls
+│   │   └── page.tsx                  # Super admin dashboard: 5 tabs (Overview, Companies, Users, Transactions, Support)
+│   ├── tickets/
+│   │   ├── page.tsx                  # Support ticket list (filterable by category/priority/status)
+│   │   ├── new/
+│   │   │   └── page.tsx              # Create new support ticket
+│   │   └── [id]/
+│   │       └── page.tsx              # Ticket detail view with threaded messages
+│   ├── suspended/
+│   │   └── page.tsx                  # Suspended company landing page
 │   ├── billing/
 │   │   ├── page.tsx                  # Plan comparison, Stripe Checkout, token top-ups
 │   │   └── layout.tsx                # Metadata + Suspense boundary
@@ -212,7 +226,33 @@ src/
 │       ├── webhooks/stripe/route.ts # Stripe webhook handler (POST)
 │       ├── usage/route.ts            # Token usage dashboard (balance, by-reason, by-user, transactions)
 │       ├── usage/export/route.ts     # CSV export of token transactions
+│       ├── auth/change-password/route.ts # Change password (authenticated users)
 │       ├── admin/route.ts            # Super admin: platform-wide stats + company breakdown
+│       ├── admin/companies/route.ts  # Admin: list all companies (GET)
+│       ├── admin/companies/[id]/route.ts # Admin: get/update company (plan, suspension) (GET/PUT)
+│       ├── admin/companies/[id]/grant-tokens/route.ts # Admin: grant tokens to company (POST)
+│       ├── admin/users/route.ts      # Admin: list all users (GET)
+│       ├── admin/impersonate/route.ts # Admin: impersonate user (POST)
+│       ├── admin/transactions/route.ts # Admin: platform-wide transaction viewer (GET)
+│       ├── admin/tickets/route.ts    # Admin: list/manage support tickets (GET)
+│       ├── admin/tickets/[id]/route.ts # Admin: get/update/reply to ticket (GET/PUT)
+│       ├── admin/tickets/stats/route.ts # Admin: ticket statistics (GET)
+│       ├── tickets/route.ts          # User: list/create support tickets (GET/POST)
+│       ├── tickets/[id]/route.ts     # User: get ticket detail (GET)
+│       ├── tickets/[id]/messages/route.ts # User: send ticket message (POST)
+│       ├── notifications/route.ts    # User: list notifications (GET)
+│       ├── notifications/[id]/read/route.ts # User: mark notification as read (PUT)
+│       ├── notifications/mark-all-read/route.ts # User: mark all notifications read (PUT)
+│       ├── integrations/google-drive/auth/route.ts # Google Drive: initiate OAuth2 flow (GET)
+│       ├── integrations/google-drive/callback/route.ts # Google Drive: OAuth2 callback (GET)
+│       ├── integrations/google-drive/disconnect/route.ts # Google Drive: disconnect account (POST)
+│       ├── integrations/google-drive/status/route.ts # Google Drive: connection status (GET)
+│       ├── integrations/google-drive/folders/route.ts # Google Drive: list folders for picker (GET)
+│       ├── integrations/google-drive/export/route.ts # Google Drive: export video to Drive (POST)
+│       ├── templates/route.ts        # List/create project templates (GET/POST)
+│       ├── templates/[id]/route.ts   # Get/update/delete template (GET/PUT/DELETE)
+│       ├── templates/[id]/use/route.ts # Use template to populate project brief (POST)
+│       ├── onboarding/route.ts       # Get/update onboarding checklist status (GET/PUT)
 │       ├── projects/route.ts         # List + create projects (GET/POST)
 │       ├── projects/[id]/route.ts   # Get, update, delete project (GET/PUT/DELETE)
 │       ├── projects/[id]/ads/
@@ -240,7 +280,12 @@ src/
 │   ├── UsageWidget.tsx               # Real-time cost display during operations
 │   ├── SettingsPanel.tsx             # Company users, invitations, spend limits
 │   ├── Tooltip.tsx                   # Reusable info tooltip (hover/tap, CSS-only)
-│   └── InfoBanner.tsx                # Info/tip/warning banners with icons
+│   ├── InfoBanner.tsx                # Info/tip/warning banners with icons
+│   ├── NotificationBell.tsx          # In-app notification bell with badge + dropdown (30s polling)
+│   ├── GoogleDriveButton.tsx         # Export-to-Google-Drive button (shown in render results)
+│   ├── OnboardingChecklist.tsx       # 5-step onboarding checklist (accounts <7 days old)
+│   ├── TemplatePickerModal.tsx       # Template picker modal (system + company templates)
+│   └── SaveAsTemplateModal.tsx       # Save current brief as a reusable template
 ├── middleware.ts                     # Auth verification, JWT validation, rate limiting
 ├── lib/
 │   ├── types.ts                      # All TypeScript interfaces + constants
@@ -259,12 +304,14 @@ src/
 │   ├── check-limits.ts               # Token balance + user limit enforcement
 │   ├── spend-alerts.ts               # Token-based budget alerts (50%/80%/100%) + email
 │   ├── stripe.ts                     # Stripe client singleton (lazy-loaded)
-│   ├── email.ts                      # Resend transactional emails (5 templates)
+│   ├── email.ts                      # Resend transactional emails (11 templates)
 │   ├── api-auth.ts                   # Auth middleware helpers for API routes
+│   ├── admin-auth.ts                 # Super admin auth helper (SUPER_ADMIN_EMAILS check)
+│   ├── sanitize.ts                   # HTML stripping for ticket/message input sanitization
 │   └── file-url.ts                   # Helper: converts paths to /api/files URLs
 ├── prisma/
-│   ├── schema.prisma                 # Data models: Company, User, Session, ApiUsage
-│   └── migrations/                   # Database migrations (incl. 20260226152922_add_token_system)
+│   ├── schema.prisma                 # Data models: Company, User, Session, ApiUsage, SupportTicket, TicketMessage, AdminAuditLog, Notification, ProjectTemplate
+│   └── migrations/                   # Database migrations
 └── auth.config.ts                    # NextAuth v5 configuration
 ```
 
@@ -327,7 +374,33 @@ FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to 
 | `/api/webhooks/stripe` | POST | Stripe webhook (checkout, invoice, subscription events) | default | public (verified by Stripe signature) |
 | `/api/usage` | GET | Token usage dashboard (balance, by-reason, by-user, transactions) | default | required (OWNER/ADMIN) |
 | `/api/usage/export` | GET | Export token transactions as CSV | default | required (OWNER/ADMIN) |
+| `/api/auth/change-password` | POST | Change password for authenticated user | default | required |
 | `/api/admin` | GET | Platform-wide stats, company breakdown, recent calls | default | required (super admin) |
+| `/api/admin/companies` | GET | List all companies with stats | default | required (super admin) |
+| `/api/admin/companies/[id]` | GET/PUT | Get or update company (plan change, suspension) | default | required (super admin) |
+| `/api/admin/companies/[id]/grant-tokens` | POST | Grant tokens to a company | default | required (super admin) |
+| `/api/admin/users` | GET | List all users across platform | default | required (super admin) |
+| `/api/admin/impersonate` | POST | Impersonate a user (login as) | default | required (super admin) |
+| `/api/admin/transactions` | GET | Platform-wide token transaction viewer | default | required (super admin) |
+| `/api/admin/tickets` | GET | List all support tickets (admin view) | default | required (super admin) |
+| `/api/admin/tickets/[id]` | GET/PUT | Get or update/reply to ticket (admin) | default | required (super admin) |
+| `/api/admin/tickets/stats` | GET | Ticket statistics (open/closed/categories) | default | required (super admin) |
+| `/api/tickets` | GET/POST | List user's tickets / create new ticket | default | required |
+| `/api/tickets/[id]` | GET | Get ticket detail with messages | default | required |
+| `/api/tickets/[id]/messages` | POST | Send a message on a ticket | default | required |
+| `/api/notifications` | GET | List user's notifications (paginated) | default | required |
+| `/api/notifications/[id]/read` | PUT | Mark a notification as read | default | required |
+| `/api/notifications/mark-all-read` | PUT | Mark all notifications as read | default | required |
+| `/api/integrations/google-drive/auth` | GET | Initiate Google Drive OAuth2 flow | default | required |
+| `/api/integrations/google-drive/callback` | GET | Google Drive OAuth2 callback | default | required |
+| `/api/integrations/google-drive/disconnect` | POST | Disconnect Google Drive | default | required |
+| `/api/integrations/google-drive/status` | GET | Check Google Drive connection status | default | required |
+| `/api/integrations/google-drive/folders` | GET | List Google Drive folders for picker | default | required |
+| `/api/integrations/google-drive/export` | POST | Export rendered video to Google Drive | default | required |
+| `/api/templates` | GET/POST | List templates / create new template | default | required |
+| `/api/templates/[id]` | GET/PUT/DELETE | Get, update, or delete template | default | required |
+| `/api/templates/[id]/use` | POST | Use template to populate project brief | default | required |
+| `/api/onboarding` | GET/PUT | Get or update onboarding checklist status | default | required |
 | `/api/projects` | GET | List projects for user's company (paginated) | default | required |
 | `/api/projects` | POST | Create a new project | default | required |
 | `/api/projects/[id]` | GET | Get project with all related data | default | required |
@@ -382,6 +455,11 @@ STRIPE_PRICE_PRO=price_...       # Stripe Price ID for Pro plan subscription
 # Email (Resend)
 RESEND_API_KEY=re_...            # Required for transactional emails (welcome, reset, alerts)
 EMAIL_FROM=noreply@example.com   # Sender address for all transactional emails
+
+# Google Drive Integration (optional)
+GOOGLE_CLIENT_ID=...             # OAuth2 client ID for Google Drive export
+GOOGLE_CLIENT_SECRET=...         # OAuth2 client secret for Google Drive export
+GOOGLE_REDIRECT_URI=https://yourdomain.com/api/integrations/google-drive/callback  # OAuth2 redirect URI
 ```
 
 ## Security
@@ -455,6 +533,7 @@ npm run watchdog
 scripts/
 ├── watchdog.ts            # Main watchdog script
 ├── watchdog.config.json   # Config with defaults
+├── seed-templates.ts      # Seed 6 system project templates into database
 └── fixtures/              # Auto-generated test video + audio (gitignored)
 ```
 
@@ -539,6 +618,113 @@ Plan tiers (FREE/STARTER/PRO/ENTERPRISE) defined in `src/lib/plans.ts`:
 4. Operation proceeds
 5. On failure: `refundTokens()` credits back automatically
 6. `checkTokenAlerts()` fires if approaching monthly budget
+
+## Admin Dashboard
+
+Full super admin control panel at `/admin` with 5 tabs:
+1. **Overview** — Platform-wide stats (total companies, users, revenue, API calls)
+2. **Companies** — List all companies, change plan, suspend/unsuspend, grant tokens
+3. **Users** — List all users, impersonate (login as any user)
+4. **Transactions** — Platform-wide token transaction viewer with filters
+5. **Support** — View and manage all support tickets
+
+### Key features
+- **Access control**: Gated by `SUPER_ADMIN_EMAILS` env var (comma-separated). Auth helper at `src/lib/admin-auth.ts`.
+- **Company management**: Plan change, suspension (blocks all API calls via `getAuthContext()` in `api-auth.ts`), token grants
+- **User impersonation**: Super admin can log in as any user for debugging
+- **Audit logging**: All admin actions recorded in `AdminAuditLog` model for accountability
+- **Company suspension**: `suspended` flag on Company model. Suspended users see `/suspended` page. Suspension requires typing company name to confirm.
+
+## Support Ticketing
+
+Full-featured support ticket system with user-facing and admin-facing interfaces.
+
+### User flow
+- `/tickets` — List own tickets with category/priority/status filters
+- `/tickets/new` — Create new ticket (subject, description, category, priority)
+- `/tickets/[id]` — View ticket detail with threaded message history
+
+### Admin flow
+- Admin Support tab in `/admin` — View all tickets across platform
+- `/api/admin/tickets/[id]` — Update status, assign, reply to tickets
+- `/api/admin/tickets/stats` — Aggregate ticket statistics
+
+### Features
+- **Auto-incrementing ticket numbers** for easy reference
+- **Email notifications** on ticket create and reply (via Resend)
+- **Category/priority/status filtering** on both user and admin views
+- **Input sanitization** via `src/lib/sanitize.ts` (HTML stripping)
+- **Threaded messages** with user and admin replies
+
+### Models
+- `SupportTicket` — ticket record with number, subject, description, category, priority, status
+- `TicketMessage` — individual message in a ticket thread
+
+## Google Drive Export
+
+OAuth2 integration allowing users to export rendered videos directly to Google Drive.
+
+### Flow
+1. User connects Google Drive in Settings (initiates OAuth2 via `/api/integrations/google-drive/auth`)
+2. Google redirects back to `/api/integrations/google-drive/callback` with auth code
+3. Refresh token stored on User model (`googleDriveRefreshToken`, `googleDriveConnected`, `googleDriveEmail`)
+4. After rendering, `GoogleDriveButton` component appears on each output video
+5. User picks a Drive folder via folder picker (`/api/integrations/google-drive/folders`)
+6. Video exported to Drive (`/api/integrations/google-drive/export`)
+
+### API Routes (6 total at `/api/integrations/google-drive/*`)
+- `auth` — Initiate OAuth2 flow
+- `callback` — Handle OAuth2 callback
+- `disconnect` — Remove Google Drive connection
+- `status` — Check connection status
+- `folders` — List Drive folders for picker UI
+- `export` — Upload rendered video to Drive
+
+### Env vars
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
+
+## Notifications & Emails
+
+### In-App Notifications
+- `NotificationBell` component in app header — bell icon with unread badge count
+- Dropdown shows recent notifications with mark-as-read
+- 30-second polling for new notifications
+- API routes: `/api/notifications` (list), `/api/notifications/[id]/read` (mark read), `/api/notifications/mark-all-read` (bulk)
+- `Notification` model in Prisma with per-user read/unread state
+
+### Email Templates (11 total in `src/lib/email.ts`)
+1. Welcome (new user registration)
+2. Password reset
+3. Plan upgrade
+4. Token budget alert (50%/80%/100%)
+5. Payment receipt
+6. Team invite
+7. Render complete
+8. Render failed
+9. Subscription renewal
+10. Ticket created
+11. Ticket reply
+
+### Password Change
+- `/api/auth/change-password` — Authenticated password change (requires current password)
+- Security section in Settings page for password management
+
+## Onboarding & Templates
+
+### Onboarding Checklist
+- `OnboardingChecklist` component shown for accounts less than 7 days old
+- 5-step checklist guiding new users through the platform
+- Progress tracked via `/api/onboarding` (GET/PUT)
+- Auto-dismisses after all steps completed or account age exceeds 7 days
+
+### Project Templates
+- **6 system templates** seeded via `scripts/seed-templates.ts` (e.g., e-commerce, SaaS, local business)
+- **Company-owned templates** — teams can save and share their own templates
+- `TemplatePickerModal` — Modal shown in Brief step to select a template
+- `SaveAsTemplateModal` — Save current brief as a reusable template from Brief step
+- Templates managed in Settings page (view, edit, delete company templates)
+- API: `/api/templates` (list/create), `/api/templates/[id]` (CRUD), `/api/templates/[id]/use` (populate brief)
+- `ProjectTemplate` model in Prisma (system flag, company association, brief fields)
 
 ## UX Features
 
