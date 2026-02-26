@@ -52,13 +52,13 @@ export async function GET() {
 
       // Monthly revenue from token top-ups
       prisma.tokenTransaction.aggregate({
-        where: { createdAt: { gte: startOfMonth }, type: 'CREDIT', reason: { in: ['TOP_UP', 'PLAN_ALLOCATION'] } },
+        where: { createdAt: { gte: startOfMonth }, type: 'CREDIT', reason: { in: ['TOPUP_PURCHASE', 'PLAN_ALLOCATION'] } },
         _sum: { amount: true },
       }),
 
       // All-time revenue from token top-ups
       prisma.tokenTransaction.aggregate({
-        where: { type: 'CREDIT', reason: { in: ['TOP_UP', 'PLAN_ALLOCATION'] } },
+        where: { type: 'CREDIT', reason: { in: ['TOPUP_PURCHASE', 'PLAN_ALLOCATION'] } },
         _sum: { amount: true },
       }),
 
