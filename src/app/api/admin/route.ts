@@ -29,28 +29,45 @@ export async function GET() {
       totalUsers,
       monthlySpendAgg,
       allTimeSpendAgg,
+      monthlyRevenueAgg,
+      allTimeRevenueAgg,
+      activeSubscriptions,
       companiesRaw,
       recentCalls,
     ] = await Promise.all([
-      // Total companies
       prisma.company.count(),
-
-      // Total users
       prisma.user.count(),
 
-      // Monthly spend (all companies)
+      // Monthly internal API cost
       prisma.apiUsageLog.aggregate({
         where: { createdAt: { gte: startOfMonth }, success: true },
         _sum: { costCents: true },
       }),
 
-      // All-time spend
+      // All-time internal API cost
       prisma.apiUsageLog.aggregate({
         where: { success: true },
         _sum: { costCents: true },
       }),
 
-      // All companies with user counts and spend
+      // Monthly revenue from token top-ups
+      prisma.tokenTransaction.aggregate({
+        where: { createdAt: { gte: startOfMonth }, type: 'CREDIT', reason: { in: ['TOP_UP', 'PLAN_ALLOCATION'] } },
+        _sum: { amount: true },
+      }),
+
+      // All-time revenue from token top-ups
+      prisma.tokenTransaction.aggregate({
+        where: { type: 'CREDIT', reason: { in: ['TOP_UP', 'PLAN_ALLOCATION'] } },
+        _sum: { amount: true },
+      }),
+
+      // Active paid subscriptions
+      prisma.company.count({
+        where: { stripeSubscriptionId: { not: null } },
+      }),
+
+      // All companies with plan info
       prisma.company.findMany({
         select: {
           id: true,
@@ -61,7 +78,7 @@ export async function GET() {
         orderBy: { name: 'asc' },
       }),
 
-      // Recent API calls (last 100 across all companies)
+      // Recent API calls
       prisma.apiUsageLog.findMany({
         orderBy: { createdAt: 'desc' },
         take: 100,
@@ -72,61 +89,34 @@ export async function GET() {
       }),
     ]);
 
-    // Per-company spend calculations (monthly and all-time)
-    const companyIds = companiesRaw.map((c: any) => c.id);
-
-    const [perCompanyMonthly, perCompanyAllTime] = await Promise.all([
-      prisma.apiUsageLog.groupBy({
-        by: ['companyId'],
-        where: { companyId: { in: companyIds }, createdAt: { gte: startOfMonth }, success: true },
-        _sum: { costCents: true },
-      }),
-      prisma.apiUsageLog.groupBy({
-        by: ['companyId'],
-        where: { companyId: { in: companyIds }, success: true },
-        _sum: { costCents: true },
-      }),
-    ]);
-
-    const monthlyMap = new Map(
-      perCompanyMonthly.map((r: any) => [r.companyId, r._sum.costCents || 0])
-    );
-    const allTimeMap = new Map(
-      perCompanyAllTime.map((r: any) => [r.companyId, r._sum.costCents || 0])
-    );
-
-    const companies = companiesRaw.map((c: any) => ({
-      id: c.id,
-      name: c.name,
-      plan: c.plan,
-      userCount: c._count.users,
-      monthlySpendPence: monthlyMap.get(c.id) || 0,
-      totalSpendPence: allTimeMap.get(c.id) || 0,
-    }));
-
-    // Sort by total spend descending
-    companies.sort((a: any, b: any) => b.totalSpendPence - a.totalSpendPence);
+    // Plan distribution
+    const planDistribution: Record<string, number> = { FREE: 0, STARTER: 0, PRO: 0, ENTERPRISE: 0 };
+    companiesRaw.forEach((c: any) => {
+      const plan = c.plan || 'FREE';
+      planDistribution[plan] = (planDistribution[plan] || 0) + 1;
+    });
 
     return NextResponse.json({
       totalCompanies,
       totalUsers,
+      activeSubscriptions,
       monthlySpendPence: monthlySpendAgg._sum.costCents || 0,
       allTimeSpendPence: allTimeSpendAgg._sum.costCents || 0,
-      companies,
-      recentCalls: recentCalls.map((c: any) => ({
+      monthlyRevenuePence: (monthlyRevenueAgg._sum.amount || 0) * 10, // rough estimate
+      allTimeRevenuePence: (allTimeRevenueAgg._sum.amount || 0) * 10,
+      planDistribution,
+      recentActivity: recentCalls.map((c: any) => ({
         id: c.id,
         service: c.service,
         endpoint: c.endpoint,
         model: c.model,
         costCents: c.costCents,
-        inputTokens: c.inputTokens,
-        outputTokens: c.outputTokens,
-        videoCount: c.videoCount,
+        tokensCost: c.tokensCost ?? null,
         success: c.success,
         durationMs: c.durationMs,
         createdAt: c.createdAt,
-        userName: c.user.name || c.user.email,
-        companyName: c.company.name,
+        userName: c.user?.name || c.user?.email || 'Unknown',
+        companyName: c.company?.name || 'Unknown',
       })),
     });
   } catch (error: any) {
