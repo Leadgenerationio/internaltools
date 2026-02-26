@@ -36,6 +36,10 @@ function buildBriefContext(brief: AdBrief): string {
   } else {
     ctx += `**Emojis:** NO — do not include any emojis in the text boxes\n`;
   }
+  const lang = brief.language || 'English';
+  if (lang !== 'English') {
+    ctx += `**Output Language:** ${lang} — write ALL ad copy text boxes in ${lang}. Do not use English.\n`;
+  }
   return ctx;
 }
 

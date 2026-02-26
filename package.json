@@ -22,7 +22,6 @@
     "@napi-rs/canvas": "^0.1.95",
     "@prisma/adapter-pg": "^7.4.1",
     "@prisma/client": "^7.4.1",
-    "@sentry/nextjs": "^10.40.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20.0.0",
     "@types/pg": "^8.16.0",

@@ -69,7 +69,31 @@ export interface AdBrief {
   toneStyle: string;
   additionalContext: string;
   addEmojis: boolean;
+  language: string;
 }
+
+export const AD_LANGUAGES = [
+  'English',
+  'Spanish',
+  'French',
+  'German',
+  'Italian',
+  'Portuguese',
+  'Dutch',
+  'Polish',
+  'Swedish',
+  'Norwegian',
+  'Danish',
+  'Finnish',
+  'Arabic',
+  'Hindi',
+  'Japanese',
+  'Korean',
+  'Chinese (Simplified)',
+  'Chinese (Traditional)',
+  'Turkish',
+  'Russian',
+] as const;
 
 export type FunnelStage = 'tofu' | 'mofu' | 'bofu';
 

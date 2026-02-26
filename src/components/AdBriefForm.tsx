@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { AdBrief } from '@/lib/types';
+import { AD_LANGUAGES } from '@/lib/types';
 import Tooltip from '@/components/Tooltip';
 
 interface Props {
@@ -18,6 +19,7 @@ const EMPTY_BRIEF: AdBrief = {
   toneStyle: '',
   additionalContext: '',
   addEmojis: true,
+  language: 'English',
 };
 
 export default function AdBriefForm({ onGenerate, generating, initialBrief }: Props) {
@@ -131,6 +133,23 @@ export default function AdBriefForm({ onGenerate, generating, initialBrief }: Pr
             className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white text-sm placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none resize-none"
           />
         </div>
+      </div>
+
+      {/* Language selector */}
+      <div>
+        <label className="block text-sm font-medium text-gray-300 mb-1.5">
+          Output language
+          <Tooltip text="The language your ad copy will be written in. The AI will generate all text boxes in this language." />
+        </label>
+        <select
+          value={brief.language}
+          onChange={(e) => update('language', e.target.value)}
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none cursor-pointer"
+        >
+          {AD_LANGUAGES.map((lang) => (
+            <option key={lang} value={lang}>{lang}</option>
+          ))}
+        </select>
       </div>
 
       {/* Emoji toggle */}
