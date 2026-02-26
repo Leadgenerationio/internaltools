@@ -53,10 +53,13 @@ export default function VideoUploader({ videos, onUpload, uploading, setUploadin
     const formData = new FormData();
     Array.from(files).forEach((f) => formData.append('videos', f));
 
+    const abort = new AbortController();
+    abortRef.current = abort;
+
     log('debug', 'Starting fetch to /api/upload');
 
     try {
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      const res = await fetch('/api/upload', { method: 'POST', body: formData, signal: abort.signal });
       log('info', 'Upload response', { status: res.status, ok: res.ok });
       let data: { videos?: UploadedVideo[]; error?: string };
       try {
@@ -78,9 +81,11 @@ export default function VideoUploader({ videos, onUpload, uploading, setUploadin
         setUploadError(data.error || 'No videos returned');
       }
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return; // Handled by cancel
       log('error', 'Upload exception', { error: String(err) });
       setUploadError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
+      abortRef.current = null;
       setUploading(false);
       inputRef.current && (inputRef.current.value = '');
     }
@@ -137,9 +142,17 @@ export default function VideoUploader({ videos, onUpload, uploading, setUploadin
         }`}
       >
         {uploading ? (
-          <div className="flex items-center justify-center gap-3">
-            <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            <span className="text-gray-400">Uploading...</span>
+          <div className="flex flex-col items-center gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              <span className="text-gray-400">Uploading...</span>
+            </div>
+            <button
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleCancel(); }}
+              className="px-3 py-1 text-xs font-medium text-red-400 hover:text-red-300 bg-red-950/30 hover:bg-red-950/50 border border-red-800 rounded-lg transition-colors"
+            >
+              Cancel Upload
+            </button>
           </div>
         ) : (
           <>

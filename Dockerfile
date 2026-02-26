@@ -37,6 +37,7 @@ FROM node:20-slim AS runner
 # Install FFmpeg + runtime libs needed by @napi-rs/canvas
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    zip \
     libcairo2 \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
