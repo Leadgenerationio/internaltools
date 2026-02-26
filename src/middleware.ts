@@ -98,7 +98,9 @@ export async function middleware(request: NextRequest) {
 
   // ── Auth: redirect unauthenticated users to /welcome ──
   if (!isPublicRoute(pathname)) {
-    const token = await getToken({ req: request, secret: SECRET });
+    // secureCookie: true ensures getToken reads the __Secure- prefixed cookie
+    // (required when behind a reverse proxy like Railway that terminates TLS)
+    const token = await getToken({ req: request, secret: SECRET, secureCookie: true });
     if (!token) {
       const welcomeUrl = new URL('/welcome', request.url);
       return NextResponse.redirect(welcomeUrl);
@@ -108,7 +110,7 @@ export async function middleware(request: NextRequest) {
   // ── Rate limiting for API routes ──
   if (pathname.startsWith('/api/') && !pathname.startsWith('/api/auth')) {
     // Use userId from token if available, fall back to IP
-    const token = await getToken({ req: request, secret: SECRET });
+    const token = await getToken({ req: request, secret: SECRET, secureCookie: true });
     const rateLimitKey = token?.sub || getClientIp(request);
 
     const routeKey = Object.keys(RATE_LIMITS).find((key) => pathname.startsWith(key));
