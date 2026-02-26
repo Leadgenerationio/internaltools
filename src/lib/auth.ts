@@ -15,34 +15,54 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) return null;
+        try {
+          if (!credentials?.email || !credentials?.password) {
+            console.log('[auth] Missing email or password');
+            return null;
+          }
 
-        const user = await prisma.user.findUnique({
-          where: { email: (credentials.email as string).toLowerCase() },
-          include: { company: true },
-        });
+          const emailLower = (credentials.email as string).toLowerCase();
+          console.log('[auth] Login attempt for:', emailLower);
 
-        if (!user) return null;
+          const user = await prisma.user.findUnique({
+            where: { email: emailLower },
+            include: { company: true },
+          });
 
-        const valid = await bcrypt.compare(
-          credentials.password as string,
-          user.passwordHash
-        );
-        if (!valid) return null;
+          if (!user) {
+            console.log('[auth] User not found:', emailLower);
+            return null;
+          }
 
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { lastLoginAt: new Date() },
-        });
+          console.log('[auth] User found, checking password...');
+          const valid = await bcrypt.compare(
+            credentials.password as string,
+            user.passwordHash
+          );
+          if (!valid) {
+            console.log('[auth] Invalid password for:', emailLower);
+            return null;
+          }
 
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          companyId: user.companyId,
-          companyName: user.company.name,
-          role: user.role,
-        };
+          console.log('[auth] Password valid, updating lastLoginAt...');
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { lastLoginAt: new Date() },
+          });
+
+          console.log('[auth] Login successful for:', emailLower);
+          return {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            companyId: user.companyId,
+            companyName: user.company.name,
+            role: user.role,
+          };
+        } catch (error) {
+          console.error('[auth] Authorize error:', error);
+          return null;
+        }
       },
     }),
   ],
