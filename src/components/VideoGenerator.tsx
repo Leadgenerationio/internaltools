@@ -122,10 +122,12 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
         setStatusMessage('');
       }
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return; // Handled by cancel
       log('error', 'Generation exception', { error: String(err) });
       setError(err instanceof Error ? err.message : 'Generation failed');
       setStatusMessage('');
     } finally {
+      abortRef.current = null;
       setGenerating(false);
     }
   };
