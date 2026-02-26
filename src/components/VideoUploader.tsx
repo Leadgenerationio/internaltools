@@ -26,6 +26,19 @@ export default function VideoUploader({ videos, onUpload, uploading, setUploadin
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => { abortRef.current?.abort(); };
+  }, []);
+
+  const handleCancel = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setUploading(false);
+    setUploadError('Upload cancelled.');
+  }, [setUploading]);
 
   const handleFiles = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) {
