@@ -103,73 +103,95 @@ export async function POST(request: NextRequest) {
 
     const ai = new GoogleGenAI({ apiKey });
 
-    // Fire parallel generation calls
+    // Fire parallel generation calls (with retry for transient errors)
+    const MAX_RETRIES = 2;
+
     const generatePromises = Array.from({ length: videoCount }, async (_, i) => {
-      logger.info(`Starting generation ${i + 1}/${videoCount}`);
+      let lastError: Error | null = null;
 
-      let operation = await ai.models.generateVideos({
-        model: 'veo-3.1-generate-preview',
-        prompt: prompt.trim(),
-        config: {
-          aspectRatio: ar,
-          durationSeconds: Number(dur),
-          numberOfVideos: 1,
-        },
-      });
-
-      // Poll until done
-      const startTime = Date.now();
-      while (!operation.done) {
-        if (Date.now() - startTime > MAX_POLL_TIME_MS) {
-          throw new Error(`Video generation ${i + 1} timed out after 6 minutes`);
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        if (attempt > 0) {
+          const backoff = attempt * 5000; // 5s, 10s
+          logger.info(`Retrying generation ${i + 1} (attempt ${attempt + 1}) after ${backoff}ms`);
+          await new Promise((resolve) => setTimeout(resolve, backoff));
         }
-        logger.debug(`Polling generation ${i + 1}...`);
-        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-        operation = await ai.operations.getVideosOperation({ operation });
+
+        try {
+          logger.info(`Starting generation ${i + 1}/${videoCount}${attempt > 0 ? ` (retry ${attempt})` : ''}`);
+
+          let operation = await ai.models.generateVideos({
+            model: 'veo-3.1-generate-preview',
+            prompt: prompt.trim(),
+            config: {
+              aspectRatio: ar,
+              durationSeconds: Number(dur),
+              numberOfVideos: 1,
+            },
+          });
+
+          // Poll until done
+          const startTime = Date.now();
+          while (!operation.done) {
+            if (Date.now() - startTime > MAX_POLL_TIME_MS) {
+              throw new Error(`Video generation ${i + 1} timed out after 6 minutes`);
+            }
+            logger.debug(`Polling generation ${i + 1}...`);
+            await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+            operation = await ai.operations.getVideosOperation({ operation });
+          }
+
+          logger.info(`Generation ${i + 1} complete`);
+
+          // Download the video
+          const id = crypto.randomUUID();
+          const filename = `${id}.mp4`;
+          const filepath = path.join(UPLOAD_DIR, filename);
+
+          const video = operation.response?.generatedVideos?.[0]?.video;
+          if (!video) {
+            throw new Error(`Generation ${i + 1} returned no video`);
+          }
+
+          await ai.files.download({ file: video, downloadPath: filepath });
+          logger.info(`Downloaded video ${i + 1}`, { filepath });
+
+          // Get video info
+          const info = await getVideoInfo(filepath);
+
+          // Generate thumbnail
+          const thumbFilename = `${id}_thumb.jpg`;
+          const thumbPath = path.join(UPLOAD_DIR, thumbFilename);
+          try {
+            await execFileAsync('ffmpeg', [
+              '-y', '-i', filepath,
+              '-vframes', '1', '-ss', '0',
+              '-vf', 'scale=180:-1',
+              thumbPath,
+            ]);
+          } catch (e) {
+            logger.warn('Thumbnail generation failed for generated video', { error: String(e) });
+          }
+
+          return {
+            id,
+            filename,
+            originalName: `AI Generated ${i + 1}`,
+            path: fileUrl(`uploads/${filename}`),
+            duration: info.duration,
+            width: info.width,
+            height: info.height,
+            thumbnail: fileUrl(`uploads/${thumbFilename}`),
+          };
+        } catch (err: any) {
+          lastError = err;
+          const isRetryable = /503|502|500|timeout|ECONNRESET|ETIMEDOUT|returned no video/i.test(err.message);
+          if (!isRetryable || attempt >= MAX_RETRIES) {
+            throw err;
+          }
+          logger.warn(`Generation ${i + 1} failed (retryable)`, { error: err.message, attempt });
+        }
       }
-
-      logger.info(`Generation ${i + 1} complete`);
-
-      // Download the video
-      const id = crypto.randomUUID();
-      const filename = `${id}.mp4`;
-      const filepath = path.join(UPLOAD_DIR, filename);
-
-      const video = operation.response?.generatedVideos?.[0]?.video;
-      if (!video) {
-        throw new Error(`Generation ${i + 1} returned no video`);
-      }
-
-      await ai.files.download({ file: video, downloadPath: filepath });
-      logger.info(`Downloaded video ${i + 1}`, { filepath });
-
-      // Get video info
-      const info = await getVideoInfo(filepath);
-
-      // Generate thumbnail
-      const thumbFilename = `${id}_thumb.jpg`;
-      const thumbPath = path.join(UPLOAD_DIR, thumbFilename);
-      try {
-        await execFileAsync('ffmpeg', [
-          '-y', '-i', filepath,
-          '-vframes', '1', '-ss', '0',
-          '-vf', 'scale=180:-1',
-          thumbPath,
-        ]);
-      } catch (e) {
-        logger.warn('Thumbnail generation failed for generated video', { error: String(e) });
-      }
-
-      return {
-        id,
-        filename,
-        originalName: `AI Generated ${i + 1}`,
-        path: fileUrl(`uploads/${filename}`),
-        duration: info.duration,
-        width: info.width,
-        height: info.height,
-        thumbnail: fileUrl(`uploads/${thumbFilename}`),
-      };
+      throw lastError || new Error(`Generation ${i + 1} failed after ${MAX_RETRIES + 1} attempts`);
     });
 
     const results = await Promise.allSettled(generatePromises);
