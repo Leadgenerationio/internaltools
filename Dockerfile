@@ -67,6 +67,10 @@ RUN npm install prisma@7.4.1 --save-dev
 # Create the public directory and subdirectories the app needs
 RUN mkdir -p public/uploads public/outputs public/music public/logos
 
+# Copy startup script
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh
+
 # Railway sets the PORT env var automatically
 ENV PORT=3000
 ENV NODE_ENV=production
@@ -74,6 +78,5 @@ ENV HOSTNAME=0.0.0.0
 
 EXPOSE 3000
 
-# Run Prisma migrations then start the app
-# Pre-flight check: fail fast with a clear message if DATABASE_URL is missing
-CMD ["sh", "-c", "if [ -z \"$DATABASE_URL\" ]; then echo 'FATAL: DATABASE_URL is not set. Add it in Railway variables.' && exit 1; fi && npx prisma migrate deploy && node server.js"]
+# Entrypoint handles: volume symlinks, prisma migrate, then starts server
+CMD ["./docker-entrypoint.sh"]
