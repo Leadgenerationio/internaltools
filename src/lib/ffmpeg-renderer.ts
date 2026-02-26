@@ -123,8 +123,11 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
       // Clamp so overlays don't overflow into the bottom safe zone
       if (yPos > SAFE_BOTTOM) yPos = SAFE_BOTTOM;
       const nextLabel = index === sorted.length - 1 ? '[outv]' : `[v${index}]`;
+      // Round times to avoid float precision issues in FFmpeg filter strings
+      const startT = Math.round(overlay.startTime * 1000) / 1000;
+      const endT = Math.round(overlay.endTime * 1000) / 1000;
       overlayFilterParts.push(
-        `${prevLabel}[${inputIndex}:v]overlay=x=(main_w-overlay_w)/2:y=${yPos}:enable='between(t,${overlay.startTime},${overlay.endTime})'${nextLabel}`
+        `${prevLabel}[${inputIndex}:v]overlay=x=(main_w-overlay_w)/2:y=${yPos}:enable='between(t,${startT},${endT})'${nextLabel}`
       );
       prevLabel = nextLabel;
     });
@@ -182,7 +185,14 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
       args.push('-filter_complex', videoFilter);
       args.push('-map', '[outv]');
       args.push('-c:v', 'libx264', '-preset', preset, '-crf', crf);
-      args.push('-c:a', 'copy');
+
+      // Only include source audio if the video actually has an audio stream
+      const videoHasAudio = await hasAudioStream(inputVideoPath);
+      if (videoHasAudio) {
+        args.push('-map', '0:a');
+        args.push('-c:a', 'copy');
+      }
+
       args.push('-movflags', '+faststart');
     }
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { mkdir } from 'fs/promises';
+import fs from 'fs';
 import { existsSync } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -57,7 +58,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
     }
 
-    const { prompt, count, aspectRatio, duration } = body;
+    const { prompt, count, aspectRatio, duration, includeSound } = body;
 
     // Validate inputs
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
@@ -154,6 +155,26 @@ export async function POST(request: NextRequest) {
 
           await ai.files.download({ file: video, downloadPath: filepath });
           logger.info(`Downloaded video ${i + 1}`, { filepath });
+
+          // Strip audio if user wants silent video
+          if (!includeSound) {
+            const silentPath = filepath.replace('.mp4', '_silent.mp4');
+            try {
+              await execFileAsync('ffmpeg', [
+                '-y', '-i', filepath,
+                '-c:v', 'copy', '-an',
+                silentPath,
+              ]);
+              // Replace original with silent version
+              fs.unlinkSync(filepath);
+              fs.renameSync(silentPath, filepath);
+              logger.info(`Stripped audio from video ${i + 1}`);
+            } catch (e) {
+              logger.warn('Failed to strip audio, keeping original', { error: String(e) });
+              // Clean up if the silent file was created
+              if (fs.existsSync(silentPath)) fs.unlinkSync(silentPath);
+            }
+          }
 
           // Get video info
           const info = await getVideoInfo(filepath);

@@ -40,6 +40,7 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
   const [count, setCount] = useState(2);
   const [aspectRatio, setAspectRatio] = useState<'9:16' | '16:9'>('9:16');
   const [duration, setDuration] = useState<'4' | '6' | '8'>('6');
+  const [includeSound, setIncludeSound] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState('');
   const [batches, setBatches] = useState<GenerationBatch[]>([]);
@@ -72,7 +73,7 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
       const res = await fetch('/api/generate-video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: currentPrompt, count, aspectRatio, duration }),
+        body: JSON.stringify({ prompt: currentPrompt, count, aspectRatio, duration, includeSound }),
         signal: abort.signal,
       });
 
@@ -230,6 +231,25 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
           </div>
         </div>
       </div>
+
+      {/* Include sound toggle */}
+      <label className="flex items-center gap-3 cursor-pointer group">
+        <div className="relative">
+          <input
+            type="checkbox"
+            checked={includeSound}
+            onChange={(e) => setIncludeSound(e.target.checked)}
+            disabled={generating}
+            className="sr-only peer"
+          />
+          <div className="w-10 h-6 bg-gray-700 rounded-full peer-checked:bg-blue-600 transition-colors" />
+          <div className="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4" />
+        </div>
+        <span className="text-sm text-gray-300 group-hover:text-white transition-colors">
+          Include AI-generated sound
+        </span>
+        <span className="text-xs text-gray-500">(Veo generates audio by default — disable for silent background videos)</span>
+      </label>
 
       {/* Generate / Cancel button */}
       {generating ? (
