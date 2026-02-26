@@ -120,6 +120,36 @@ export default function Home() {
     } catch { /* storage full or unavailable */ }
   }, [isRestored, brief, ads, step, overlayStyle, staggerSeconds, videos, music]);
 
+  // Auto-dismiss success/done messages after 8 seconds
+  useEffect(() => {
+    if (!rendering && renderProgress && !renderProgress.startsWith('Error') && !renderProgress.includes('failed')) {
+      const timer = setTimeout(() => setRenderProgress(''), 8000);
+      return () => clearTimeout(timer);
+    }
+  }, [rendering, renderProgress]);
+
+  // Cleanup AbortControllers on unmount
+  useEffect(() => {
+    return () => {
+      generateAbortRef.current?.abort();
+      renderAbortRef.current?.abort();
+    };
+  }, []);
+
+  const handleCancelGenerate = useCallback(() => {
+    generateAbortRef.current?.abort();
+    generateAbortRef.current = null;
+    setGenerating(false);
+    setGenerateError('Generation cancelled.');
+  }, []);
+
+  const handleCancelRender = useCallback(() => {
+    renderAbortRef.current?.abort();
+    renderAbortRef.current = null;
+    setRendering(false);
+    setRenderProgress('Render cancelled. Videos completed before cancellation are available below.');
+  }, []);
+
   const handleResetAll = () => {
     localStorage.removeItem('adMaker_state');
     setBrief(null);
