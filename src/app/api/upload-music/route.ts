@@ -4,6 +4,7 @@ import { existsSync } from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { getAuthContext } from '@/lib/api-auth';
+import { fileUrl } from '@/lib/file-url';
 
 const MUSIC_DIR = path.join(process.cwd(), 'public', 'music');
 const MAX_MUSIC_SIZE = 50 * 1024 * 1024; // 50MB
@@ -51,7 +52,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       id,
       name: file.name,
-      path: `/music/${filename}`,
+      path: fileUrl(`music/${filename}`),
     });
   } catch (error: any) {
     console.error('Music upload error:', error);

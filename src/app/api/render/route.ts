@@ -16,6 +16,15 @@ function isPathSafe(resolvedPath: string, allowedDir: string): boolean {
   return normalized.startsWith(path.normalize(allowedDir));
 }
 
+/** Extract the public-relative path from a URL (handles both /api/files?path=xxx and /xxx) */
+function extractPublicPath(url: string): string {
+  if (url.startsWith('/api/files')) {
+    const urlObj = new URL(url, 'http://localhost');
+    return urlObj.searchParams.get('path') || '';
+  }
+  return url.startsWith('/') ? url.slice(1) : url;
+}
+
 export const maxDuration = 300; // 5 min for batch renders
 
 export async function POST(request: NextRequest) {
@@ -54,7 +63,7 @@ export async function POST(request: NextRequest) {
     // Prepare music file path - validate it stays within public
     let musicConfig: MusicTrack | null = null;
     if (music && music.file) {
-      const filePath = music.file.startsWith('/') ? music.file.slice(1) : music.file;
+      const filePath = extractPublicPath(music.file);
       const resolvedMusic = path.join(process.cwd(), 'public', filePath);
       if (!isPathSafe(resolvedMusic, PUBLIC_DIR)) {
         return NextResponse.json({ error: 'Invalid music path' }, { status: 400 });
@@ -68,7 +77,7 @@ export async function POST(request: NextRequest) {
     // Prepare video paths - validate they stay within uploads
     const videoPaths: { inputPath: string; outputPath: string; width: number; height: number; duration: number; trimStart?: number; trimEnd?: number }[] = [];
     for (const v of videos) {
-      const cleanPath = v.path.startsWith('/') ? v.path.slice(1) : v.path;
+      const cleanPath = extractPublicPath(v.path);
       if (!cleanPath.startsWith('uploads/')) {
         return NextResponse.json({ error: 'Invalid video path' }, { status: 400 });
       }

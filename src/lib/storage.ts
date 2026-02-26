@@ -13,6 +13,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { fileUrl } from '@/lib/file-url';
 
 const PUBLIC_DIR = path.resolve(path.join(process.cwd(), 'public'));
 
@@ -54,8 +55,8 @@ async function getS3Client() {
  */
 export async function uploadFile(localPath: string, storagePath: string): Promise<string> {
   if (!isCloudStorage) {
-    // Local storage — file is already on disk, just return the public URL path
-    return `/${storagePath}`;
+    // Local storage — file is already on disk, serve via /api/files
+    return fileUrl(storagePath);
   }
 
   const client = await getS3Client();

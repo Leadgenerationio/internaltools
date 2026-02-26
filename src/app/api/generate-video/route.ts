@@ -9,6 +9,7 @@ import { logger } from '@/lib/logger';
 import { getAuthContext } from '@/lib/api-auth';
 import { trackVeoUsage } from '@/lib/track-usage';
 import { checkGenerationLimit } from '@/lib/check-limits';
+import { fileUrl } from '@/lib/file-url';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
@@ -137,11 +138,11 @@ export async function POST(request: NextRequest) {
         id,
         filename,
         originalName: `AI Generated ${i + 1}`,
-        path: `/uploads/${filename}`,
+        path: fileUrl(`uploads/${filename}`),
         duration: info.duration,
         width: info.width,
         height: info.height,
-        thumbnail: `/uploads/${thumbFilename}`,
+        thumbnail: fileUrl(`uploads/${thumbFilename}`),
       };
     });
 

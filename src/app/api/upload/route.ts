@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getVideoInfo } from '@/lib/get-video-info';
 import { logger } from '@/lib/logger';
 import { getAuthContext } from '@/lib/api-auth';
+import { fileUrl } from '@/lib/file-url';
 
 const execFileAsync = promisify(execFile);
 
@@ -96,11 +97,11 @@ export async function POST(request: NextRequest) {
         id,
         filename,
         originalName: file.name,
-        path: `/uploads/${filename}`,
+        path: fileUrl(`uploads/${filename}`),
         duration: info.duration,
         width: info.width,
         height: info.height,
-        thumbnail: existsSync(thumbPath) ? `/uploads/${thumbFilename}` : '',
+        thumbnail: existsSync(thumbPath) ? fileUrl(`uploads/${thumbFilename}`) : '',
       });
     }
 

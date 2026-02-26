@@ -35,8 +35,14 @@ export async function POST(request: NextRequest) {
     // Resolve all file paths and validate they're in the outputs directory
     const resolvedPaths: { path: string; name: string }[] = [];
     for (const file of files) {
-      // URL is like /outputs/filename.mp4 — strip leading slash and resolve
-      const relativePath = file.url.replace(/^\//, '');
+      // URL can be /api/files?path=outputs/xxx or legacy /outputs/xxx
+      let relativePath: string;
+      if (file.url.startsWith('/api/files')) {
+        const urlObj = new URL(file.url, 'http://localhost');
+        relativePath = urlObj.searchParams.get('path') || '';
+      } else {
+        relativePath = file.url.replace(/^\//, '');
+      }
       const fullPath = resolve(process.cwd(), 'public', relativePath);
 
       if (!isPathSafe(fullPath, OUTPUTS_DIR)) {
