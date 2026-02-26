@@ -48,10 +48,20 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
   const canGenerate = prompt.trim().length > 0 && !generating;
   const aiVideoCount = videos.filter((v) => v.originalName.startsWith('AI:')).length;
 
+  const handleCancel = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setGenerating(false);
+    setStatusMessage('Generation cancelled.');
+  };
+
   const handleGenerate = async () => {
     if (!canGenerate) return;
 
     const currentPrompt = prompt.trim();
+    const abort = new AbortController();
+    abortRef.current = abort;
+
     setGenerating(true);
     setError(null);
     setStatusMessage(`Generating ${count} video${count > 1 ? 's' : ''}... This can take a few minutes.`);
@@ -63,6 +73,7 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: currentPrompt, count, aspectRatio, duration }),
+        signal: abort.signal,
       });
 
       let data: { videos?: UploadedVideo[]; error?: string };
