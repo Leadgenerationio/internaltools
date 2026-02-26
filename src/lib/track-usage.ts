@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import { calculateAnthropicCostPence, calculateVeoCostPence } from '@/lib/pricing';
+import { checkSpendAlerts } from '@/lib/spend-alerts';
 
 /**
  * Track Anthropic Claude API usage. Fire-and-forget — never throws.
@@ -39,6 +40,9 @@ export async function trackAnthropicUsage(params: {
         errorMessage: params.errorMessage,
       },
     });
+
+    // Fire-and-forget spend alert check (don't await)
+    checkSpendAlerts(params.companyId);
 
     return costCents;
   } catch (err) {
@@ -81,6 +85,9 @@ export async function trackVeoUsage(params: {
         errorMessage: params.errorMessage,
       },
     });
+
+    // Fire-and-forget spend alert check (don't await)
+    checkSpendAlerts(params.companyId);
 
     return costCents;
   } catch (err) {

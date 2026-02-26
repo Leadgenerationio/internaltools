@@ -60,6 +60,8 @@ src/
       page.tsx                    — NextAuth login page
     register/
       page.tsx                    — Registration page (new company + user)
+    projects/
+      page.tsx                    — Projects list (grid of cards, create/delete, pagination)
     usage/
       page.tsx                    — Usage dashboard (monthly spend, per-service)
     settings/
@@ -74,6 +76,9 @@ src/
       company/invite/route.ts     — Send email invitations
       usage/route.ts              — Get monthly spend + breakdown
       admin/route.ts              — Super admin platform-wide stats + company breakdown
+      projects/route.ts           — List + create projects (GET/POST)
+      projects/[id]/route.ts     — Get, update, delete project (GET/PUT/DELETE)
+      projects/[id]/ads/route.ts — Save ads to project (POST — replace all)
       generate-ads/route.ts       — Claude API for ad copy (+ cost tracking)
       generate-video/route.ts     — Google Veo API (+ cost tracking)
       upload/route.ts             — Video upload (validates size, extracts metadata)

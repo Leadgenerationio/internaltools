@@ -435,17 +435,12 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-gray-950">
       {/* Header */}
-      <header className="border-b border-gray-800 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4 flex-wrap">
-          <div>
-            <h1 className="text-xl font-bold text-white">Ad Maker</h1>
-            <p className="text-sm text-gray-500">
-              Generate funnel ad copy, review, and render video ads
-            </p>
-          </div>
+      <header className="border-b border-gray-800 px-3 sm:px-6 py-3 sm:py-4">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 sm:gap-4">
+          <h1 className="text-lg sm:text-xl font-bold text-white shrink-0">Ad Maker</h1>
 
-          {/* Step nav */}
-          <div className="flex items-center gap-1 overflow-x-auto">
+          {/* Step nav — scrollable on mobile */}
+          <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide flex-1 justify-center min-w-0">
             {steps.map((s) => (
               <button
                 key={s.key}
@@ -464,7 +459,7 @@ export default function Home() {
             ))}
             <button
               onClick={handleResetAll}
-              className="ml-1 sm:ml-2 px-2 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium text-red-400 hover:text-red-300 hover:bg-red-950/30 transition-all whitespace-nowrap"
+              className="ml-1 px-2 py-1.5 rounded-lg text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-950/30 transition-all whitespace-nowrap"
               title="Clear all saved data and start fresh"
             >
               Reset
@@ -475,7 +470,7 @@ export default function Home() {
       </header>
 
       {/* Main content */}
-      <div className="max-w-7xl mx-auto px-6 py-6">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-6">
         {/* Step 1: Brief */}
         {step === 'brief' && (
           <div className="max-w-2xl mx-auto">

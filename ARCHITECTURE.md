@@ -16,10 +16,10 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 │  │ /welcome │  │ /login   │  │ /register│  │ /usage   │  │ /settings││
 │  │ (landing)│  │ /company │  │ /users   │  │ (sidebar)│  │ (sidebar)││
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘│
-│  ┌──────────┐                                                         │
-│  │ /admin   │ ← Super admin only (SUPER_ADMIN_EMAILS env var)        │
-│  │ (platform│                                                         │
-│  │  health) │                                                         │
+│  ┌──────────┐  ┌──────────┐                                          │
+│  │ /admin   │  │/projects │ ← List, create, delete projects          │
+│  │ (platform│  │ (grid)   │                                          │
+│  │  health) │  └──────────┘                                          │
 │  └──────────┘                                                         │
 │                                                                         │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
@@ -39,6 +39,7 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
   PostgreSQL (Prisma)
   - Companies
   - Users (roles: OWNER/ADMIN/MEMBER)
+  - Projects (with ads, videos, music, renders)
   - API usage logs (per-call tracking in cents)
   - Sessions (JWT)
 ```
@@ -141,6 +142,8 @@ src/
 │   │   └── page.tsx                  # NextAuth login page (email + password)
 │   ├── register/
 │   │   └── page.tsx                  # Registration page (new company + user)
+│   ├── projects/
+│   │   └── page.tsx                  # Projects list: grid of cards, create/delete, pagination
 │   ├── usage/
 │   │   └── page.tsx                  # Dashboard: monthly spend, per-service breakdown
 │   ├── settings/
@@ -155,6 +158,10 @@ src/
 │       ├── company/invite/route.ts   # Send email invitations to join company
 │       ├── usage/route.ts            # Get monthly spend + service breakdown
 │       ├── admin/route.ts            # Super admin: platform-wide stats + company breakdown
+│       ├── projects/route.ts         # List + create projects (GET/POST)
+│       ├── projects/[id]/route.ts   # Get, update, delete project (GET/PUT/DELETE)
+│       ├── projects/[id]/ads/
+│       │   └── route.ts             # Save ads to project (POST — replace all)
 │       ├── generate-ads/route.ts     # Claude API → ad copy (+ cost tracking)
 │       ├── generate-video/route.ts   # Google Veo → AI videos (+ cost tracking)
 │       ├── render/route.ts           # FFmpeg batch render + cloud storage (+ cost tracking)
@@ -246,6 +253,12 @@ FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to 
 | `/api/company/invite` | POST | Send email invitation to join company | default | required (OWNER/ADMIN) |
 | `/api/usage` | GET | Get monthly spend + service breakdown | default | required |
 | `/api/admin` | GET | Platform-wide stats, company breakdown, recent calls | default | required (super admin) |
+| `/api/projects` | GET | List projects for user's company (paginated) | default | required |
+| `/api/projects` | POST | Create a new project | default | required |
+| `/api/projects/[id]` | GET | Get project with all related data | default | required |
+| `/api/projects/[id]` | PUT | Update project fields | default | required |
+| `/api/projects/[id]` | DELETE | Delete project (cascades, OWNER/ADMIN/creator only) | default | required |
+| `/api/projects/[id]/ads` | POST | Save ads to project (replace all) | default | required |
 | `/api/generate-ads` | POST | Generate ad copy via Claude | 60s | required + cost tracking |
 | `/api/generate-video` | POST | Generate video via Veo | 300s | required + cost tracking |
 | `/api/upload` | POST | Upload video files (max 500MB each) | 60s | required |
