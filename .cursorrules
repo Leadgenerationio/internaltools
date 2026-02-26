@@ -6,12 +6,15 @@ After any new feature or major change, always update `ARCHITECTURE.md`, `CLAUDE.
 ## Architecture
 
 - **Framework**: Next.js 14 (App Router) + TypeScript + Tailwind CSS
+- **Database**: PostgreSQL + Prisma ORM (multi-tenant companies, users, API usage tracking)
+- **Authentication**: NextAuth v5 (credentials provider, JWT sessions, httpOnly cookies)
+- **Multi-tenancy**: Companies with users (roles: OWNER/ADMIN/MEMBER), data filtered by company_id
+- **Cost tracking**: Per-call API usage logging in cents (`src/lib/track-usage.ts`, `src/lib/pricing.ts`)
 - **Video processing**: FFmpeg via shell exec (server-side), @napi-rs/canvas for emoji-supporting overlay PNGs
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) for generating TOFU/MOFU/BOFU ad text
 - **AI video generation**: Google Veo 3.1 (optional — users can also upload their own videos)
 - **File handling**: Uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/`
 - **Cloud storage**: Optional S3/R2 support via `src/lib/storage.ts` (activated by `S3_BUCKET` env var)
-- **Auth**: Optional password protection via `APP_PASSWORD` env var (middleware + cookie)
 - **State**: React useState (no external state management)
 - **Logging**: Winston with daily-rotate-file, client-side logs forwarded via `/api/log`
 - **Deployment**: Railway with Docker, Next.js standalone output
@@ -48,39 +51,62 @@ After any new feature or major change, always update `ARCHITECTURE.md`, `CLAUDE.
 ```
 src/
   app/
-    page.tsx                — Main 4-step flow controller
-    layout.tsx              — Root layout
-    globals.css             — Tailwind + custom styles
-    api/
-      generate-ads/route.ts — Claude API for ad copy generation
-      generate-video/route.ts — Google Veo API for video generation
-      auth/route.ts         — Password authentication endpoint
-      upload/route.ts       — Video upload (validates size, extracts metadata via ffprobe)
-      upload-music/route.ts — Music upload (validates format + size)
-      render/route.ts       — FFmpeg batch render + cloud storage upload
-      download-zip/route.ts — Bundle outputs into ZIP
-      log/route.ts          — Client-side log ingestion
-      logs/route.ts         — Log retrieval for debug viewer
+    page.tsx                      — Main 4-step flow controller (requires auth)
+    layout.tsx                    — Root layout
+    globals.css                   — Tailwind + custom styles
     login/
-      page.tsx              — Password login page
+      page.tsx                    — NextAuth login page
+    register/
+      page.tsx                    — Registration page (new company + user)
+    usage/
+      page.tsx                    — Usage dashboard (monthly spend, per-service)
+    settings/
+      page.tsx                    — Company settings (users, invitations, limits)
+    api/
+      auth/[...nextauth]/
+        route.ts                  — NextAuth v5 credentials provider
+      auth/register/route.ts      — Create new user + company
+      company/users/route.ts      — List, add, remove users
+      company/invite/route.ts     — Send email invitations
+      usage/route.ts              — Get monthly spend + breakdown
+      generate-ads/route.ts       — Claude API for ad copy (+ cost tracking)
+      generate-video/route.ts     — Google Veo API (+ cost tracking)
+      upload/route.ts             — Video upload (validates size, extracts metadata)
+      upload-music/route.ts       — Music upload (validates format + size)
+      render/route.ts             — FFmpeg batch render + cloud storage (+ cost tracking)
+      download-zip/route.ts       — Bundle outputs into ZIP
+      log/route.ts                — Client-side log ingestion
+      logs/route.ts               — Log retrieval for debug viewer
   components/
-    AdBriefForm.tsx         — Rich brief input form (6 fields)
-    FunnelReview.tsx        — Tabbed review UI (TOFU/MOFU/BOFU) with approve/edit/regenerate
-    StyleConfigurator.tsx   — Overlay style presets + custom colour/font/timing controls
-    VideoSourceTabs.tsx     — Tabbed upload vs AI generate
-    VideoUploader.tsx       — Drag-and-drop multi-video upload
-    VideoGenerator.tsx      — AI video generation via Veo
-    MusicSelector.tsx       — Upload and configure background music
-    VideoPreview.tsx        — Real-time 9:16 preview with overlay simulation + music sync
-    TextOverlayEditor.tsx   — Manual overlay editor (available for direct overlay editing)
-    LogViewer.tsx           — Expandable debug log viewer (only polls when open)
+    AdBriefForm.tsx               — Rich brief input form (6 fields)
+    FunnelReview.tsx              — Tabbed review UI (TOFU/MOFU/BOFU)
+    StyleConfigurator.tsx         — Overlay style presets + custom controls
+    VideoSourceTabs.tsx           — Tabbed upload vs AI generate
+    VideoUploader.tsx             — Drag-and-drop multi-video upload
+    VideoGenerator.tsx            — AI video generation via Veo
+    MusicSelector.tsx             — Upload and configure background music
+    VideoPreview.tsx              — Real-time 9:16 preview + trim controls
+    TextOverlayEditor.tsx         — Manual overlay editor
+    LogViewer.tsx                 — Expandable debug log viewer
+    UsageWidget.tsx               — Real-time cost display during operations
+    SettingsPanel.tsx             — Company users, invitations, limits
   lib/
-    types.ts                — TypeScript interfaces, presets, funnel types
-    ffmpeg-renderer.ts      — Core FFmpeg rendering (overlay compositing + audio mixing, trim, quality)
-    overlay-renderer.ts     — Canvas-based PNG generation with emoji support
-    get-video-info.ts       — ffprobe metadata extraction + FFmpeg availability check
-    storage.ts              — Cloud storage abstraction (local FS / S3 / R2)
-    logger.ts               — Winston logger setup
+    types.ts                      — TypeScript interfaces, presets, funnel types
+    ffmpeg-renderer.ts            — Core FFmpeg rendering (overlay, audio, trim, quality)
+    overlay-renderer.ts           — Canvas-based PNG generation with emoji
+    get-video-info.ts             — ffprobe metadata extraction + FFmpeg check
+    storage.ts                    — Cloud storage abstraction (local FS / S3 / R2)
+    logger.ts                     — Winston logger setup
+    prisma.ts                     — Prisma client singleton
+    auth.ts                       — NextAuth session helpers, user context
+    pricing.ts                    — API cost calculation per model/tokens
+    track-usage.ts                — Per-call usage logging, monthly aggregation
+    api-auth.ts                   — Auth middleware helpers for API routes
+  middleware.ts                   — JWT verification, rate limiting, security headers
+  auth.config.ts                  — NextAuth v5 configuration
+prisma/
+  schema.prisma                   — Data models: Company, User, Session, ApiUsage
+  migrations/                     — Database migrations
 ```
 
 ## When making changes:

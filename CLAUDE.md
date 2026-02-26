@@ -64,15 +64,19 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 ## Architecture Notes
 
 - **Framework**: Next.js 14 App Router + TypeScript + Tailwind CSS
+- **Database**: PostgreSQL + Prisma ORM for multi-tenant data storage (companies, users, API usage)
+- **Authentication**: NextAuth v5 with credentials provider (email + password), JWT sessions in httpOnly cookies
+- **Multi-tenancy**: Companies own users with roles (OWNER/ADMIN/MEMBER); all queries filtered by `company_id` from session
 - **Video processing**: FFmpeg via shell exec, @napi-rs/canvas for emoji-supporting overlay PNGs
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) — generates TOFU/MOFU/BOFU funnel ad text
 - **AI video generation**: Google Veo 3.1 (optional)
+- **Cost tracking**: Per-call API usage logging (in cents), monthly aggregation via `/api/usage`
 - **Files**: uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/`
 - **Cloud storage**: Optional S3/R2 via `src/lib/storage.ts` — activated by `S3_BUCKET` env var, lazy-loads AWS SDK
-- **Auth**: Optional password protection via `APP_PASSWORD` env var — middleware redirect to `/login`, httpOnly cookie
+- **Auth**: NextAuth v5 credentials provider — JWT sessions, no password-only protection anymore (now per-company)
 - **State management**: React useState, no external store
 - **Logging**: Winston with daily-rotate-file, client-side log helper POSTs to `/api/log`
-- **App flow**: 4-step wizard — Brief → Review → Media → Render
+- **App flow**: 4-step wizard — Brief → Review → Media → Render (requires authenticated user)
 - **Overlay rendering**: Canvas PNG approach (not FFmpeg drawtext) for emoji support
 - **Video trimming**: Users can trim videos via range sliders in VideoPreview; FFmpeg uses `-ss`/`-t` flags
 - **Render quality**: Draft (ultrafast/crf28) vs Final (fast/crf23) selectable before render
