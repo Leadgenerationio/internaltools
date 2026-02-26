@@ -34,11 +34,19 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             return null;
           }
 
-          console.log('[auth] User found, checking password...');
-          const valid = await bcrypt.compare(
-            credentials.password as string,
-            user.passwordHash
-          );
+          const passwordInput = credentials.password as string;
+          console.log('[auth] User found, checking password. Input length:', passwordInput.length, 'Hash prefix:', user.passwordHash?.substring(0, 7), 'Hash length:', user.passwordHash?.length);
+          console.log('[auth] Input type:', typeof passwordInput, 'Hash type:', typeof user.passwordHash);
+
+          let valid: boolean;
+          try {
+            valid = await bcrypt.compare(passwordInput, user.passwordHash);
+          } catch (bcryptErr) {
+            console.error('[auth] bcrypt.compare threw:', bcryptErr);
+            return null;
+          }
+          console.log('[auth] bcrypt.compare result:', valid);
+
           if (!valid) {
             console.log('[auth] Invalid password for:', emailLower);
             return null;
