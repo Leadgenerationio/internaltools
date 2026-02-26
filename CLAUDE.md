@@ -71,9 +71,10 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) — generates TOFU/MOFU/BOFU funnel ad text
 - **AI video generation**: Google Veo 3.1 (optional)
 - **Cost tracking**: Per-call API usage logging (in cents), monthly aggregation via `/api/usage`
-- **Files**: uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/`
+- **Files**: uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/` — symlinked to Railway Volume (`/app/data`) via `docker-entrypoint.sh`
+- **File serving**: All file URLs use `/api/files?path=xxx` — Next.js standalone doesn't serve runtime files from `public/`. Always use `fileUrl()` from `src/lib/file-url.ts` to generate URLs.
 - **Cloud storage**: Optional S3/R2 via `src/lib/storage.ts` — activated by `S3_BUCKET` env var, lazy-loads AWS SDK
-- **Auth**: NextAuth v5 credentials provider — JWT sessions, no password-only protection anymore (now per-company)
+- **Auth**: NextAuth v5 credentials provider — JWT sessions, `AUTH_SECRET` env var for signing, `secureCookie: true` in middleware for reverse proxy compatibility
 - **State management**: React useState, no external store
 - **Logging**: Winston with daily-rotate-file, client-side log helper POSTs to `/api/log`
 - **App flow**: 4-step wizard — Brief → Review → Media → Render (requires authenticated user)
@@ -90,6 +91,6 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **Password reset**: Token-based reset flow at `/api/auth/reset-password` + `/reset-password` page
 - **CSV export**: Usage data downloadable as CSV from `/api/usage/export`
 - **Company logo**: Upload at `/api/company/logo`, displayed in settings
-- **Deployment**: Railway with Docker, `output: 'standalone'` in next.config.js, auto-deploy via git-agent
+- **Deployment**: Railway with Docker, `output: 'standalone'` in next.config.js, Railway Volume at `/app/data` for persistent storage, `docker-entrypoint.sh` for startup (symlinks + migrate + serve)
 - **Watchdog QA**: `npm run watchdog` — standalone script that continuously tests all endpoints, checks health, stress-tests, and auto-remediates (restart server, create dirs, clean old files). Config in `scripts/watchdog.config.json`
 - **Security Agent**: `npm run security` — continuous security audit (blast radius, network exposure, browser control, disk hygiene, plugin hygiene, credentials, reverse proxy, session logs, shell injection, input validation, path traversal, secrets in git history). Config in `scripts/security.config.json`. `npm run security:once` for single scan with CI-friendly exit codes.

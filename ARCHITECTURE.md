@@ -177,6 +177,7 @@ src/
 │       ├── upload/route.ts           # Video file upload
 │       ├── upload-music/route.ts     # Music file upload
 │       ├── download-zip/route.ts     # Bundle outputs into ZIP
+│       ├── files/route.ts             # Runtime file server (bypasses standalone limitation)
 │       ├── log/route.ts              # Client log ingestion
 │       └── logs/route.ts             # Log retrieval
 ├── components/
@@ -207,7 +208,8 @@ src/
 │   ├── plans.ts                      # Plan tier definitions (FREE/STARTER/PRO/ENTERPRISE)
 │   ├── check-limits.ts               # Generation + user limit enforcement per plan
 │   ├── spend-alerts.ts               # Webhook spend alerts (50%/80%/100% budget thresholds)
-│   └── api-auth.ts                   # Auth middleware helpers for API routes
+│   ├── api-auth.ts                   # Auth middleware helpers for API routes
+│   └── file-url.ts                   # Helper: converts paths to /api/files URLs
 ├── prisma/
 │   ├── schema.prisma                 # Data models: Company, User, Session, ApiUsage
 │   └── migrations/                   # Database migrations
@@ -291,7 +293,7 @@ FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to 
 DATABASE_URL=postgresql://...    # Required — PostgreSQL connection string for Prisma
 
 # Authentication & Sessions
-NEXTAUTH_SECRET=...              # Required — 32+ char random string for JWT signing
+AUTH_SECRET=...                  # Required — 32+ char random string for JWT signing (NextAuth v5 uses AUTH_SECRET)
 NEXTAUTH_URL=http://localhost:3000  # Required — Base URL for NextAuth callbacks
 
 # API Keys
@@ -304,7 +306,10 @@ SUPER_ADMIN_EMAILS=admin@example.com  # Comma-separated list of super admin emai
 # Spend Alerts (optional)
 SPEND_ALERT_WEBHOOK_URL=https://...   # Optional — webhook URL for budget alerts (50%/80%/100%)
 
-# Cloud Storage (optional)
+# Persistent Storage (Railway)
+DATA_DIR=/app/data               # Set when using Railway Volume — entrypoint symlinks storage dirs
+
+# Cloud Storage (optional — alternative to Railway Volume)
 S3_BUCKET=your-bucket            # Optional — enable cloud storage (S3/R2)
 S3_ENDPOINT=https://...          # Required with S3_BUCKET
 S3_ACCESS_KEY_ID=...             # Required with S3_BUCKET
@@ -350,7 +355,7 @@ SMTP_PASS=...                    # Required for email invitations
 - Logger automatically redacts API keys, tokens, and secret patterns
 - Home directory paths replaced with `~` to prevent username leakage
 - Fields named password/secret/token/apikey automatically redacted
-- Production log level set to `warn` (suppresses debug/info)
+- Production log level set to `info` (configurable via `LOG_LEVEL` env var)
 
 ## Validation
 
@@ -436,7 +441,7 @@ scripts/
 
 Abstraction layer that defaults to local filesystem and switches to S3-compatible storage (AWS S3, Cloudflare R2, etc.) when `S3_BUCKET` is configured.
 
-- **Local mode** (default): Files stay on disk in `public/`, URLs are relative paths
+- **Local mode** (default): Files stay on disk in `public/`, URLs served via `/api/files?path=xxx`
 - **Cloud mode**: Files uploaded to S3 after processing, local copies cleaned up
 - AWS SDK is lazy-loaded — only imported when cloud storage is actually configured
 - Currently integrated into the render route (output videos uploaded to S3)
@@ -484,6 +489,9 @@ Plan tiers (FREE/STARTER/PRO/ENTERPRISE) defined in `src/lib/plans.ts`:
 - **Dockerfile**: Multi-stage build — builder with native dependencies, runner with runtime libs + FFmpeg
 - **Output**: Next.js standalone mode (`output: 'standalone'` in next.config.js)
 - **Auto-deploy**: Git agent (`npm run git-agent`) watches for file changes and auto-pushes to GitHub, triggering Railway auto-deploy
+- **Persistent storage**: Railway Volume mounted at `/app/data` — `docker-entrypoint.sh` symlinks `public/uploads`, `public/outputs`, `public/music` to the volume so files survive deploys
+- **File serving**: Next.js standalone does NOT serve runtime-generated files from `public/`. All file URLs use `/api/files?path=xxx` (served by `src/app/api/files/route.ts`)
+- **Startup**: `docker-entrypoint.sh` handles volume symlinks → Prisma migrate → server start
 
 ## Prerequisites
 

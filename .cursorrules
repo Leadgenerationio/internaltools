@@ -13,11 +13,12 @@ After any new feature or major change, always update `ARCHITECTURE.md`, `CLAUDE.
 - **Video processing**: FFmpeg via shell exec (server-side), @napi-rs/canvas for emoji-supporting overlay PNGs
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) for generating TOFU/MOFU/BOFU ad text
 - **AI video generation**: Google Veo 3.1 (optional — users can also upload their own videos)
-- **File handling**: Uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/`
+- **File handling**: Uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/` (symlinked to Railway Volume via `docker-entrypoint.sh`)
+- **File serving**: All file URLs use `/api/files?path=xxx` (Next.js standalone doesn't serve runtime files from `public/`). Use `fileUrl()` from `src/lib/file-url.ts` to generate URLs.
 - **Cloud storage**: Optional S3/R2 support via `src/lib/storage.ts` (activated by `S3_BUCKET` env var)
 - **State**: React useState (no external state management)
 - **Logging**: Winston with daily-rotate-file, client-side logs forwarded via `/api/log`
-- **Deployment**: Railway with Docker, Next.js standalone output
+- **Deployment**: Railway with Docker, Next.js standalone output, Railway Volume for persistent file storage
 
 ## App Flow (4 Steps)
 
@@ -95,6 +96,7 @@ src/
       upload-music/route.ts       — Music upload (validates format + size)
       render/route.ts             — FFmpeg batch render + cloud storage (+ cost tracking)
       download-zip/route.ts       — Bundle outputs into ZIP
+      files/route.ts              — Runtime file server (standalone can't serve runtime files)
       log/route.ts                — Client-side log ingestion
       logs/route.ts               — Log retrieval for debug viewer
   components/
@@ -125,6 +127,7 @@ src/
     check-limits.ts               — Generation + user limit enforcement per plan
     spend-alerts.ts               — Webhook spend alerts (50%/80%/100% budget)
     api-auth.ts                   — Auth middleware helpers for API routes
+    file-url.ts                   — Helper to convert paths to /api/files URLs
   middleware.ts                   — JWT verification, rate limiting, security headers
   auth.config.ts                  — NextAuth v5 configuration
 prisma/
