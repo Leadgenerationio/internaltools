@@ -61,7 +61,7 @@ COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 
 # Create the public directory and subdirectories the app needs
-RUN mkdir -p public/uploads public/outputs public/music
+RUN mkdir -p public/uploads public/outputs public/music public/logos
 
 # Railway sets the PORT env var automatically
 ENV PORT=3000
