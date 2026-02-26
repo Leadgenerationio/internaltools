@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import AdBriefForm from '@/components/AdBriefForm';
 import FunnelReview from '@/components/FunnelReview';
