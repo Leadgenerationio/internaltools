@@ -12,7 +12,8 @@
     "security": "npx tsx scripts/security.ts",
     "security:once": "npx tsx scripts/security.ts --once",
     "workers": "npx tsx src/workers/index.ts",
-    "git-agent": "bash scripts/git-agent.sh"
+    "git-agent": "bash scripts/git-agent.sh",
+    "stress-test": "npx tsx scripts/stress-test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",

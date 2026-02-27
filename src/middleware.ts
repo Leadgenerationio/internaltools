@@ -84,6 +84,10 @@ const SECURITY_HEADERS: Record<string, string> = {
 
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'http://localhost:3000';
 
+// secureCookie: only true in production (behind HTTPS/reverse proxy like Railway).
+// On localhost (HTTP), cookies use plain names without the __Secure- prefix.
+const USE_SECURE_COOKIE = process.env.NODE_ENV === 'production';
+
 // ─── Public Routes (no auth required) ───────────────────────────────────────
 
 const PUBLIC_ROUTES = ['/login', '/register', '/welcome', '/reset-password', '/suspended', '/api/auth', '/api/health', '/api/webhooks', '/api/integrations/google-drive/callback', '/api/admin/cleanup', '/privacy', '/terms', '/help'];
@@ -106,7 +110,7 @@ export async function middleware(request: NextRequest) {
   if (!isPublicRoute(pathname)) {
     // secureCookie: true ensures getToken reads the __Secure- prefixed cookie
     // (required when behind a reverse proxy like Railway that terminates TLS)
-    const token = await getToken({ req: request, secret: SECRET, secureCookie: true });
+    const token = await getToken({ req: request, secret: SECRET, secureCookie: USE_SECURE_COOKIE });
     if (!token) {
       const welcomeUrl = new URL('/welcome', request.url);
       return NextResponse.redirect(welcomeUrl);
@@ -116,7 +120,7 @@ export async function middleware(request: NextRequest) {
   // ── Rate limiting for API routes ──
   if (pathname.startsWith('/api/') && !pathname.startsWith('/api/auth')) {
     // Use userId from token if available, fall back to IP
-    const token = await getToken({ req: request, secret: SECRET, secureCookie: true });
+    const token = await getToken({ req: request, secret: SECRET, secureCookie: USE_SECURE_COOKIE });
     const rateLimitKey = token?.sub || getClientIp(request);
 
     const routeKey = Object.keys(RATE_LIMITS).find((key) => pathname.startsWith(key));

@@ -1,0 +1,8 @@
+{
+  "baseUrl": "http://localhost:3000",
+  "users": 100,
+  "concurrency": 20,
+  "scenarios": ["register", "upload", "render"],
+  "enableGenerateAds": false,
+  "verbose": false
+}

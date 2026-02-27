@@ -591,6 +591,9 @@ npm run watchdog
 4. **File System Checks** — orphaned files, old files (>24h), disk space, leftover temp dirs
 5. **Remediation** — auto-restart downed server, create missing dirs, clean old files
 
+### Authentication
+API tests require login. Set `WATCHDOG_EMAIL` and `WATCHDOG_PASSWORD` env vars (or in config file) to authenticate via NextAuth credentials callback. Without auth, API and stress tests are skipped.
+
 ### Config
 `scripts/watchdog.config.json` — all fields overridable via `WATCHDOG_*` env vars. Paid API tests (generate-ads, generate-video) disabled by default.
 
@@ -606,6 +609,42 @@ scripts/
 ├── watchdog.config.json   # Config with defaults
 ├── seed-templates.ts      # Seed 6 system project templates into database
 └── fixtures/              # Auto-generated test video + audio (gitignored)
+```
+
+## Stress Test Agent
+
+A standalone TypeScript script (`scripts/stress-test.ts`) that simulates N concurrent users performing realistic flows to find bottlenecks and measure system capacity.
+
+### Run
+```bash
+npm run stress-test
+```
+
+### What it does (4 phases)
+1. **Setup** — Generate test fixtures, register N users (unique `stress-{runId}-{idx}@test.local` emails), login all users
+2. **Upload** — Each user uploads a video + music (30% of users) concurrently
+3. **Projects** — Create projects, optionally generate ad copy (requires `STRESS_GENERATE_ADS=1`)
+4. **Render** — Each user with a video renders with overlays, polls for job completion
+
+### Config
+`scripts/stress-test.config.json` — overridable via `STRESS_*` env vars.
+- `STRESS_BASE_URL` — Server URL (default: http://localhost:3000)
+- `STRESS_USERS` — Number of virtual users (default: 100)
+- `STRESS_CONCURRENCY` — Max concurrent requests (default: 20)
+- `STRESS_GENERATE_ADS` — Set to "1" to include ad generation (costs API credits)
+
+### Output
+- Progress bars per phase
+- Per-endpoint metrics table: requests, success rate, p50/p95/p99 latency
+- Overall summary: throughput (req/s), error rate, rate limit hits
+- Error breakdown by type
+- Exit code 1 if error rate > 10%
+
+### Files
+```
+scripts/
+├── stress-test.ts            # Main stress test script
+└── stress-test.config.json   # Config with defaults
 ```
 
 ## Security Agent

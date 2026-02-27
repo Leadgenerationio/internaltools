@@ -1,9 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSuperAdminContext } from '@/lib/admin-auth';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { prisma } from '@/lib/prisma';
+
+/** Safe shell-free exec — returns stdout or empty string on failure. */
+function safeExec(cmd: string, args: string[]): string {
+  try {
+    return execFileSync(cmd, args, { stdio: ['pipe', 'pipe', 'ignore'], timeout: 10_000 }).toString().trim();
+  } catch {
+    return '';
+  }
+}
+
+/** Count files recursively in a directory. */
+function countFiles(dirPath: string): number {
+  let count = 0;
+  try {
+    for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+      if (entry.isFile()) count++;
+      else if (entry.isDirectory()) count += countFiles(path.join(dirPath, entry.name));
+    }
+  } catch { /* ignore */ }
+  return count;
+}
+
+/** Find the N largest files in a directory, sorted by size descending. */
+function findLargestFiles(dirPath: string, limit: number): { path: string; size: number }[] {
+  const files: { path: string; size: number }[] = [];
+  function walk(dir: string) {
+    try {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isFile()) {
+          try { files.push({ path: full, size: fs.statSync(full).size }); } catch { /* ignore */ }
+        } else if (entry.isDirectory()) {
+          walk(full);
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  walk(dirPath);
+  files.sort((a, b) => b.size - a.size);
+  return files.slice(0, limit);
+}
 
 export const maxDuration = 60;
 
@@ -97,13 +138,20 @@ export async function GET(request: NextRequest) {
 
   let diskInfo = '';
   try {
-    diskInfo = execSync('df -h / 2>/dev/null').toString().trim();
+    diskInfo = safeExec('df', ['-h', '/']);
     const dataDir = process.env.DATA_DIR;
     if (dataDir) {
-      diskInfo += '\n\nVolume:\n' + execSync(`df -h "${dataDir}" 2>/dev/null`).toString().trim();
-      diskInfo += '\n\nBreakdown:\n' + execSync(`du -sh "${dataDir}" "${dataDir}/uploads" "${dataDir}/outputs" "${dataDir}/music" 2>/dev/null`).toString().trim();
-      diskInfo += '\n\nFile count:\n' + execSync(`find "${dataDir}" -type f 2>/dev/null | wc -l`).toString().trim() + ' files';
-      diskInfo += '\n\nLargest files:\n' + execSync(`find "${dataDir}" -type f -exec du -h {} + 2>/dev/null | sort -rh | head -20`).toString().trim();
+      const volumeDf = safeExec('df', ['-h', dataDir]);
+      if (volumeDf) diskInfo += '\n\nVolume:\n' + volumeDf;
+      const breakdown = safeExec('du', ['-sh', dataDir, `${dataDir}/uploads`, `${dataDir}/outputs`, `${dataDir}/music`]);
+      if (breakdown) diskInfo += '\n\nBreakdown:\n' + breakdown;
+      diskInfo += `\n\nFile count:\n${countFiles(dataDir)} files`;
+      const largest = findLargestFiles(dataDir, 20);
+      if (largest.length > 0) {
+        diskInfo += '\n\nLargest files:\n' + largest
+          .map(f => `${(f.size / 1024 / 1024).toFixed(1)}M\t${f.path}`)
+          .join('\n');
+      }
     }
   } catch { /* ignore */ }
 
@@ -168,13 +216,17 @@ export async function POST(request: NextRequest) {
   const totalBytes = outputs.bytes + uploads.bytes + music.bytes + volumeStray.bytes;
   const totalMB = (totalBytes / (1024 * 1024)).toFixed(1);
 
-  // Get disk usage info
+  // Get disk usage info (using safe execFileSync — no shell interpolation)
   let diskInfo = '';
   try {
-    diskInfo = execSync('df -h / 2>/dev/null | tail -1').toString().trim();
+    const dfOutput = safeExec('df', ['-h', '/']);
+    const dfLines = dfOutput.split('\n');
+    diskInfo = dfLines[dfLines.length - 1] || '';
     if (dataDir) {
-      diskInfo += '\n' + execSync(`df -h "${dataDir}" 2>/dev/null | tail -1`).toString().trim();
-      diskInfo += '\n' + execSync(`du -sh "${dataDir}" "${dataDir}/uploads" "${dataDir}/outputs" "${dataDir}/music" 2>/dev/null`).toString().trim();
+      const volDf = safeExec('df', ['-h', dataDir]);
+      const volLines = volDf.split('\n');
+      diskInfo += '\n' + (volLines[volLines.length - 1] || '');
+      diskInfo += '\n' + safeExec('du', ['-sh', dataDir, `${dataDir}/uploads`, `${dataDir}/outputs`, `${dataDir}/music`]);
     }
   } catch { /* ignore */ }
 

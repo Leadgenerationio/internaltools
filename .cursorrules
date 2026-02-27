@@ -234,6 +234,7 @@ prisma/
 ## Watchdog QA Agent
 - `npm run watchdog` — standalone script that continuously tests all endpoints, stress-tests, and auto-remediates
 - Config: `scripts/watchdog.config.json` (all overridable via `WATCHDOG_*` env vars)
+- Requires `WATCHDOG_EMAIL` / `WATCHDOG_PASSWORD` env vars for authenticated API tests
 - Paid API tests disabled by default (`enableGenerateAds`, `enableGenerateVideo`)
 - Generates its own test fixtures via FFmpeg in `scripts/fixtures/` (gitignored)
 - Reports to `watchdog-report.json` (gitignored)
@@ -243,6 +244,13 @@ prisma/
 - `npm run security:once` — single scan with exit codes (0=clean, 1=high, 2=critical) for CI
 - Config: `scripts/security.config.json` (toggle checks, set thresholds, auto-remediate)
 - Reports to `security-report.json` (gitignored, last 50 scans)
+
+## Stress Test Agent
+- `npm run stress-test` — simulates N concurrent users (default 100) performing realistic flows
+- Phases: register users → login → upload videos → create projects → render → poll jobs → report
+- Reports per-endpoint metrics (requests, success%, p50/p95/p99 latency, error rate, throughput)
+- Config: `scripts/stress-test.config.json` (overridable via `STRESS_*` env vars)
+- Env vars: `STRESS_BASE_URL`, `STRESS_USERS`, `STRESS_CONCURRENCY`, `STRESS_GENERATE_ADS`
 
 ## Prerequisites
 - Node.js 18+

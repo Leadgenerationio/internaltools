@@ -25,6 +25,8 @@ interface Config {
   autoCleanup: boolean;
   autoCreateDirs: boolean;
   verbose: boolean;
+  watchdogEmail: string;
+  watchdogPassword: string;
 }
 
 type TestStatus = 'pass' | 'fail' | 'warn' | 'skip';
@@ -56,6 +58,7 @@ interface ReportFile {
 
 interface CycleContext {
   serverUp: boolean;
+  authCookie: string;
   uploadedVideo: any | null;
   uploadedMusic: any | null;
   renderOutput: any | null;
@@ -119,6 +122,8 @@ function loadConfig(): Config {
     autoCleanup: env.WATCHDOG_AUTO_CLEANUP !== '0' && (fileConfig.autoCleanup ?? true),
     autoCreateDirs: env.WATCHDOG_AUTO_CREATE_DIRS !== '0' && (fileConfig.autoCreateDirs ?? true),
     verbose: env.WATCHDOG_VERBOSE === '1' || fileConfig.verbose || false,
+    watchdogEmail: env.WATCHDOG_EMAIL || (fileConfig as any).watchdogEmail || '',
+    watchdogPassword: env.WATCHDOG_PASSWORD || (fileConfig as any).watchdogPassword || '',
   };
 }
 
@@ -201,6 +206,75 @@ function ensureFixtures(): void {
       audioPath,
     ], { stdio: 'pipe' });
   }
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────────────
+
+/** Login via NextAuth credentials callback and return combined session cookies. */
+async function loginForWatchdog(baseUrl: string, email: string, password: string): Promise<string> {
+  // Step 1: Get CSRF token + cookie
+  const csrfRes = await fetch(`${baseUrl}/api/auth/csrf`, {
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!csrfRes.ok) throw new Error(`CSRF fetch failed: HTTP ${csrfRes.status}`);
+
+  const csrfCookies = csrfRes.headers.getSetCookie?.() || [];
+  const { csrfToken } = await csrfRes.json();
+
+  // Step 2: Login with credentials
+  const cookieHeader = csrfCookies.map((c: string) => c.split(';')[0]).join('; ');
+  const loginRes = await fetch(`${baseUrl}/api/auth/callback/credentials`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+    },
+    body: new URLSearchParams({ csrfToken, email, password }),
+    redirect: 'manual',
+    signal: AbortSignal.timeout(10000),
+  });
+
+  // Step 3: Check for login error
+  const redirectUrl = loginRes.headers.get('location') || '';
+  if (redirectUrl.includes('error=')) {
+    throw new Error(`Login rejected — check credentials (${redirectUrl})`);
+  }
+
+  // Step 4: Collect all cookies (CSRF + session)
+  const loginCookies = loginRes.headers.getSetCookie?.() || [];
+  const allCookies = [...csrfCookies, ...loginCookies]
+    .map((c: string) => c.split(';')[0])
+    .filter(Boolean);
+
+  if (allCookies.length === 0) {
+    throw new Error('No session cookies received — check credentials');
+  }
+  if (redirectUrl) {
+    const followRes = await fetch(
+      redirectUrl.startsWith('http') ? redirectUrl : `${baseUrl}${redirectUrl}`,
+      {
+        headers: { Cookie: allCookies.join('; ') },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(5000),
+      },
+    );
+    const followCookies = followRes.headers.getSetCookie?.() || [];
+    for (const c of followCookies) {
+      allCookies.push(c.split(';')[0]);
+    }
+  }
+
+  return allCookies.join('; ');
+}
+
+/** Fetch with auth cookie from context. Drop-in replacement for fetch(). */
+function authFetch(url: string, init: RequestInit, ctx: CycleContext): Promise<Response> {
+  if (!ctx.authCookie) return fetch(url, init);
+  const existing = (init.headers || {}) as Record<string, string>;
+  return fetch(url, {
+    ...init,
+    headers: { ...existing, Cookie: ctx.authCookie },
+  });
 }
 
 // ─── Test Runner ────────────────────────────────────────────────────────────
@@ -360,6 +434,40 @@ async function runApiTests(
   const results: TestResult[] = [];
   const base = config.baseUrl;
 
+  // Auth: Login to get session cookie
+  results.push(
+    await runTest(
+      'api.auth.login',
+      'Login for API tests',
+      'api',
+      async () => {
+        if (!config.watchdogEmail || !config.watchdogPassword) {
+          return { status: 'skip', error: 'Set WATCHDOG_EMAIL / WATCHDOG_PASSWORD env vars' };
+        }
+        try {
+          ctx.authCookie = await loginForWatchdog(base, config.watchdogEmail, config.watchdogPassword);
+          return { status: 'pass', detail: `Authenticated as ${config.watchdogEmail}` };
+        } catch (err: any) {
+          return { status: 'fail', error: `Login failed: ${err.message}` };
+        }
+      },
+      ctx,
+    ),
+  );
+
+  // If no auth cookie, skip remaining API tests
+  if (!ctx.authCookie) {
+    results.push({
+      id: 'api.auth.required',
+      name: 'API tests require authentication',
+      category: 'api',
+      status: 'skip',
+      durationMs: 0,
+      error: 'Set WATCHDOG_EMAIL and WATCHDOG_PASSWORD env vars',
+    });
+    return results;
+  }
+
   // GET /api/logs
   results.push(
     await runTest(
@@ -367,9 +475,9 @@ async function runApiTests(
       'GET /api/logs — valid shape',
       'api',
       async () => {
-        const res = await fetch(`${base}/api/logs`, {
+        const res = await authFetch(`${base}/api/logs`, {
           signal: AbortSignal.timeout(10000),
-        });
+        }, ctx);
         if (!res.ok) return { status: 'fail', error: `HTTP ${res.status}` };
         const data = await res.json();
         const err = assertShape(data, { logs: 'array' });
@@ -387,7 +495,7 @@ async function runApiTests(
       'POST /api/log — valid entry',
       'api',
       async () => {
-        const res = await fetch(`${base}/api/log`, {
+        const res = await authFetch(`${base}/api/log`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -396,7 +504,7 @@ async function runApiTests(
             source: 'watchdog',
           }),
           signal: AbortSignal.timeout(10000),
-        });
+        }, ctx);
         if (!res.ok) return { status: 'fail', error: `HTTP ${res.status}` };
         const data = await res.json();
         if (!data.ok) return { status: 'fail', error: 'Expected { ok: true }' };
@@ -413,12 +521,12 @@ async function runApiTests(
       'POST /api/log — invalid body returns error',
       'api',
       async () => {
-        const res = await fetch(`${base}/api/log`, {
+        const res = await authFetch(`${base}/api/log`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: 'not json{{{',
           signal: AbortSignal.timeout(10000),
-        });
+        }, ctx);
         if (res.status >= 400) return { status: 'pass' };
         return {
           status: 'warn',
@@ -447,11 +555,11 @@ async function runApiTests(
         const form = new FormData();
         form.append('videos', file);
 
-        const res = await fetch(`${base}/api/upload`, {
+        const res = await authFetch(`${base}/api/upload`, {
           method: 'POST',
           body: form,
           signal: AbortSignal.timeout(30000),
-        });
+        }, ctx);
         if (!res.ok)
           return {
             status: 'fail',
@@ -509,11 +617,11 @@ async function runApiTests(
       'api',
       async () => {
         const form = new FormData();
-        const res = await fetch(`${base}/api/upload`, {
+        const res = await authFetch(`${base}/api/upload`, {
           method: 'POST',
           body: form,
           signal: AbortSignal.timeout(10000),
-        });
+        }, ctx);
         if (res.status === 400) return { status: 'pass' };
         return {
           status: 'fail',
@@ -542,11 +650,11 @@ async function runApiTests(
         const form = new FormData();
         form.append('music', file);
 
-        const res = await fetch(`${base}/api/upload-music`, {
+        const res = await authFetch(`${base}/api/upload-music`, {
           method: 'POST',
           body: form,
           signal: AbortSignal.timeout(15000),
-        });
+        }, ctx);
         if (!res.ok)
           return {
             status: 'fail',
@@ -588,11 +696,11 @@ async function runApiTests(
         const form = new FormData();
         form.append('music', file);
 
-        const res = await fetch(`${base}/api/upload-music`, {
+        const res = await authFetch(`${base}/api/upload-music`, {
           method: 'POST',
           body: form,
           signal: AbortSignal.timeout(10000),
-        });
+        }, ctx);
         if (res.status === 400) return { status: 'pass' };
         return {
           status: 'fail',
@@ -648,7 +756,7 @@ async function runApiTests(
             }
           : null;
 
-        const res = await fetch(`${base}/api/render`, {
+        const res = await authFetch(`${base}/api/render`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -657,7 +765,7 @@ async function runApiTests(
             music: musicConfig,
           }),
           signal: AbortSignal.timeout(60000),
-        });
+        }, ctx);
 
         if (!res.ok) {
           const text = await res.text();
@@ -697,7 +805,7 @@ async function runApiTests(
       'POST /api/render — no videos returns 400',
       'api',
       async () => {
-        const res = await fetch(`${base}/api/render`, {
+        const res = await authFetch(`${base}/api/render`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -706,7 +814,7 @@ async function runApiTests(
             music: null,
           }),
           signal: AbortSignal.timeout(10000),
-        });
+        }, ctx);
         if (res.status === 400) return { status: 'pass' };
         return {
           status: 'fail',
@@ -724,7 +832,7 @@ async function runApiTests(
       'POST /api/render — no overlays returns 400',
       'api',
       async () => {
-        const res = await fetch(`${base}/api/render`, {
+        const res = await authFetch(`${base}/api/render`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -733,7 +841,7 @@ async function runApiTests(
             music: null,
           }),
           signal: AbortSignal.timeout(10000),
-        });
+        }, ctx);
         if (res.status === 400) return { status: 'pass' };
         return {
           status: 'fail',
@@ -751,7 +859,7 @@ async function runApiTests(
       'POST /api/render — path traversal blocked',
       'api',
       async () => {
-        const res = await fetch(`${base}/api/render`, {
+        const res = await authFetch(`${base}/api/render`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -791,7 +899,7 @@ async function runApiTests(
             music: null,
           }),
           signal: AbortSignal.timeout(10000),
-        });
+        }, ctx);
         if (res.status === 400) return { status: 'pass' };
         return {
           status: 'fail',
@@ -812,7 +920,7 @@ async function runApiTests(
         if (!config.enableGenerateAds)
           return { status: 'skip', error: 'Disabled in config' };
 
-        const res = await fetch(`${base}/api/generate-ads`, {
+        const res = await authFetch(`${base}/api/generate-ads`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -827,7 +935,7 @@ async function runApiTests(
             },
           }),
           signal: AbortSignal.timeout(60000),
-        });
+        }, ctx);
         if (!res.ok)
           return {
             status: 'fail',
@@ -852,7 +960,7 @@ async function runApiTests(
         if (!config.enableGenerateVideo)
           return { status: 'skip', error: 'Disabled in config' };
 
-        const res = await fetch(`${base}/api/generate-video`, {
+        const res = await authFetch(`${base}/api/generate-video`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -862,7 +970,7 @@ async function runApiTests(
             duration: '4',
           }),
           signal: AbortSignal.timeout(300000),
-        });
+        }, ctx);
         if (!res.ok)
           return {
             status: 'fail',
@@ -901,6 +1009,20 @@ async function runStressTests(
     ];
   }
 
+  // Skip stress tests if no auth
+  if (!ctx.authCookie) {
+    return [
+      {
+        id: 'stress.skipped',
+        name: 'Stress tests skipped (no auth)',
+        category: 'stress',
+        status: 'skip',
+        durationMs: 0,
+        error: 'Login required for stress tests',
+      },
+    ];
+  }
+
   const results: TestResult[] = [];
   const base = config.baseUrl;
   const n = config.maxConcurrentStress;
@@ -913,7 +1035,7 @@ async function runStressTests(
       'stress',
       async () => {
         const promises = Array.from({ length: n }, () =>
-          fetch(`${base}/api/logs`, { signal: AbortSignal.timeout(15000) }),
+          authFetch(`${base}/api/logs`, { signal: AbortSignal.timeout(15000) }, ctx),
         );
         const settled = await Promise.allSettled(promises);
         const failed = settled.filter(
@@ -942,7 +1064,7 @@ async function runStressTests(
         let failures = 0;
         for (let i = 0; i < n; i++) {
           try {
-            const res = await fetch(`${base}/api/log`, {
+            const res = await authFetch(`${base}/api/log`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -951,7 +1073,7 @@ async function runStressTests(
                 source: 'watchdog-stress',
               }),
               signal: AbortSignal.timeout(10000),
-            });
+            }, ctx);
             const data = await res.json();
             if (!data.ok) failures++;
           } catch {
@@ -988,11 +1110,11 @@ async function runStressTests(
           const form = new FormData();
           form.append('videos', file);
           const start = Date.now();
-          return fetch(`${base}/api/upload`, {
+          return authFetch(`${base}/api/upload`, {
             method: 'POST',
             body: form,
             signal: AbortSignal.timeout(30000),
-          }).then(async (res) => {
+          }, ctx).then(async (res) => {
             const elapsed = Date.now() - start;
             const data = await res.json();
             // Track artifacts for cleanup
@@ -1519,6 +1641,7 @@ async function runCycle(config: Config): Promise<CycleReport> {
 
   const ctx: CycleContext = {
     serverUp: false,
+    authCookie: '',
     uploadedVideo: null,
     uploadedMusic: null,
     renderOutput: null,
@@ -1618,6 +1741,9 @@ async function main(): Promise<void> {
   console.log(`${c.dim}  Generate ads:  ${config.enableGenerateAds}${c.reset}`);
   console.log(
     `${c.dim}  Generate vid:  ${config.enableGenerateVideo}${c.reset}`,
+  );
+  console.log(
+    `${c.dim}  Auth user:     ${config.watchdogEmail || '(not set)'}${c.reset}`,
   );
 
   // Generate test fixtures
