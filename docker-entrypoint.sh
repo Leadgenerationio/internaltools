@@ -6,6 +6,24 @@ if [ -n "$DATA_DIR" ]; then
   echo "Setting up persistent storage at $DATA_DIR..."
   mkdir -p "$DATA_DIR/uploads" "$DATA_DIR/outputs" "$DATA_DIR/music"
 
+  # ── Aggressive cleanup DIRECTLY on the volume (before symlinks) ──
+  echo "Cleaning volume at $DATA_DIR BEFORE symlinking..."
+  echo "Volume disk usage BEFORE cleanup:"
+  du -sh "$DATA_DIR" 2>/dev/null || true
+  df -h "$DATA_DIR" 2>/dev/null | tail -1 || true
+
+  # Delete ALL rendered outputs (can always re-render)
+  find "$DATA_DIR/outputs" -type f -delete 2>/dev/null || true
+  find "$DATA_DIR/outputs" -mindepth 1 -type d -delete 2>/dev/null || true
+  # Delete uploads older than 1 day
+  find "$DATA_DIR/uploads" -type f -mtime +1 -delete 2>/dev/null || true
+  # Delete any stray files in the volume root (temp files, etc.)
+  find "$DATA_DIR" -maxdepth 1 -type f -delete 2>/dev/null || true
+
+  echo "Volume disk usage AFTER cleanup:"
+  du -sh "$DATA_DIR" "$DATA_DIR/uploads" "$DATA_DIR/outputs" "$DATA_DIR/music" 2>/dev/null || true
+  df -h "$DATA_DIR" 2>/dev/null | tail -1 || true
+
   # Replace build-time directories with symlinks to the volume
   rm -rf public/uploads public/outputs public/music
   ln -sf "$DATA_DIR/uploads" public/uploads
@@ -19,17 +37,6 @@ fi
 
 # Ensure logos dir exists (static, not on volume)
 mkdir -p public/logos
-
-# Clean up output files on startup to prevent disk-full errors
-# Outputs can always be re-rendered so they're safe to delete
-echo "Cleaning up files..."
-find public/outputs -type f -delete 2>/dev/null || true
-find public/outputs -type d -empty -delete 2>/dev/null || true
-# Delete uploads older than 2 days (stale)
-find public/uploads -type f -mtime +2 -delete 2>/dev/null || true
-echo "Disk usage after cleanup:"
-du -sh public/uploads public/outputs public/music 2>/dev/null || true
-df -h / 2>/dev/null | tail -1 || true
 
 # Pre-flight: fail fast if DATABASE_URL is missing
 if [ -z "$DATABASE_URL" ]; then

@@ -83,7 +83,7 @@ const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'http://localhost:3000';
 
 // ─── Public Routes (no auth required) ───────────────────────────────────────
 
-const PUBLIC_ROUTES = ['/login', '/register', '/welcome', '/reset-password', '/suspended', '/api/auth', '/api/health', '/api/webhooks', '/api/integrations/google-drive/callback', '/privacy', '/terms', '/help'];
+const PUBLIC_ROUTES = ['/login', '/register', '/welcome', '/reset-password', '/suspended', '/api/auth', '/api/health', '/api/webhooks', '/api/integrations/google-drive/callback', '/api/admin/cleanup', '/privacy', '/terms', '/help'];
 
 function isPublicRoute(pathname: string): boolean {
   return PUBLIC_ROUTES.some((route) => pathname.startsWith(route));
@@ -101,17 +101,12 @@ export async function middleware(request: NextRequest) {
 
   // ── Auth: redirect unauthenticated users to /welcome ──
   if (!isPublicRoute(pathname)) {
-    // Allow admin cleanup endpoint with secret key (for CLI/cron)
-    if (pathname === '/api/admin/cleanup' && request.nextUrl.searchParams.get('key') === process.env.AUTH_SECRET) {
-      // Authorized via secret key — skip JWT check
-    } else {
-      // secureCookie: true ensures getToken reads the __Secure- prefixed cookie
-      // (required when behind a reverse proxy like Railway that terminates TLS)
-      const token = await getToken({ req: request, secret: SECRET, secureCookie: true });
-      if (!token) {
-        const welcomeUrl = new URL('/welcome', request.url);
-        return NextResponse.redirect(welcomeUrl);
-      }
+    // secureCookie: true ensures getToken reads the __Secure- prefixed cookie
+    // (required when behind a reverse proxy like Railway that terminates TLS)
+    const token = await getToken({ req: request, secret: SECRET, secureCookie: true });
+    if (!token) {
+      const welcomeUrl = new URL('/welcome', request.url);
+      return NextResponse.redirect(welcomeUrl);
     }
   }
 
