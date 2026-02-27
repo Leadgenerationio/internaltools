@@ -20,6 +20,15 @@ fi
 # Ensure logos dir exists (static, not on volume)
 mkdir -p public/logos
 
+# Clean up old output files on startup to prevent disk-full errors
+# Outputs can always be re-rendered; uploads older than 2 days are stale
+echo "Cleaning up old files..."
+find public/outputs -type f -mtime +1 -delete 2>/dev/null || true
+find public/outputs -type d -empty -delete 2>/dev/null || true
+find public/uploads -type f -mtime +2 -delete 2>/dev/null || true
+CLEANED=$(du -sh public/outputs 2>/dev/null | cut -f1 || echo "0")
+echo "Outputs dir size after cleanup: $CLEANED"
+
 # Pre-flight: fail fast if DATABASE_URL is missing
 if [ -z "$DATABASE_URL" ]; then
   echo "FATAL: DATABASE_URL is not set. Add it in Railway variables."
