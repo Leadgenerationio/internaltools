@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getSuperAdminContext } from '@/lib/admin-auth';
 import fs from 'fs';
 import path from 'path';
@@ -7,11 +7,17 @@ export const maxDuration = 60;
 
 /**
  * POST /api/admin/cleanup — Delete old output files to free disk space.
- * Super admin only.
+ * Auth: super admin session OR ?key=AUTH_SECRET query param.
  */
-export async function POST() {
-  const ctx = await getSuperAdminContext();
-  if (ctx.error) return ctx.error;
+export async function POST(request: NextRequest) {
+  // Allow auth via query param for CLI/cron usage
+  const key = request.nextUrl.searchParams.get('key');
+  if (key && key === process.env.AUTH_SECRET) {
+    // Authorized via secret key
+  } else {
+    const ctx = await getSuperAdminContext();
+    if (ctx.error) return ctx.error;
+  }
 
   const outputsDir = path.join(process.cwd(), 'public', 'outputs');
   const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
@@ -43,17 +49,23 @@ export async function POST() {
     }
   }
 
-  // Delete upload files older than 24 hours (stale uploads)
+  // Check if force=true (delete ALL uploads, not just old ones)
+  const force = request.nextUrl.searchParams.get('force') === 'true';
   const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+
   if (fs.existsSync(uploadsDir)) {
     const entries = fs.readdirSync(uploadsDir);
     for (const entry of entries) {
       const fullPath = path.join(uploadsDir, entry);
       try {
         const stat = fs.statSync(fullPath);
-        if (stat.mtimeMs < oneDayAgo) {
+        if (force || stat.mtimeMs < oneDayAgo) {
           uploadsBytes += stat.size;
-          fs.unlinkSync(fullPath);
+          if (stat.isDirectory()) {
+            fs.rmSync(fullPath, { recursive: true });
+          } else {
+            fs.unlinkSync(fullPath);
+          }
           uploadsDeleted++;
         }
       } catch (e) {

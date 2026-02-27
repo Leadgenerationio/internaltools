@@ -20,14 +20,16 @@ fi
 # Ensure logos dir exists (static, not on volume)
 mkdir -p public/logos
 
-# Clean up old output files on startup to prevent disk-full errors
-# Outputs can always be re-rendered; uploads older than 2 days are stale
-echo "Cleaning up old files..."
-find public/outputs -type f -mtime +1 -delete 2>/dev/null || true
+# Clean up output files on startup to prevent disk-full errors
+# Outputs can always be re-rendered so they're safe to delete
+echo "Cleaning up files..."
+find public/outputs -type f -delete 2>/dev/null || true
 find public/outputs -type d -empty -delete 2>/dev/null || true
+# Delete uploads older than 2 days (stale)
 find public/uploads -type f -mtime +2 -delete 2>/dev/null || true
-CLEANED=$(du -sh public/outputs 2>/dev/null | cut -f1 || echo "0")
-echo "Outputs dir size after cleanup: $CLEANED"
+echo "Disk usage after cleanup:"
+du -sh public/uploads public/outputs public/music 2>/dev/null || true
+df -h / 2>/dev/null | tail -1 || true
 
 # Pre-flight: fail fast if DATABASE_URL is missing
 if [ -z "$DATABASE_URL" ]; then
