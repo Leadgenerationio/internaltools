@@ -189,7 +189,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Upload to cloud storage if configured, otherwise return local paths
-    const usingCloud = isCloudStorage();
+    const usingCloud = isCloudStorage;
     const results = [];
     for (let i = 0; i < outputPaths.length; i++) {
       const p = outputPaths[i];
