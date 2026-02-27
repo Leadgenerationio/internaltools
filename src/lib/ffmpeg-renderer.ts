@@ -112,16 +112,25 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
 
     // Safe zone: 15% from top, 35% from bottom (Facebook/Instagram Reels/Stories UI)
     const SAFE_TOP = Math.round(OUTPUT_HEIGHT * 0.15);
-    const SAFE_BOTTOM = Math.round(OUTPUT_HEIGHT * 0.65); // content must stay above this
+    const SAFE_BOTTOM = Math.round(OUTPUT_HEIGHT * 0.65); // bottom of last overlay must stay above this
+    const safeZoneHeight = SAFE_BOTTOM - SAFE_TOP;
+
+    // Calculate total stacked height of all overlays (including gaps)
+    const overlayHeights = sorted.map((o) => getOverlayHeight(o, OUTPUT_WIDTH));
+    const totalHeight = overlayHeights.reduce((sum, h) => sum + h, 0);
+
+    // If overlays overflow the safe zone, compress spacing proportionally to fit
+    const scale = totalHeight > safeZoneHeight ? safeZoneHeight / totalHeight : 1;
+
+    let currentY = SAFE_TOP;
 
     sorted.forEach((overlay, index) => {
       const inputIndex = firstOverlayIndex + index;
-      let yPos = SAFE_TOP;
-      for (let j = 0; j < index; j++) {
-        yPos += getOverlayHeight(sorted[j], OUTPUT_WIDTH);
-      }
-      // Clamp so overlays don't overflow into the bottom safe zone
-      if (yPos > SAFE_BOTTOM) yPos = SAFE_BOTTOM;
+      const yPos = Math.round(currentY);
+
+      // Advance by this overlay's height (compressed if needed)
+      currentY += overlayHeights[index] * scale;
+
       const nextLabel = index === sorted.length - 1 ? '[outv]' : `[v${index}]`;
       // Round times to avoid float precision issues in FFmpeg filter strings
       const startT = Math.round(overlay.startTime * 1000) / 1000;

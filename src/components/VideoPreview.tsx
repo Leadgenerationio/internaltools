@@ -168,10 +168,14 @@ export default function VideoPreview({ video, videos, activeIndex, onVideoChange
         </div>
 
         {/* Text overlay previews — scale constants here (0.5, 0.6, 15%, 0.9em, 1.5 line-height)
-            MUST stay in sync with overlay-renderer.ts PREVIEW_* constants */}
-        <div className="absolute inset-0 flex flex-col items-center pointer-events-none" style={{ paddingTop: '15%' }}>
+            MUST stay in sync with overlay-renderer.ts PREVIEW_* constants.
+            Container is constrained to the safe zone (top 15% to bottom 35%) so overlays
+            auto-compress when there are many, matching the FFmpeg renderer behavior. */}
+        <div className="absolute inset-0 flex flex-col items-center pointer-events-none" style={{ paddingTop: '15%', paddingBottom: '35%' }}>
           {overlays.map((overlay, i) => {
             const isVisible = currentTime >= overlay.startTime && currentTime <= overlay.endTime;
+            // Reduce gap when many overlays to fit within safe zone (matches renderer compression)
+            const gapEm = overlays.length >= 5 ? 0.3 : overlays.length >= 4 ? 0.5 : 0.9;
             return (
               <div
                 key={overlay.id}
@@ -180,7 +184,8 @@ export default function VideoPreview({ video, videos, activeIndex, onVideoChange
                   opacity: isVisible ? 1 : 0.15,
                   transform: isVisible ? 'translateY(0) scale(1)' : 'translateY(10px) scale(0.95)',
                   maxWidth: `${overlay.style.maxWidth}%`,
-                  marginBottom: '0.9em',
+                  marginBottom: `${gapEm}em`,
+                  flexShrink: 1,
                 }}
               >
                 <div
