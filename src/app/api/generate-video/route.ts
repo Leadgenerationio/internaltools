@@ -4,7 +4,6 @@ import fs from 'fs';
 import { existsSync } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { GoogleGenAI } from '@google/genai';
 import { getVideoInfo } from '@/lib/get-video-info';
 import { logger } from '@/lib/logger';
 import { getAuthContext } from '@/lib/api-auth';
@@ -13,6 +12,7 @@ import { checkTokenBalance } from '@/lib/check-limits';
 import { deductTokens, refundTokens } from '@/lib/token-balance';
 import { calculateVeoTokens } from '@/lib/token-pricing';
 import { fileUrl } from '@/lib/file-url';
+import { VIDEO_MODELS } from '@/lib/types';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
@@ -20,9 +20,11 @@ const execFileAsync = promisify(execFile);
 
 export const maxDuration = 300; // 5 minutes — video generation can be slow
 
+const KIE_API_BASE = 'https://api.kie.ai/api/v1';
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
 const POLL_INTERVAL_MS = 10_000;
-const MAX_POLL_TIME_MS = 6 * 60 * 1000; // 6 minutes
+const MAX_POLL_TIME_MS = 4 * 60 * 1000; // 4 minutes (under maxDuration for clean error)
+const MAX_RETRIES = 2;
 
 export async function POST(request: NextRequest) {
   // Auth check
@@ -32,17 +34,18 @@ export async function POST(request: NextRequest) {
 
   logger.info('Generate-video API called');
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.KIE_API_KEY;
   if (!apiKey) {
-    logger.error('GEMINI_API_KEY is not set');
+    logger.error('KIE_API_KEY is not set');
     return NextResponse.json(
-      { error: 'GEMINI_API_KEY environment variable is not configured' },
+      { error: 'KIE_API_KEY environment variable is not configured' },
       { status: 500 }
     );
   }
 
   // Declare tokenCost outside try so catch block can access it for refunds
   let tokenCost = 0;
+  let selectedModelId = 'veo3_fast';
 
   try {
     // Validate payload size
@@ -58,7 +61,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
     }
 
-    const { prompt, count, aspectRatio, duration, includeSound } = body;
+    const { prompt, count, aspectRatio, model, includeSound } = body;
 
     // Validate inputs
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
@@ -67,10 +70,21 @@ export async function POST(request: NextRequest) {
     const videoCount = Math.min(Math.max(Number(count) || 1, 1), 4);
     const validAspectRatios = ['9:16', '16:9'];
     const ar = validAspectRatios.includes(aspectRatio) ? aspectRatio : '9:16';
-    const validDurations = ['4', '6', '8'];
-    const dur = validDurations.includes(String(duration)) ? String(duration) : '6';
 
-    logger.info('Generate request', { prompt: prompt.slice(0, 100), count: videoCount, aspectRatio: ar, duration: dur });
+    // Validate model
+    const validModel = VIDEO_MODELS.find((m) => m.id === model);
+    if (!validModel) {
+      return NextResponse.json({ error: `Invalid model: ${model}` }, { status: 400 });
+    }
+    selectedModelId = validModel.id;
+    const videoDuration = validModel.duration;
+
+    logger.info('Generate request', {
+      prompt: prompt.slice(0, 100),
+      count: videoCount,
+      aspectRatio: ar,
+      model: selectedModelId,
+    });
 
     // Check and deduct tokens (10 per AI video — includes future renders onto it)
     tokenCost = calculateVeoTokens(videoCount);
@@ -102,11 +116,7 @@ export async function POST(request: NextRequest) {
       await mkdir(UPLOAD_DIR, { recursive: true });
     }
 
-    const ai = new GoogleGenAI({ apiKey });
-
     // Fire parallel generation calls (with retry for transient errors)
-    const MAX_RETRIES = 2;
-
     const generatePromises = Array.from({ length: videoCount }, async (_, i) => {
       let lastError: Error | null = null;
 
@@ -120,41 +130,93 @@ export async function POST(request: NextRequest) {
         try {
           logger.info(`Starting generation ${i + 1}/${videoCount}${attempt > 0 ? ` (retry ${attempt})` : ''}`);
 
-          let operation = await ai.models.generateVideos({
-            model: 'veo-3.1-generate-preview',
-            prompt: prompt.trim(),
-            config: {
-              aspectRatio: ar,
-              durationSeconds: Number(dur),
-              numberOfVideos: 1,
+          // ── Step 1: Submit generation to kie.ai ──
+          const submitRes = await fetch(`${KIE_API_BASE}/veo/generate`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${apiKey}`,
             },
+            body: JSON.stringify({
+              prompt: prompt.trim(),
+              model: selectedModelId,
+              aspect_ratio: ar,
+            }),
           });
 
-          // Poll until done
+          if (!submitRes.ok) {
+            const errText = await submitRes.text().catch(() => '');
+            if (submitRes.status === 429) throw new Error('Rate limited by kie.ai (429)');
+            if (submitRes.status === 402) throw new Error('Insufficient kie.ai credits — top up at kie.ai');
+            throw new Error(`kie.ai submit failed (${submitRes.status}): ${errText}`);
+          }
+
+          const submitData = await submitRes.json();
+          const taskId = submitData?.data?.taskId;
+          if (!taskId) {
+            throw new Error(`kie.ai returned no taskId: ${JSON.stringify(submitData)}`);
+          }
+
+          logger.info(`Generation ${i + 1} submitted`, { taskId });
+
+          // ── Step 2: Poll for completion ──
           const startTime = Date.now();
-          while (!operation.done) {
-            if (Date.now() - startTime > MAX_POLL_TIME_MS) {
-              throw new Error(`Video generation ${i + 1} timed out after 6 minutes`);
-            }
-            logger.debug(`Polling generation ${i + 1}...`);
+          let resultUrls: string[] = [];
+
+          while (Date.now() - startTime < MAX_POLL_TIME_MS) {
             await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-            operation = await ai.operations.getVideosOperation({ operation });
+
+            const pollRes = await fetch(
+              `${KIE_API_BASE}/veo/record-info?taskId=${taskId}`,
+              { headers: { 'Authorization': `Bearer ${apiKey}` } }
+            );
+
+            if (!pollRes.ok) {
+              logger.warn(`Poll failed (${pollRes.status}), retrying...`);
+              continue;
+            }
+
+            const pollData = await pollRes.json();
+            const flag = pollData?.data?.successFlag;
+
+            if (flag === 1) {
+              // Success — parse resultUrls (stringified JSON array)
+              const urlsRaw = pollData?.data?.response?.resultUrls;
+              if (typeof urlsRaw === 'string') {
+                try { resultUrls = JSON.parse(urlsRaw); } catch { resultUrls = [urlsRaw]; }
+              } else if (Array.isArray(urlsRaw)) {
+                resultUrls = urlsRaw;
+              }
+              break;
+            }
+
+            if (flag === 2 || flag === 3) {
+              const reason = pollData?.data?.errorMessage || pollData?.data?.failReason || 'generation failed';
+              throw new Error(`Video generation failed: ${reason}`);
+            }
+
+            // flag === 0 — still generating, continue polling
+          }
+
+          if (resultUrls.length === 0) {
+            throw new Error(`Video generation ${i + 1} timed out after 4 minutes`);
           }
 
           logger.info(`Generation ${i + 1} complete`);
 
-          // Download the video
+          // ── Step 3: Download the video ──
           const id = crypto.randomUUID();
           const filename = `${id}.mp4`;
           const filepath = path.join(UPLOAD_DIR, filename);
 
-          const video = operation.response?.generatedVideos?.[0]?.video;
-          if (!video) {
-            throw new Error(`Generation ${i + 1} returned no video`);
+          const videoUrl = resultUrls[0];
+          const downloadRes = await fetch(videoUrl);
+          if (!downloadRes.ok) {
+            throw new Error(`Video download failed (${downloadRes.status}) from ${videoUrl}`);
           }
-
-          await ai.files.download({ file: video, downloadPath: filepath });
-          logger.info(`Downloaded video ${i + 1}`, { filepath });
+          const buffer = Buffer.from(await downloadRes.arrayBuffer());
+          fs.writeFileSync(filepath, buffer);
+          logger.info(`Downloaded video ${i + 1}`, { filepath, bytes: buffer.length });
 
           // Strip audio if user wants silent video
           if (!includeSound) {
@@ -165,13 +227,11 @@ export async function POST(request: NextRequest) {
                 '-c:v', 'copy', '-an',
                 silentPath,
               ]);
-              // Replace original with silent version
               fs.unlinkSync(filepath);
               fs.renameSync(silentPath, filepath);
               logger.info(`Stripped audio from video ${i + 1}`);
             } catch (e) {
               logger.warn('Failed to strip audio, keeping original', { error: String(e) });
-              // Clean up if the silent file was created
               if (fs.existsSync(silentPath)) fs.unlinkSync(silentPath);
             }
           }
@@ -205,7 +265,7 @@ export async function POST(request: NextRequest) {
           };
         } catch (err: any) {
           lastError = err;
-          const isRetryable = /503|502|500|timeout|ECONNRESET|ETIMEDOUT|returned no video/i.test(err.message);
+          const isRetryable = /503|502|500|429|timeout|ECONNRESET|ETIMEDOUT/i.test(err.message);
           if (!isRetryable || attempt >= MAX_RETRIES) {
             throw err;
           }
@@ -253,9 +313,9 @@ export async function POST(request: NextRequest) {
     trackVeoUsage({
       companyId,
       userId,
-      model: 'veo-3.1-generate-preview',
+      model: selectedModelId,
       videoCount: videos.length,
-      videoSeconds: videos.length * Number(dur),
+      videoSeconds: videos.length * videoDuration,
       endpoint: 'generate-video',
       durationMs: 0,
       success: true,
@@ -282,7 +342,7 @@ export async function POST(request: NextRequest) {
     trackVeoUsage({
       companyId,
       userId,
-      model: 'veo-3.1-generate-preview',
+      model: selectedModelId,
       videoCount: 0,
       endpoint: 'generate-video',
       durationMs: 0,

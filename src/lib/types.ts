@@ -117,6 +117,38 @@ export interface GeneratedAd {
   approved: boolean;
 }
 
+// === AI Video Model Definitions ===
+
+export interface VideoModel {
+  id: string;
+  label: string;
+  priceLabel: string;
+  duration: number;       // fixed output duration in seconds
+  aspectRatios: string[];
+  supportsSound: boolean;
+}
+
+export const VIDEO_MODELS: VideoModel[] = [
+  {
+    id: 'veo3_fast',
+    label: 'Veo 3.1 Fast',
+    priceLabel: '$0.40/video',
+    duration: 8,
+    aspectRatios: ['9:16', '16:9'],
+    supportsSound: true,
+  },
+  {
+    id: 'veo3',
+    label: 'Veo 3.1 Quality',
+    priceLabel: '$2.00/video',
+    duration: 8,
+    aspectRatios: ['9:16', '16:9'],
+    supportsSound: true,
+  },
+];
+
+export const DEFAULT_VIDEO_MODEL = 'veo3_fast';
+
 // Preset templates
 export const OVERLAY_PRESETS = {
   'white-box': {

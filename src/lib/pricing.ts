@@ -12,14 +12,20 @@ export const PRICING = {
   anthropic: {
     // Claude Sonnet 4 — £2.40/1M input, £12/1M output (approx USD converted)
     'claude-sonnet-4-20250514': { inputPerMillion: 240, outputPerMillion: 1200 },
+    // Gemini 2.5 Pro — ~£1.00/1M input, ~£4.00/1M output (approx USD converted)
+    'gemini-2.5-pro': { inputPerMillion: 100, outputPerMillion: 400 },
     // Fallback for unknown models
     default: { inputPerMillion: 240, outputPerMillion: 1200 },
   },
   googleVeo: {
-    // Veo 2 — ~£0.28 per 5s clip (approx USD converted)
+    // Legacy Veo 2 (kept for historical data)
     'veo-2.0-generate-001': { perVideoPence: 28 },
+    // kie.ai Veo 3.1 Fast — $0.40/video (~£0.32)
+    'veo3_fast': { perVideoPence: 32 },
+    // kie.ai Veo 3.1 Quality — $2.00/video (~£1.60)
+    'veo3': { perVideoPence: 160 },
     // Fallback
-    default: { perVideoPence: 28 },
+    default: { perVideoPence: 32 },
   },
 } as const;
 

@@ -317,7 +317,7 @@ async function runHealthChecks(config: Config, ctx: CycleContext): Promise<TestR
   const envVars = parseEnvFile(envFile);
   const envChecks = [
     { key: 'ANTHROPIC_API_KEY', label: 'ANTHROPIC_API_KEY' },
-    { key: 'GEMINI_API_KEY', label: 'GEMINI_API_KEY' },
+    { key: 'KIE_API_KEY', label: 'KIE_API_KEY' },
   ];
 
   for (const check of envChecks) {

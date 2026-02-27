@@ -2,6 +2,7 @@
 
 import { useState, useRef } from 'react';
 import type { UploadedVideo } from '@/lib/types';
+import { VIDEO_MODELS, DEFAULT_VIDEO_MODEL } from '@/lib/types';
 
 const log = async (level: string, message: string, meta?: object) => {
   try {
@@ -23,7 +24,6 @@ interface Props {
 }
 
 const COUNT_OPTIONS = [1, 2, 3, 4] as const;
-const DURATION_OPTIONS = ['4', '6', '8'] as const;
 const ASPECT_OPTIONS = [
   { value: '9:16' as const, label: '9:16 Portrait' },
   { value: '16:9' as const, label: '16:9 Landscape' },
@@ -39,13 +39,14 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
   const [prompt, setPrompt] = useState('');
   const [count, setCount] = useState(2);
   const [aspectRatio, setAspectRatio] = useState<'9:16' | '16:9'>('9:16');
-  const [duration, setDuration] = useState<'4' | '6' | '8'>('6');
+  const [model, setModel] = useState(DEFAULT_VIDEO_MODEL);
   const [includeSound, setIncludeSound] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState('');
   const [batches, setBatches] = useState<GenerationBatch[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
+  const selectedModel = VIDEO_MODELS.find((m) => m.id === model) || VIDEO_MODELS[0];
   const canGenerate = prompt.trim().length > 0 && !generating;
   const aiVideoCount = videos.filter((v) => v.originalName.startsWith('AI:')).length;
 
@@ -65,15 +66,15 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
 
     setGenerating(true);
     setError(null);
-    setStatusMessage(`Generating ${count} video${count > 1 ? 's' : ''}... This can take a few minutes.`);
+    setStatusMessage(`Generating ${count} video${count > 1 ? 's' : ''} with ${selectedModel.label}... This can take a few minutes.`);
 
-    log('info', 'Starting AI video generation', { prompt: currentPrompt.slice(0, 100), count, aspectRatio, duration });
+    log('info', 'Starting AI video generation', { prompt: currentPrompt.slice(0, 100), count, aspectRatio, model });
 
     try {
       const res = await fetch('/api/generate-video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: currentPrompt, count, aspectRatio, duration, includeSound }),
+        body: JSON.stringify({ prompt: currentPrompt, count, aspectRatio, model, includeSound }),
         signal: abort.signal,
       });
 
@@ -189,24 +190,31 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
           </div>
         </div>
 
-        {/* Duration */}
+        {/* Model */}
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-1.5">Duration</label>
-          <div className="flex gap-1.5">
-            {DURATION_OPTIONS.map((d) => (
-              <button
-                key={d}
-                onClick={() => setDuration(d)}
-                disabled={generating}
-                className={`flex-1 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                  duration === d
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-300'
-                } disabled:opacity-50`}
-              >
-                {d}s
-              </button>
-            ))}
+          <label className="block text-sm font-medium text-gray-300 mb-1.5">Model</label>
+          <div className="relative">
+            <select
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              disabled={generating}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 pr-8 text-sm text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none cursor-pointer disabled:opacity-50"
+            >
+              {VIDEO_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label} ({m.priceLabel})
+                </option>
+              ))}
+            </select>
+            <svg
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
           </div>
         </div>
 
@@ -248,7 +256,7 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
         <span className="text-sm text-gray-300 group-hover:text-white transition-colors">
           Include AI-generated sound
         </span>
-        <span className="text-xs text-gray-500">(Veo generates audio by default — disable for silent background videos)</span>
+        <span className="text-xs text-gray-500">(AI generates audio by default — disable for silent background videos)</span>
       </label>
 
       {/* Generate / Cancel button */}
