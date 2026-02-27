@@ -69,7 +69,7 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **Multi-tenancy**: Companies own users with roles (OWNER/ADMIN/MEMBER); all queries filtered by `company_id` from session
 - **Video processing**: FFmpeg via shell exec, @napi-rs/canvas for emoji-supporting overlay PNGs
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) — generates TOFU/MOFU/BOFU funnel ad text
-- **AI video generation**: kie.ai REST API — 5 models across 2 API patterns: Veo (veo3_fast, veo3) via `/veo/` endpoints, Market (sora-2, sora-2-pro, kling-2.6) via `/jobs/` endpoints. Per-model token pricing.
+- **AI video generation**: kie.ai REST API — 6 models across 2 API patterns: Veo (veo3_fast, veo3) via `/veo/` endpoints, Market (seedance-1.5, kling-2.6, sora-2, sora-2-pro) via `/jobs/` endpoints. Per-model token pricing (3-25 tokens).
 - **Token billing**: Users pay in tokens (1 token = 1 finished video, 3-25 tokens = 1 AI video depending on model). Ad copy generation is FREE. See `src/lib/token-pricing.ts`, `src/lib/token-balance.ts`.
 - **Internal cost tracking**: Per-call API cost logging (in cents) via `src/lib/track-usage.ts` — admin-only, hidden from users
 - **Files**: uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/` — symlinked to Railway Volume (`/app/data`) via `docker-entrypoint.sh`

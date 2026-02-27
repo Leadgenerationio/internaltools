@@ -66,7 +66,7 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 | Video processing | FFmpeg (shell exec) | Compositing, scaling, audio mixing |
 | Overlay rendering | @napi-rs/canvas | Text-to-PNG with emoji support |
 | AI copy generation | Anthropic SDK (Claude Sonnet) | TOFU/MOFU/BOFU ad scripts |
-| AI video generation | kie.ai REST API (Sora 2, Veo 3.1, Kling 2.6) | Optional AI background videos |
+| AI video generation | kie.ai REST API (Seedance, Kling, Veo, Sora) | Optional AI background videos |
 | Background jobs | BullMQ + Redis (ioredis) | Async render + video gen, survives page refresh |
 | Token billing | Prisma transactions | Atomic token deduction/credit, append-only ledger, budget alerts |
 | Payments | Stripe (Checkout + Customer Portal) | Subscriptions, one-time token top-ups, webhook handling |
@@ -97,7 +97,7 @@ Users are billed in tokens, not raw API costs. This abstracts away internal cost
 - **Token model**:
   - Ad copy generation = **FREE** (0 tokens) — users can create and regenerate unlimited ad scripts
   - 1 finished ad video = **1 token** (using own uploaded background video)
-  - 1 AI-generated video (kie.ai) = **3-25 tokens** depending on model (Sora 2: 3, Veo Fast: 5, Sora Pro: 5, Kling: 7, Veo Quality: 25)
+  - 1 AI-generated video (kie.ai) = **3-25 tokens** depending on model (Seedance: 3, Sora 2: 3, Veo Fast: 5, Sora Pro: 5, Kling: 7, Veo Quality: 25)
 - **Plan tiers**: FREE (40 tokens/mo), STARTER (500 tokens/mo, £29), PRO (2,500 tokens/mo, £99), ENTERPRISE (custom)
 - **Top-ups**: Paid plans can purchase additional token packages (Small/Medium/Large at plan-specific per-token rates)
 - **Pre-deduction pattern**: Tokens are deducted atomically BEFORE expensive API calls using raw SQL (`UPDATE ... WHERE balance >= amount RETURNING balance`) to prevent TOCTOU race conditions. If the operation fails, tokens are automatically refunded.
@@ -486,7 +486,7 @@ NEXTAUTH_URL=http://localhost:3000  # Required — Base URL for NextAuth callbac
 
 # API Keys
 ANTHROPIC_API_KEY=sk-ant-...     # Required for ad copy generation
-KIE_API_KEY=...                  # Optional for kie.ai video generation (Sora 2, Veo 3.1, Kling 2.6)
+KIE_API_KEY=...                  # Optional for kie.ai video generation (Seedance, Kling, Veo, Sora)
 
 # Super Admin
 SUPER_ADMIN_EMAILS=admin@example.com  # Comma-separated list of super admin emails

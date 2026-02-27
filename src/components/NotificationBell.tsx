@@ -13,7 +13,7 @@ interface Notification {
   createdAt: string;
 }
 
-const POLL_INTERVAL = 30_000; // 30 seconds
+const POLL_INTERVAL = 30_000; // 30 seconds — fallback only
 const DROPDOWN_PAGE_SIZE = 10;
 
 /** Return a human-readable relative time string. */
@@ -126,16 +126,75 @@ export default function NotificationBell() {
     }
   }, []);
 
-  // Poll for unread count every 30 seconds + on window focus
+  // SSE for real-time push, with polling fallback
   useEffect(() => {
+    let eventSource: EventSource | null = null;
+    let usePolling = false;
+
+    // Always fetch on mount
     fetchUnreadCount();
 
-    pollRef.current = setInterval(fetchUnreadCount, POLL_INTERVAL);
+    function startSSE() {
+      try {
+        eventSource = new EventSource('/api/notifications/stream');
+
+        eventSource.addEventListener('connected', () => {
+          // SSE connected — no need for polling
+          if (pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+          }
+        });
+
+        eventSource.addEventListener('fallback', () => {
+          // Server told us to use polling (no Redis)
+          usePolling = true;
+          eventSource?.close();
+          eventSource = null;
+          startPolling();
+        });
+
+        eventSource.addEventListener('notification', () => {
+          // New notification pushed — refresh count and list if dropdown is open
+          fetchUnreadCount();
+        });
+
+        eventSource.addEventListener('reconnect', () => {
+          // Server asked us to reconnect (connection timeout approaching)
+          eventSource?.close();
+          eventSource = null;
+          setTimeout(() => startSSE(), 1000);
+        });
+
+        eventSource.onerror = () => {
+          // SSE connection failed — fall back to polling
+          eventSource?.close();
+          eventSource = null;
+          if (!usePolling) {
+            usePolling = true;
+            startPolling();
+          }
+        };
+      } catch {
+        // EventSource not supported or failed — fall back to polling
+        usePolling = true;
+        startPolling();
+      }
+    }
+
+    function startPolling() {
+      if (!pollRef.current) {
+        pollRef.current = setInterval(fetchUnreadCount, POLL_INTERVAL);
+      }
+    }
+
+    startSSE();
 
     const onFocus = () => fetchUnreadCount();
     window.addEventListener('focus', onFocus);
 
     return () => {
+      eventSource?.close();
       if (pollRef.current) clearInterval(pollRef.current);
       window.removeEventListener('focus', onFocus);
     };

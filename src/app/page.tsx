@@ -116,6 +116,9 @@ function HomeContent() {
   // Save as template modal
   const [showSaveTemplate, setShowSaveTemplate] = useState(false);
 
+  // Track active project ID for auto-save (persisted across URL clear)
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+
   // Persist state to localStorage so user doesn't lose progress between refreshes
   const [isRestored, setIsRestored] = useState(false);
 
@@ -209,6 +212,9 @@ function HomeContent() {
           setStep('review');
         }
 
+        // Track project ID for auto-save
+        setActiveProjectId(projectIdParam);
+
         // Clean the URL so a refresh doesn't re-fetch
         router.replace('/', { scroll: false });
       } catch {
@@ -269,6 +275,41 @@ function HomeContent() {
     } catch { /* storage full or unavailable */ }
   }, [isRestored, brief, ads, step, overlayStyle, staggerSeconds, renderQuality, videos, music]);
 
+  // Auto-save to server when working on a saved project (debounced 30s)
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedRef = useRef<string>('');
+
+  useEffect(() => {
+    if (!isRestored || !activeProjectId || !brief) return;
+
+    const payload = JSON.stringify({ brief, overlayStyle, staggerSeconds, renderQuality });
+
+    // Skip if nothing changed since last save
+    if (payload === lastSavedRef.current) return;
+
+    // Clear any pending save
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/projects/${activeProjectId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload,
+        });
+        if (res.ok) {
+          lastSavedRef.current = payload;
+        }
+      } catch {
+        // Silent fail — localStorage is the primary backup
+      }
+    }, 30_000);
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [isRestored, activeProjectId, brief, overlayStyle, staggerSeconds, renderQuality]);
+
   // Auto-dismiss success/done messages after 8 seconds
   useEffect(() => {
     if (!rendering && renderProgress && !renderProgress.startsWith('Error') && !renderProgress.includes('failed')) {
@@ -313,6 +354,7 @@ function HomeContent() {
     setRenderCurrent(0);
     setRenderTotal(0);
     setPreviewAdId(null);
+    setActiveProjectId(null);
   };
 
   const approvedAds = ads.filter((a) => a.approved);

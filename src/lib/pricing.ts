@@ -30,6 +30,8 @@ export const PRICING = {
     'sora-2-text-to-video': { perVideoPence: 12 },
     // kie.ai Sora 2 Pro — $0.40/video (~£0.32)
     'sora-2-pro-text-to-video': { perVideoPence: 32 },
+    // kie.ai Seedance 1.5 Pro — $0.14/video (~£0.11)
+    'bytedance/seedance-1.5-pro': { perVideoPence: 11 },
     // Fallback
     default: { perVideoPence: 32 },
   },

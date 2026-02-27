@@ -17,6 +17,12 @@ const log = async (level: string, message: string, meta?: object) => {
   }
 };
 
+function formatEstimate(totalSeconds: number): string {
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const mins = Math.round(totalSeconds / 60);
+  return `${mins} min${mins !== 1 ? 's' : ''}`;
+}
+
 interface Props {
   videos: UploadedVideo[];
   onUpload: (videos: UploadedVideo[]) => void;
@@ -252,7 +258,7 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
             >
               {VIDEO_MODELS.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.label} ({m.priceLabel})
+                  {m.label} — {m.badge} · {m.priceLabel}
                 </option>
               ))}
             </select>
@@ -310,6 +316,25 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
           <span className="text-xs text-gray-500">(disable for silent background videos)</span>
         </label>
       )}
+
+      {/* Model info: badge + time estimate */}
+      <div className="flex items-center justify-between text-xs text-gray-400 px-1">
+        <span>
+          <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium mr-2 ${
+            selectedModel.badge.includes('Very Fast') || selectedModel.badge.includes('Fast')
+              ? 'bg-green-900/50 text-green-400 border border-green-800'
+              : selectedModel.badge.includes('Premium') || selectedModel.badge.includes('HD')
+                ? 'bg-purple-900/50 text-purple-400 border border-purple-800'
+                : 'bg-gray-800 text-gray-400 border border-gray-700'
+          }`}>
+            {selectedModel.badge}
+          </span>
+          {selectedModel.duration}s videos
+        </span>
+        <span>
+          Est. {formatEstimate(count * selectedModel.estimateSeconds)}
+        </span>
+      </div>
 
       {/* Generate / Cancel button */}
       {generating ? (

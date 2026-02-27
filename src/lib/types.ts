@@ -124,8 +124,10 @@ export type VideoApiType = 'veo' | 'market';
 export interface VideoModel {
   id: string;
   label: string;
+  badge: string;          // speed/quality tag shown in UI (e.g. "Fast", "HD Quality")
   priceLabel: string;
   duration: number;       // fixed output duration in seconds
+  estimateSeconds: number; // estimated generation time per video (for UI display)
   aspectRatios: string[];
   supportsSound: boolean;
   apiType: VideoApiType;  // which kie.ai endpoint pattern to use
@@ -134,50 +136,72 @@ export interface VideoModel {
 
 export const VIDEO_MODELS: VideoModel[] = [
   {
-    id: 'sora-2-text-to-video',
-    label: 'Sora 2',
-    priceLabel: '$0.15 · 3 tokens',
-    duration: 10,
-    aspectRatios: ['9:16', '16:9'],
-    supportsSound: false,
+    id: 'bytedance/seedance-1.5-pro',
+    label: 'Seedance 1.5',
+    badge: 'Very Fast',
+    priceLabel: '$0.14 · 3 tokens',
+    duration: 8,
+    estimateSeconds: 60,
+    aspectRatios: ['9:16', '16:9', '1:1'],
+    supportsSound: true,
     apiType: 'market',
     tokenCost: 3,
   },
   {
-    id: 'veo3_fast',
-    label: 'Veo 3.1 Fast',
-    priceLabel: '$0.40 · 5 tokens',
-    duration: 8,
-    aspectRatios: ['9:16', '16:9'],
-    supportsSound: true,
-    apiType: 'veo',
-    tokenCost: 5,
-  },
-  {
-    id: 'sora-2-pro-text-to-video',
-    label: 'Sora 2 Pro',
-    priceLabel: '$0.40 · 5 tokens',
-    duration: 10,
-    aspectRatios: ['9:16', '16:9'],
-    supportsSound: false,
-    apiType: 'market',
-    tokenCost: 5,
-  },
-  {
     id: 'kling-2.6/text-to-video',
     label: 'Kling 2.6',
+    badge: 'Fast',
     priceLabel: '$0.55 · 7 tokens',
     duration: 5,
+    estimateSeconds: 90,
     aspectRatios: ['9:16', '16:9', '1:1'],
     supportsSound: true,
     apiType: 'market',
     tokenCost: 7,
   },
   {
+    id: 'veo3_fast',
+    label: 'Veo 3.1 Fast',
+    badge: 'Fast · Audio',
+    priceLabel: '$0.40 · 5 tokens',
+    duration: 8,
+    estimateSeconds: 120,
+    aspectRatios: ['9:16', '16:9'],
+    supportsSound: true,
+    apiType: 'veo',
+    tokenCost: 5,
+  },
+  {
+    id: 'sora-2-text-to-video',
+    label: 'Sora 2',
+    badge: 'Budget',
+    priceLabel: '$0.15 · 3 tokens',
+    duration: 10,
+    estimateSeconds: 240,
+    aspectRatios: ['9:16', '16:9'],
+    supportsSound: false,
+    apiType: 'market',
+    tokenCost: 3,
+  },
+  {
+    id: 'sora-2-pro-text-to-video',
+    label: 'Sora 2 Pro',
+    badge: 'HD Quality',
+    priceLabel: '$0.40 · 5 tokens',
+    duration: 10,
+    estimateSeconds: 300,
+    aspectRatios: ['9:16', '16:9'],
+    supportsSound: false,
+    apiType: 'market',
+    tokenCost: 5,
+  },
+  {
     id: 'veo3',
     label: 'Veo 3.1 Quality',
+    badge: 'Premium · Slow',
     priceLabel: '$2.00 · 25 tokens',
     duration: 8,
+    estimateSeconds: 240,
     aspectRatios: ['9:16', '16:9'],
     supportsSound: true,
     apiType: 'veo',
@@ -185,7 +209,7 @@ export const VIDEO_MODELS: VideoModel[] = [
   },
 ];
 
-export const DEFAULT_VIDEO_MODEL = 'sora-2-text-to-video';
+export const DEFAULT_VIDEO_MODEL = 'bytedance/seedance-1.5-pro';
 
 // Preset templates
 export const OVERLAY_PRESETS = {

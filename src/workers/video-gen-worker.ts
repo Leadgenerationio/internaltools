@@ -13,7 +13,7 @@ import fs from 'fs';
 import { existsSync } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { getRedis } from '@/lib/redis';
+import { createRedisConnection } from '@/lib/redis';
 import { getVideoInfo } from '@/lib/get-video-info';
 import { logger } from '@/lib/logger';
 import { trackVeoUsage } from '@/lib/track-usage';
@@ -38,13 +38,17 @@ const MAX_RETRIES = 2;
 
 function buildMarketInput(model: VideoModel, prompt: string, ar: string, includeSound: boolean): Record<string, any> {
   if (model.id.startsWith('sora-2')) {
-    return {
+    const input: Record<string, any> = {
       prompt,
       aspect_ratio: ar === '9:16' ? 'portrait' : 'landscape',
       n_frames: String(model.duration),
       remove_watermark: true,
       upload_method: 's3',
     };
+    if (model.id.includes('pro')) {
+      input.size = 'high';
+    }
+    return input;
   }
 
   if (model.id.startsWith('kling')) {
@@ -53,6 +57,17 @@ function buildMarketInput(model: VideoModel, prompt: string, ar: string, include
       sound: includeSound,
       aspect_ratio: ar,
       duration: String(model.duration),
+    };
+  }
+
+  if (model.id.includes('seedance')) {
+    return {
+      prompt,
+      aspect_ratio: ar,
+      resolution: '720p',
+      duration: String(model.duration),
+      fixed_lens: false,
+      generate_audio: includeSound,
     };
   }
 
@@ -280,86 +295,105 @@ async function generateSingleVideo(
 
 async function processVideoGenJob(job: Job<VideoGenJobData>): Promise<VideoGenJobResult> {
   const { companyId, userId, prompt, count, aspectRatio, model, includeSound, apiType, tokenCost } = job.data;
+  let tokensRefunded = 0;
 
-  const apiKey = process.env.KIE_API_KEY;
-  if (!apiKey) {
-    throw new Error('KIE_API_KEY not configured');
-  }
-
-  const validModel = VIDEO_MODELS.find((m) => m.id === model);
-  if (!validModel) throw new Error(`Invalid model: ${model}`);
-
-  const videoDuration = validModel.duration;
-
-  // Ensure upload dir exists
-  if (!existsSync(UPLOAD_DIR)) {
-    await mkdir(UPLOAD_DIR, { recursive: true });
-  }
-
-  // Generate videos in parallel
-  const promises = Array.from({ length: count }, (_, i) =>
-    generateSingleVideo(apiKey, prompt, validModel, aspectRatio, includeSound, apiType, i)
-  );
-
-  const settled = await Promise.allSettled(promises);
-
-  const videos: VideoGenResultItem[] = [];
-  const failures: string[] = [];
-
-  for (let i = 0; i < settled.length; i++) {
-    const result = settled[i];
-    if (result.status === 'fulfilled') {
-      videos.push(result.value);
-    } else {
-      failures.push(result.reason?.message || 'Unknown error');
+  try {
+    const apiKey = process.env.KIE_API_KEY;
+    if (!apiKey) {
+      throw new Error('KIE_API_KEY not configured');
     }
-    await job.updateProgress(Math.round(((i + 1) / count) * 100));
-  }
 
-  // Refund tokens for failed videos (per-model cost)
-  if (failures.length > 0) {
-    const refundAmount = calculateVeoTokens(failures.length, model);
-    await refundTokens({
+    const validModel = VIDEO_MODELS.find((m) => m.id === model);
+    if (!validModel) throw new Error(`Invalid model: ${model}`);
+
+    const videoDuration = validModel.duration;
+
+    // Ensure upload dir exists
+    if (!existsSync(UPLOAD_DIR)) {
+      await mkdir(UPLOAD_DIR, { recursive: true });
+    }
+
+    // Generate videos in parallel — report progress as each completes
+    const videos: VideoGenResultItem[] = [];
+    const failures: string[] = [];
+    let completed = 0;
+
+    const promises = Array.from({ length: count }, async (_, i) => {
+      try {
+        const video = await generateSingleVideo(apiKey, prompt, validModel, aspectRatio, includeSound, apiType, i);
+        videos.push(video);
+      } catch (err: any) {
+        failures.push(err.message || 'Unknown error');
+      } finally {
+        completed++;
+        await job.updateProgress(Math.round((completed / count) * 100));
+      }
+    });
+
+    await Promise.allSettled(promises);
+
+    // Refund tokens for failed videos (per-model cost)
+    if (failures.length > 0) {
+      const refundAmount = calculateVeoTokens(failures.length, model);
+      await refundTokens({
+        companyId,
+        userId,
+        amount: refundAmount,
+        description: `Refund: ${failures.length} AI video${failures.length !== 1 ? 's' : ''} failed to generate`,
+      });
+      tokensRefunded = refundAmount;
+    }
+
+    const tokensCharged = calculateVeoTokens(videos.length, model);
+
+    // Track API cost
+    trackVeoUsage({
       companyId,
       userId,
-      amount: refundAmount,
-      description: `Refund: ${failures.length} AI video${failures.length !== 1 ? 's' : ''} failed to generate`,
+      model,
+      videoCount: videos.length,
+      videoSeconds: videos.length * videoDuration,
+      endpoint: 'generate-video',
+      durationMs: 0,
+      success: videos.length > 0,
+      tokensCost: tokensCharged,
+      ...(failures.length > 0 && { errorMessage: failures.join('; ') }),
     });
+
+    if (videos.length === 0) {
+      throw new Error(failures[0] || 'All video generations failed');
+    }
+
+    return {
+      videos,
+      failed: failures.length,
+      tokensUsed: tokensCharged,
+      ...(failures.length > 0 && { warning: `${failures.length} of ${count} videos failed to generate` }),
+    };
+  } catch (err: any) {
+    // Refund remaining tokens on unexpected failure (e.g., missing API key, early crash)
+    const remaining = tokenCost - tokensRefunded;
+    if (remaining > 0) {
+      try {
+        await refundTokens({
+          companyId,
+          userId,
+          amount: remaining,
+          description: `Refund: video gen job failed — ${err.message}`,
+        });
+      } catch (refundErr) {
+        logger.error('[VideoGen Worker] Refund on failure also failed:', { error: String(refundErr) });
+      }
+    }
+    throw err;
   }
-
-  const tokensCharged = calculateVeoTokens(videos.length, model);
-
-  // Track API cost
-  trackVeoUsage({
-    companyId,
-    userId,
-    model,
-    videoCount: videos.length,
-    videoSeconds: videos.length * videoDuration,
-    endpoint: 'generate-video',
-    durationMs: 0,
-    success: videos.length > 0,
-    tokensCost: tokensCharged,
-    ...(failures.length > 0 && { errorMessage: failures.join('; ') }),
-  });
-
-  if (videos.length === 0) {
-    throw new Error(failures[0] || 'All video generations failed');
-  }
-
-  return {
-    videos,
-    failed: failures.length,
-    tokensUsed: tokensCharged,
-    ...(failures.length > 0 && { warning: `${failures.length} of ${count} videos failed to generate` }),
-  };
 }
 
 /**
  * Start the video-gen worker. Call this from the worker entry point.
  */
 export function startVideoGenWorker(): Worker<VideoGenJobData> | null {
-  const connection = getRedis();
+  const connection = createRedisConnection();
   if (!connection) {
     console.warn('[VideoGen Worker] Redis not available, worker not started');
     return null;

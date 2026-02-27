@@ -18,6 +18,7 @@ export const maxDuration = 60;
 
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
+const ALLOWED_EXTENSIONS = new Set(['.mp4', '.mov', '.avi', '.webm', '.mkv', '.m4v', '.wmv']);
 
 export async function POST(request: NextRequest) {
   const authResult = await getAuthContext();
@@ -53,10 +54,17 @@ export async function POST(request: NextRequest) {
     }
 
     const uploaded = [];
+    const writtenFiles: string[] = []; // Track for cleanup on failure
 
     for (const file of files) {
       const id = uuidv4();
-      const ext = path.extname(file.name) || '.mp4';
+      const ext = (path.extname(file.name) || '.mp4').toLowerCase();
+      if (!ALLOWED_EXTENSIONS.has(ext)) {
+        return NextResponse.json(
+          { error: `"${file.name}" has unsupported format. Allowed: ${[...ALLOWED_EXTENSIONS].join(', ')}` },
+          { status: 400 }
+        );
+      }
       const filename = `${id}${ext}`;
       const filepath = path.join(UPLOAD_DIR, filename);
 
@@ -66,6 +74,7 @@ export async function POST(request: NextRequest) {
       const readable = Readable.fromWeb(file.stream() as any);
       const writable = fs.createWriteStream(filepath);
       await pipeline(readable, writable);
+      writtenFiles.push(filepath);
       logger.debug('File streamed to disk', { filepath });
 
       let info;
@@ -73,6 +82,10 @@ export async function POST(request: NextRequest) {
         info = await getVideoInfo(filepath);
       } catch (err: any) {
         logger.error('Video info failed', { file: file.name, error: err.message });
+        // Clean up all files written so far
+        for (const f of writtenFiles) {
+          try { fs.unlinkSync(f); } catch { /* ignore */ }
+        }
         return NextResponse.json(
           { error: `"${file.name}" could not be read — ${err.message}` },
           { status: 400 }
@@ -92,6 +105,7 @@ export async function POST(request: NextRequest) {
           '-vf', 'scale=180:-1',
           thumbPath,
         ]);
+        writtenFiles.push(thumbPath);
       } catch (e: any) {
         logger.warn('Thumbnail generation failed', { file: file.name, error: e.message });
       }

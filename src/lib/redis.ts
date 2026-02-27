@@ -11,19 +11,19 @@
 import Redis from 'ioredis';
 
 let client: Redis | null = null;
-let connectionFailed = false;
+let noUrl = false; // true when REDIS_URL is not set (permanent for this process)
 
 /**
- * Get the shared Redis client instance.
- * Returns null if REDIS_URL is not configured or connection failed.
+ * Get the shared Redis client instance (for general cache/pub/sub).
+ * Returns null if REDIS_URL is not configured.
  */
 export function getRedis(): Redis | null {
-  if (connectionFailed) return null;
+  if (noUrl) return null;
 
   if (!client) {
     const url = process.env.REDIS_URL;
     if (!url) {
-      connectionFailed = true;
+      noUrl = true;
       console.warn('[Redis] REDIS_URL not set — Redis features disabled, falling back to in-memory');
       return null;
     }
@@ -36,7 +36,7 @@ export function getRedis(): Redis | null {
             console.error('[Redis] Max reconnection attempts reached');
             return null; // Stop retrying
           }
-          return Math.min(times * 500, 3000); // 500ms, 1s, 1.5s, 2s, 2.5s
+          return Math.min(times * 500, 3000);
         },
         lazyConnect: false,
         enableReadyCheck: true,
@@ -52,12 +52,37 @@ export function getRedis(): Redis | null {
       });
     } catch (err) {
       console.error('[Redis] Failed to create client:', err);
-      connectionFailed = true;
+      client = null;
       return null;
     }
   }
 
   return client;
+}
+
+/**
+ * Create a new dedicated Redis connection (for BullMQ queues/workers).
+ *
+ * BullMQ requires each Queue and Worker to have its own connection
+ * with `maxRetriesPerRequest: null`. This factory creates a fresh
+ * connection each time it's called.
+ *
+ * Returns null if REDIS_URL is not configured.
+ */
+export function createRedisConnection(): Redis | null {
+  const url = process.env.REDIS_URL;
+  if (!url) return null;
+
+  return new Redis(url, {
+    maxRetriesPerRequest: null, // Required by BullMQ
+    retryStrategy(times) {
+      if (times > 10) return null;
+      return Math.min(times * 500, 5000);
+    },
+    lazyConnect: false,
+    enableReadyCheck: true,
+    connectTimeout: 5000,
+  });
 }
 
 /**

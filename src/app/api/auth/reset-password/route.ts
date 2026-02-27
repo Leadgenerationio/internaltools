@@ -112,28 +112,36 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 });
     }
 
-    // Find valid, unused, non-expired token
-    const stored = await prisma.passwordResetToken.findUnique({
-      where: { token },
-    });
-
-    if (!stored || stored.usedAt || stored.expiresAt < new Date()) {
-      return NextResponse.json({ error: 'Invalid or expired reset token' }, { status: 400 });
-    }
-
     const passwordHash = await bcrypt.hash(newPassword, 10);
 
-    // Update password and mark token as used in a transaction
-    await prisma.$transaction([
-      prisma.user.update({
-        where: { email: stored.email },
-        data: { passwordHash },
-      }),
-      prisma.passwordResetToken.update({
+    // Atomic: find valid token, mark as used, and update password in one transaction
+    // Prevents TOCTOU race where two concurrent requests both use the same token
+    const result = await prisma.$transaction(async (tx: any) => {
+      const stored = await tx.passwordResetToken.findUnique({
+        where: { token },
+      });
+
+      if (!stored || stored.usedAt || stored.expiresAt < new Date()) {
+        return { error: 'Invalid or expired reset token' };
+      }
+
+      // Mark token as used immediately (claims it atomically within the transaction)
+      await tx.passwordResetToken.update({
         where: { id: stored.id },
         data: { usedAt: new Date() },
-      }),
-    ]);
+      });
+
+      await tx.user.update({
+        where: { email: stored.email },
+        data: { passwordHash },
+      });
+
+      return { success: true };
+    });
+
+    if ('error' in result) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
 
     return NextResponse.json({ success: true, message: 'Password has been reset. You can now sign in.' });
   } catch (error: any) {

@@ -3,8 +3,50 @@ import { getSuperAdminContext } from '@/lib/admin-auth';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { prisma } from '@/lib/prisma';
 
 export const maxDuration = 60;
+
+/**
+ * Archive old DB records to keep the database lean.
+ */
+async function archiveDbRecords(): Promise<{
+  apiUsageLogs: number;
+  notifications: number;
+  webhookEvents: number;
+}> {
+  const now = new Date();
+
+  // ApiUsageLog > 90 days
+  const apiCutoff = new Date(now);
+  apiCutoff.setDate(apiCutoff.getDate() - 90);
+
+  // Read notifications > 30 days
+  const notifCutoff = new Date(now);
+  notifCutoff.setDate(notifCutoff.getDate() - 30);
+
+  // ProcessedWebhookEvent > 7 days
+  const webhookCutoff = new Date(now);
+  webhookCutoff.setDate(webhookCutoff.getDate() - 7);
+
+  const [apiResult, notifResult, webhookResult] = await Promise.allSettled([
+    prisma.apiUsageLog.deleteMany({
+      where: { createdAt: { lt: apiCutoff } },
+    }),
+    prisma.notification.deleteMany({
+      where: { read: true, createdAt: { lt: notifCutoff } },
+    }),
+    prisma.processedWebhookEvent.deleteMany({
+      where: { createdAt: { lt: webhookCutoff } },
+    }),
+  ]);
+
+  return {
+    apiUsageLogs: apiResult.status === 'fulfilled' ? apiResult.value.count : 0,
+    notifications: notifResult.status === 'fulfilled' ? notifResult.value.count : 0,
+    webhookEvents: webhookResult.status === 'fulfilled' ? webhookResult.value.count : 0,
+  };
+}
 
 function cleanDirectory(dirPath: string, force: boolean, maxAgeMs: number): { deleted: number; bytes: number } {
   let deleted = 0;
@@ -37,9 +79,16 @@ function cleanDirectory(dirPath: string, force: boolean, maxAgeMs: number): { de
 /**
  * GET /api/admin/cleanup — Check disk usage (read-only diagnostic).
  */
+function isAuthorizedByCron(request: NextRequest): boolean {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) return false;
+  const header = request.headers.get('x-cron-secret') || request.headers.get('authorization')?.replace('Bearer ', '');
+  return header === cronSecret;
+}
+
 export async function GET(request: NextRequest) {
   const key = request.nextUrl.searchParams.get('key');
-  if (key && key === process.env.AUTH_SECRET) {
+  if ((key && key === process.env.AUTH_SECRET) || isAuthorizedByCron(request)) {
     // Authorized
   } else {
     const ctx = await getSuperAdminContext();
@@ -67,10 +116,10 @@ export async function GET(request: NextRequest) {
  * Params: ?force=true (delete ALL files, not just old ones)
  */
 export async function POST(request: NextRequest) {
-  // Allow auth via query param for CLI/cron usage
+  // Allow auth via query param, cron secret header, or super admin session
   const key = request.nextUrl.searchParams.get('key');
-  if (key && key === process.env.AUTH_SECRET) {
-    // Authorized via secret key
+  if ((key && key === process.env.AUTH_SECRET) || isAuthorizedByCron(request)) {
+    // Authorized via secret key or cron header
   } else {
     const ctx = await getSuperAdminContext();
     if (ctx.error) return ctx.error;
@@ -129,12 +178,21 @@ export async function POST(request: NextRequest) {
     }
   } catch { /* ignore */ }
 
+  // Archive old DB records
+  let dbArchival = { apiUsageLogs: 0, notifications: 0, webhookEvents: 0 };
+  try {
+    dbArchival = await archiveDbRecords();
+  } catch (err) {
+    console.error('[Cleanup] DB archival failed:', err);
+  }
+
   return NextResponse.json({
     message: `Cleaned up ${totalMB}MB`,
     outputs: { deleted: outputs.deleted, mb: (outputs.bytes / (1024 * 1024)).toFixed(1) },
     uploads: { deleted: uploads.deleted, mb: (uploads.bytes / (1024 * 1024)).toFixed(1) },
     music: { deleted: music.deleted, mb: (music.bytes / (1024 * 1024)).toFixed(1) },
     volumeStray: { deleted: volumeStray.deleted, mb: (volumeStray.bytes / (1024 * 1024)).toFixed(1) },
+    dbArchival,
     diskInfo,
   });
 }

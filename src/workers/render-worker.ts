@@ -10,7 +10,7 @@ import { Worker, Job } from 'bullmq';
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
-import { getRedis } from '@/lib/redis';
+import { createRedisConnection } from '@/lib/redis';
 import { renderVideo } from '@/lib/ffmpeg-renderer';
 import { uploadFile, isCloudStorage } from '@/lib/storage';
 import { refundTokens } from '@/lib/token-balance';
@@ -61,150 +61,170 @@ async function processRenderJob(job: Job<RenderJobData>): Promise<RenderJobResul
   const totalItems = items.length;
   const results: RenderResultItem[] = [];
   let failed = 0;
+  let tokensRefunded = 0;
 
-  // Ensure output dir exists
-  if (!fs.existsSync(OUTPUT_DIR)) {
-    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-  }
-
-  // Clean old outputs before starting
-  cleanOldOutputs();
-
-  // Resolve music path
-  let musicConfig: MusicTrack | null = null;
-  if (music && music.file) {
-    const filePath = extractPublicPath(music.file);
-    const resolvedMusic = path.join(PUBLIC_DIR, filePath);
-    if (isPathSafe(resolvedMusic, PUBLIC_DIR) && fs.existsSync(resolvedMusic)) {
-      musicConfig = { ...music, file: resolvedMusic };
+  try {
+    // Ensure output dir exists
+    if (!fs.existsSync(OUTPUT_DIR)) {
+      fs.mkdirSync(OUTPUT_DIR, { recursive: true });
     }
-  }
 
-  const usingCloud = isCloudStorage;
+    // Clean old outputs before starting
+    cleanOldOutputs();
 
-  for (let i = 0; i < totalItems; i++) {
-    const item = items[i];
-    const { video, overlays, adLabel } = item;
+    // Resolve music path
+    let musicConfig: MusicTrack | null = null;
+    if (music && music.file) {
+      const filePath = extractPublicPath(music.file);
+      const resolvedMusic = path.join(PUBLIC_DIR, filePath);
+      if (isPathSafe(resolvedMusic, PUBLIC_DIR) && fs.existsSync(resolvedMusic)) {
+        musicConfig = { ...music, file: resolvedMusic };
+      }
+    }
 
-    try {
-      // Resolve video path
-      const cleanPath = extractPublicPath(video.path);
-      const inputPath = path.join(PUBLIC_DIR, cleanPath);
+    const usingCloud = isCloudStorage;
 
-      if (!isPathSafe(inputPath, UPLOAD_DIR) || !fs.existsSync(inputPath)) {
-        console.error(`[Render Worker] Video not found: ${cleanPath}`);
+    for (let i = 0; i < totalItems; i++) {
+      const item = items[i];
+      const { video, overlays, adLabel } = item;
+
+      try {
+        // Resolve video path
+        const cleanPath = extractPublicPath(video.path);
+        const inputPath = path.join(PUBLIC_DIR, cleanPath);
+
+        if (!isPathSafe(inputPath, UPLOAD_DIR) || !fs.existsSync(inputPath)) {
+          console.error(`[Render Worker] Video not found: ${cleanPath}`);
+          failed++;
+          await job.updateProgress(Math.round(((i + 1) / totalItems) * 100));
+          continue;
+        }
+
+        const outputPath = path.join(OUTPUT_DIR, `${uuidv4()}_output.mp4`);
+
+        // Compute trimmed duration
+        const trimmedDuration = (video.trimEnd ?? video.duration) - (video.trimStart ?? 0);
+
+        await renderVideo({
+          inputVideoPath: inputPath,
+          outputPath,
+          overlays,
+          music: musicConfig,
+          videoWidth: video.width,
+          videoHeight: video.height,
+          videoDuration: trimmedDuration,
+          trimStart: video.trimStart,
+          trimEnd: video.trimEnd,
+          quality,
+        });
+
+        // Upload to cloud storage if configured
+        const storagePath = `outputs/${path.basename(outputPath)}`;
+        const outputUrl = await uploadFile(outputPath, storagePath);
+
+        results.push({
+          videoId: video.id,
+          originalName: video.originalName,
+          adLabel,
+          outputUrl,
+        });
+
+        // Clean local file if using cloud storage
+        if (usingCloud) {
+          try { fs.unlinkSync(outputPath); } catch { /* ignore */ }
+        }
+      } catch (err: any) {
+        console.error(`[Render Worker] Item ${i + 1} failed:`, err.message);
         failed++;
-        await job.updateProgress(Math.round(((i + 1) / totalItems) * 100));
-        continue;
       }
 
-      const outputPath = path.join(OUTPUT_DIR, `${uuidv4()}_output.mp4`);
-
-      // Compute trimmed duration
-      const trimmedDuration = (video.trimEnd ?? video.duration) - (video.trimStart ?? 0);
-
-      await renderVideo({
-        inputVideoPath: inputPath,
-        outputPath,
-        overlays,
-        music: musicConfig,
-        videoWidth: video.width,
-        videoHeight: video.height,
-        videoDuration: trimmedDuration,
-        trimStart: video.trimStart,
-        trimEnd: video.trimEnd,
-        quality,
-      });
-
-      // Upload to cloud storage if configured
-      const storagePath = `outputs/${path.basename(outputPath)}`;
-      const outputUrl = await uploadFile(outputPath, storagePath);
-
-      results.push({
-        videoId: video.id,
-        originalName: video.originalName,
-        adLabel,
-        outputUrl,
-      });
-
-      // Clean local file if using cloud storage
-      if (usingCloud) {
-        try { fs.unlinkSync(outputPath); } catch { /* ignore */ }
-      }
-    } catch (err: any) {
-      console.error(`[Render Worker] Item ${i + 1} failed:`, err.message);
-      failed++;
+      // Report progress
+      await job.updateProgress(Math.round(((i + 1) / totalItems) * 100));
     }
 
-    // Report progress
-    await job.updateProgress(Math.round(((i + 1) / totalItems) * 100));
-  }
+    // Refund tokens for failed items
+    if (failed > 0 && tokenCost > 0) {
+      const perItemCost = tokenCost / totalItems;
+      const refundAmount = Math.round(perItemCost * failed);
+      if (refundAmount > 0) {
+        await refundTokens({
+          companyId,
+          userId,
+          amount: refundAmount,
+          description: `Refund: ${failed} of ${totalItems} renders failed`,
+        });
+        tokensRefunded = refundAmount;
+      }
+    }
 
-  // Refund tokens for failed items
-  if (failed > 0 && tokenCost > 0) {
-    const perItemCost = tokenCost / totalItems;
-    const refundAmount = Math.round(perItemCost * failed);
-    if (refundAmount > 0) {
-      await refundTokens({
-        companyId,
+    // Check token alerts after render
+    checkTokenAlerts(companyId);
+
+    // Send notifications (fire-and-forget)
+    const videoCount = results.length;
+    if (videoCount > 0) {
+      try {
+        const user = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { name: true, email: true },
+        });
+        if (user) {
+          sendRenderCompleteEmail(user.email, user.name || '', videoCount);
+        }
+      } catch { /* ignore */ }
+
+      createNotification(
         userId,
-        amount: refundAmount,
-        description: `Refund: ${failed} of ${totalItems} renders failed`,
-      });
+        'RENDER_COMPLETE',
+        `${videoCount} video${videoCount !== 1 ? 's' : ''} ready`,
+        `Your render is complete. ${videoCount} video${videoCount !== 1 ? 's are' : ' is'} ready to download.`,
+        '/'
+      );
+    } else {
+      try {
+        const user = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { name: true, email: true },
+        });
+        if (user) {
+          sendRenderFailedEmail(user.email, user.name || '', failed, totalItems);
+        }
+      } catch { /* ignore */ }
+
+      createNotification(
+        userId,
+        'RENDER_FAILED',
+        'Render failed',
+        'Your render failed. Please try again.',
+        '/'
+      );
     }
-  }
 
-  // Check token alerts after render
-  checkTokenAlerts(companyId);
-
-  // Send notifications (fire-and-forget)
-  const videoCount = results.length;
-  if (videoCount > 0) {
-    try {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { name: true, email: true },
-      });
-      if (user) {
-        sendRenderCompleteEmail(user.email, user.name || '', videoCount);
+    return { results, failed, tokensUsed: tokenCost };
+  } catch (err: any) {
+    // Refund remaining tokens on unexpected failure (e.g., mkdirSync, early crash)
+    const remaining = tokenCost - tokensRefunded;
+    if (remaining > 0) {
+      try {
+        await refundTokens({
+          companyId,
+          userId,
+          amount: remaining,
+          description: `Refund: render job failed — ${err.message}`,
+        });
+      } catch (refundErr) {
+        console.error('[Render Worker] Refund on failure also failed:', refundErr);
       }
-    } catch { /* ignore */ }
-
-    createNotification(
-      userId,
-      'RENDER_COMPLETE',
-      `${videoCount} video${videoCount !== 1 ? 's' : ''} ready`,
-      `Your render is complete. ${videoCount} video${videoCount !== 1 ? 's are' : ' is'} ready to download.`,
-      '/'
-    );
-  } else {
-    try {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { name: true, email: true },
-      });
-      if (user) {
-        sendRenderFailedEmail(user.email, user.name || '', failed, totalItems);
-      }
-    } catch { /* ignore */ }
-
-    createNotification(
-      userId,
-      'RENDER_FAILED',
-      'Render failed',
-      'Your render failed. Please try again.',
-      '/'
-    );
+    }
+    throw err;
   }
-
-  return { results, failed, tokensUsed: tokenCost };
 }
 
 /**
  * Start the render worker. Call this from the worker entry point.
  */
 export function startRenderWorker(): Worker<RenderJobData> | null {
-  const connection = getRedis();
+  const connection = createRedisConnection();
   if (!connection) {
     console.warn('[Render Worker] Redis not available, worker not started');
     return null;

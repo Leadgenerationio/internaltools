@@ -306,14 +306,18 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // Idempotency: skip events we've already processed (prevents double-crediting on Stripe retries)
-    const alreadyProcessed = await prisma.processedWebhookEvent.findUnique({
-      where: { id: event.id },
-    });
-
-    if (alreadyProcessed) {
-      console.log(`Stripe webhook: skipping duplicate event ${event.id} (${event.type})`);
-      return NextResponse.json({ received: true, duplicate: true });
+    // Idempotency: claim event first via unique insert (prevents TOCTOU race between instances)
+    try {
+      await prisma.processedWebhookEvent.create({
+        data: { id: event.id, type: event.type },
+      });
+    } catch (err: any) {
+      if (err.code === 'P2002') {
+        // Another instance already claimed this event
+        console.log(`Stripe webhook: skipping duplicate event ${event.id} (${event.type})`);
+        return NextResponse.json({ received: true, duplicate: true });
+      }
+      throw err;
     }
 
     switch (event.type) {
@@ -337,14 +341,6 @@ export async function POST(request: NextRequest) {
         // Unhandled event type — acknowledge receipt
         break;
     }
-
-    // Record successful processing (idempotency key)
-    await prisma.processedWebhookEvent.create({
-      data: { id: event.id, type: event.type },
-    }).catch((err: any) => {
-      // P2002 = unique constraint — another instance processed it concurrently, safe to ignore
-      if (err.code !== 'P2002') console.error('Failed to record webhook event:', err);
-    });
 
     // Cleanup: delete events older than 7 days (fire-and-forget)
     prisma.processedWebhookEvent.deleteMany({

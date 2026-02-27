@@ -72,6 +72,9 @@ export async function POST(request: NextRequest) {
   const authResult = await getAuthContext();
   if (authResult.error) return authResult.error;
 
+  let tokenCost = 0;
+  let tokensRefunded = 0;
+
   try {
     // Validate payload size
     const rawBody = await request.text();
@@ -145,7 +148,7 @@ export async function POST(request: NextRequest) {
 
     // Calculate total output count (this is the number of finished ad videos)
     const outputCount = renderItems.length;
-    const tokenCost = calculateRenderTokens(outputCount);
+    tokenCost = calculateRenderTokens(outputCount);
 
     // Check token balance before rendering
     if (tokenCost > 0) {
@@ -261,6 +264,7 @@ export async function POST(request: NextRequest) {
           amount: refundAmount,
           description: `Refund: ${failed} of ${renderItems.length} renders failed`,
         });
+        tokensRefunded = refundAmount;
       }
     }
 
@@ -300,6 +304,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ results, failed, tokensUsed: tokenCost });
   } catch (error: any) {
     console.error('Render error:', error);
+
+    // Refund remaining tokens on unexpected failure (queue.add() failure, mkdirSync, etc.)
+    const remainingRefund = tokenCost - tokensRefunded;
+    if (remainingRefund > 0) {
+      try {
+        await refundTokens({
+          companyId: authResult.auth.companyId,
+          userId: authResult.auth.userId,
+          amount: remainingRefund,
+          description: `Refund: render failed — ${error.message}`,
+        });
+      } catch (refundErr) {
+        console.error('Refund after render failure also failed:', refundErr);
+      }
+    }
+
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

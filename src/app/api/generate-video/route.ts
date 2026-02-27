@@ -36,13 +36,18 @@ function buildMarketInput(model: VideoModel, prompt: string, ar: string, include
 
   // Sora models — uses portrait/landscape, n_frames for duration
   if (modelId.startsWith('sora-2')) {
-    return {
+    const input: Record<string, any> = {
       prompt,
       aspect_ratio: ar === '9:16' ? 'portrait' : 'landscape',
       n_frames: String(model.duration),
       remove_watermark: true,
       upload_method: 's3',
     };
+    // Sora 2 Pro requires size: 'high'
+    if (modelId.includes('pro')) {
+      input.size = 'high';
+    }
+    return input;
   }
 
   // Kling models — uses 9:16/16:9/1:1, duration string, sound boolean
@@ -52,6 +57,18 @@ function buildMarketInput(model: VideoModel, prompt: string, ar: string, include
       sound: includeSound,
       aspect_ratio: ar,
       duration: String(model.duration),
+    };
+  }
+
+  // Seedance — uses resolution, duration, generate_audio
+  if (modelId.includes('seedance')) {
+    return {
+      prompt,
+      aspect_ratio: ar,
+      resolution: '720p',
+      duration: String(model.duration),
+      fixed_lens: false,
+      generate_audio: includeSound,
     };
   }
 

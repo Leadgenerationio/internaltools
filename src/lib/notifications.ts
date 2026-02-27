@@ -7,6 +7,9 @@
 
 import { prisma } from '@/lib/prisma';
 import { getCachedUnreadCount, setCachedUnreadCount, invalidateUnreadCount } from '@/lib/cache';
+import { getRedis } from '@/lib/redis';
+
+const NOTIFICATION_CHANNEL_PREFIX = 'notifications:';
 
 export type NotificationType =
   | 'RENDER_COMPLETE'
@@ -19,6 +22,23 @@ export type NotificationType =
   | 'SYSTEM';
 
 /**
+ * Publish a notification event via Redis pub/sub for SSE clients.
+ * Fire-and-forget — silently skips if Redis unavailable.
+ */
+async function publishToSSE(userId: string, notification: { type: string; title: string; body: string; link?: string | null }): Promise<void> {
+  try {
+    const redis = getRedis();
+    if (!redis) return;
+    await redis.publish(
+      `${NOTIFICATION_CHANNEL_PREFIX}${userId}`,
+      JSON.stringify(notification)
+    );
+  } catch {
+    // Silently fail — SSE is best-effort
+  }
+}
+
+/**
  * Create a notification for a single user.
  */
 export async function createNotification(
@@ -29,11 +49,13 @@ export async function createNotification(
   link?: string
 ): Promise<void> {
   try {
-    await prisma.notification.create({
+    const notification = await prisma.notification.create({
       data: { userId, type, title, body, link: link || null },
     });
     // Invalidate cached unread count for this user
     invalidateUnreadCount(userId).catch(() => {});
+    // Push to SSE clients in real-time
+    publishToSSE(userId, { type, title, body, link: notification.link }).catch(() => {});
   } catch (error) {
     console.error('[Notifications] Failed to create notification:', error);
   }
@@ -68,9 +90,12 @@ export async function createCompanyNotification(
       })),
     });
 
-    // Invalidate cached unread counts for all users in the company
+    // Invalidate cached unread counts + push SSE for all users in the company
     await Promise.allSettled(
-      users.map((u: { id: string }) => invalidateUnreadCount(u.id))
+      users.flatMap((u: { id: string }) => [
+        invalidateUnreadCount(u.id),
+        publishToSSE(u.id, { type, title, body, link }),
+      ])
     );
   } catch (error) {
     console.error('[Notifications] Failed to create company notification:', error);

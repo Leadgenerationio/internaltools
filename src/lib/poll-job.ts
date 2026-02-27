@@ -17,6 +17,7 @@ export interface PollJobResult {
 }
 
 const POLL_INTERVALS = [3000, 5000, 10000, 15000]; // exponential backoff
+const DEFAULT_MAX_POLL_MS = 10 * 60 * 1000; // 10 minutes max
 
 /**
  * Poll a background job until it completes or fails.
@@ -28,12 +29,23 @@ export async function pollJob(
   options: {
     onProgress?: (progress: number, state: JobState) => void;
     signal?: AbortSignal;
+    maxPollMs?: number;
   } = {}
 ): Promise<PollJobResult> {
-  const { onProgress, signal } = options;
+  const { onProgress, signal, maxPollMs = DEFAULT_MAX_POLL_MS } = options;
   let pollIndex = 0;
+  const startTime = Date.now();
 
   while (true) {
+    if (Date.now() - startTime > maxPollMs) {
+      return {
+        id: jobId,
+        type,
+        state: 'failed',
+        progress: 0,
+        error: 'Job polling timed out. The job may still be running — refresh to check.',
+      };
+    }
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
     const delay = POLL_INTERVALS[Math.min(pollIndex, POLL_INTERVALS.length - 1)];

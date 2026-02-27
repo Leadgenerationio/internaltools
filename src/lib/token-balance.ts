@@ -115,17 +115,18 @@ export async function creditTokens(params: {
   expiresAt?: Date;
 }): Promise<{ newBalance: number; transactionId: string }> {
   return prisma.$transaction(async (tx: any) => {
-    const company = await tx.company.findUniqueOrThrow({
-      where: { id: params.companyId },
-      select: { tokenBalance: true },
-    });
+    // Atomic balance addition — single SQL statement prevents TOCTOU race condition
+    const result: any[] = await tx.$queryRawUnsafe(
+      `UPDATE "Company" SET "tokenBalance" = "tokenBalance" + $1 WHERE id = $2 RETURNING "tokenBalance"`,
+      params.amount,
+      params.companyId
+    );
 
-    const newBalance = company.tokenBalance + params.amount;
+    if (result.length === 0) {
+      throw new Error(`Company not found: ${params.companyId}`);
+    }
 
-    await tx.company.update({
-      where: { id: params.companyId },
-      data: { tokenBalance: newBalance },
-    });
+    const newBalance = Number(result[0].tokenBalance);
 
     const transaction = await tx.tokenTransaction.create({
       data: {

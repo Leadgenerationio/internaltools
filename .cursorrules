@@ -16,7 +16,7 @@ After any new feature or major change, always update `ARCHITECTURE.md`, `CLAUDE.
 - **Internal cost tracking**: Per-call API usage logging in cents (`src/lib/track-usage.ts`, `src/lib/pricing.ts`) — admin-only, hidden from users
 - **Video processing**: FFmpeg via shell exec (server-side), @napi-rs/canvas for emoji-supporting overlay PNGs
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) for generating TOFU/MOFU/BOFU ad text
-- **AI video generation**: kie.ai REST API — 5 models: Sora 2, Veo 3.1 Fast, Sora 2 Pro, Kling 2.6, Veo 3.1 Quality. Two API patterns: Veo `/veo/` and Market `/jobs/`.
+- **AI video generation**: kie.ai REST API — 6 models: Seedance 1.5, Kling 2.6, Veo 3.1 Fast, Sora 2, Sora 2 Pro, Veo 3.1 Quality. Two API patterns: Veo `/veo/` and Market `/jobs/`.
 - **File handling**: Uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/` (symlinked to Railway Volume via `docker-entrypoint.sh`)
 - **File serving**: All file URLs use `/api/files?path=xxx` (Next.js standalone doesn't serve runtime files from `public/`). Use `fileUrl()` from `src/lib/file-url.ts` to generate URLs. Files streamed with Range header support.
 - **Cloud storage**: Optional S3/R2 support via `src/lib/storage.ts` (activated by `S3_BUCKET` env var)
@@ -40,7 +40,7 @@ After any new feature or major change, always update `ARCHITECTURE.md`, `CLAUDE.
 
 1. **Brief** — User fills in a rich ad brief (product, audience, selling points, ad examples, tone, context)
 2. **Review** — AI generates 10 ads (4 TOFU, 4 MOFU, 2 BOFU), each with 4-5 text boxes. User edits text, approves/rejects/regenerates individually.
-3. **Media** — Upload background videos (or generate via kie.ai — Sora 2, Veo, Kling), upload music, configure overlay style (presets + custom colours/fonts/timing)
+3. **Media** — Upload background videos (or generate via kie.ai — Seedance, Kling, Veo, Sora), upload music, configure overlay style (presets + custom colours/fonts/timing)
 4. **Render** — Each approved ad is rendered against each uploaded video via FFmpeg. Results shown with progress bar and download all.
 
 ## Key Concepts
@@ -167,7 +167,7 @@ src/
     StyleConfigurator.tsx         — Overlay style presets + custom controls
     VideoSourceTabs.tsx           — Tabbed upload vs AI generate
     VideoUploader.tsx             — Drag-and-drop multi-video upload
-    VideoGenerator.tsx            — AI video generation (5 models via kie.ai)
+    VideoGenerator.tsx            — AI video generation (6 models via kie.ai)
     MusicSelector.tsx             — Upload and configure background music
     VideoPreview.tsx              — Real-time 9:16 preview + trim controls
     TextOverlayEditor.tsx         — Manual overlay editor
