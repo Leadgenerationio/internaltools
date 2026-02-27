@@ -66,7 +66,7 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 | Video processing | FFmpeg (shell exec) | Compositing, scaling, audio mixing |
 | Overlay rendering | @napi-rs/canvas | Text-to-PNG with emoji support |
 | AI copy generation | Anthropic SDK (Claude Sonnet) | TOFU/MOFU/BOFU ad scripts |
-| AI video generation | kie.ai REST API (veo3_fast / veo3) | Optional AI background videos |
+| AI video generation | kie.ai REST API (Sora 2, Veo 3.1, Kling 2.6) | Optional AI background videos |
 | Background jobs | BullMQ + Redis (ioredis) | Async render + video gen, survives page refresh |
 | Token billing | Prisma transactions | Atomic token deduction/credit, append-only ledger, budget alerts |
 | Payments | Stripe (Checkout + Customer Portal) | Subscriptions, one-time token top-ups, webhook handling |
@@ -97,7 +97,7 @@ Users are billed in tokens, not raw API costs. This abstracts away internal cost
 - **Token model**:
   - Ad copy generation = **FREE** (0 tokens) — users can create and regenerate unlimited ad scripts
   - 1 finished ad video = **1 token** (using own uploaded background video)
-  - 1 AI-generated video (kie.ai) = **10 tokens** (bundled — includes all renders onto it)
+  - 1 AI-generated video (kie.ai) = **3-25 tokens** depending on model (Sora 2: 3, Veo Fast: 5, Sora Pro: 5, Kling: 7, Veo Quality: 25)
 - **Plan tiers**: FREE (40 tokens/mo), STARTER (500 tokens/mo, £29), PRO (2,500 tokens/mo, £99), ENTERPRISE (custom)
 - **Top-ups**: Paid plans can purchase additional token packages (Small/Medium/Large at plan-specific per-token rates)
 - **Pre-deduction pattern**: Tokens are deducted atomically BEFORE expensive API calls using raw SQL (`UPDATE ... WHERE balance >= amount RETURNING balance`) to prevent TOCTOU race conditions. If the operation fails, tokens are automatically refunded.
@@ -247,6 +247,7 @@ src/
 │       ├── notifications/route.ts    # User: list notifications (GET)
 │       ├── notifications/[id]/read/route.ts # User: mark notification as read (PUT)
 │       ├── notifications/mark-all-read/route.ts # User: mark all notifications read (PUT)
+│       ├── notifications/stream/route.ts # SSE endpoint for real-time notification push
 │       ├── integrations/google-drive/auth/route.ts # Google Drive: initiate OAuth2 flow (GET)
 │       ├── integrations/google-drive/callback/route.ts # Google Drive: OAuth2 callback (GET)
 │       ├── integrations/google-drive/disconnect/route.ts # Google Drive: disconnect account (POST)
@@ -286,7 +287,7 @@ src/
 │   ├── SettingsPanel.tsx             # Company users, invitations, spend limits
 │   ├── Tooltip.tsx                   # Reusable info tooltip (hover/tap, CSS-only)
 │   ├── InfoBanner.tsx                # Info/tip/warning banners with icons
-│   ├── NotificationBell.tsx          # In-app notification bell with badge + dropdown (30s polling)
+│   ├── NotificationBell.tsx          # In-app notification bell with badge + dropdown (SSE push, polling fallback)
 │   ├── GoogleDriveButton.tsx         # Export-to-Google-Drive button (shown in render results)
 │   ├── OnboardingChecklist.tsx       # 5-step onboarding checklist (accounts <7 days old)
 │   ├── TemplatePickerModal.tsx       # Template picker modal (system + company templates)
@@ -319,11 +320,13 @@ src/
 │   ├── cache.ts                      # Redis-backed TTL cache (company info, unread counts)
 │   ├── queue.ts                      # BullMQ queue setup (renderQueue, videoGenQueue)
 │   ├── job-types.ts                  # Type-safe job payloads for background jobs
+│   ├── email-queue.ts                # BullMQ email queue with fallback to direct send
 │   └── poll-job.ts                   # Client-side job polling with exponential backoff
 ├── workers/
 │   ├── index.ts                      # Worker entry point (starts all BullMQ workers)
 │   ├── render-worker.ts              # Render job processor (FFmpeg, uploads, notifications)
-│   └── video-gen-worker.ts           # Video gen job processor (kie.ai, download, thumbnail)
+│   ├── video-gen-worker.ts           # Video gen job processor (kie.ai, download, thumbnail)
+│   └── email-worker.ts              # Email job processor (3 retries, exponential backoff)
 ├── prisma/
 │   ├── schema.prisma                 # Data models: Company, User, Session, ApiUsage, SupportTicket, TicketMessage, AdminAuditLog, Notification, ProjectTemplate, PasswordResetToken, ProcessedWebhookEvent, SpendAlertLog
 │   └── migrations/                   # Database migrations
@@ -463,7 +466,7 @@ When `REDIS_URL` is not configured, all operations fall back to synchronous in-r
 | `/api/projects/[id]/ads` | POST | Save ads to project (replace all) | default | required |
 | `/api/jobs/[id]` | GET | Poll background job status (state, progress, result) | default | required (company-scoped) |
 | `/api/generate-ads` | POST | Generate ad copy via Claude (FREE, 0 tokens) | 60s | required |
-| `/api/generate-video` | POST | Generate video via kie.ai (10 tokens/video) — enqueues BullMQ job if Redis available | 300s | required + token deduction |
+| `/api/generate-video` | POST | Generate video via kie.ai (3-25 tokens/video by model) — enqueues BullMQ job if Redis available | 300s | required + token deduction |
 | `/api/upload` | POST | Upload video files (max 500MB each, streams to disk) | 60s | required |
 | `/api/upload-music` | POST | Upload music (max 50MB, validated formats) | default | required |
 | `/api/render` | POST | Batch FFmpeg render (1 token/output video) — enqueues BullMQ job if Redis available | 300s | required + token deduction |
@@ -483,7 +486,7 @@ NEXTAUTH_URL=http://localhost:3000  # Required — Base URL for NextAuth callbac
 
 # API Keys
 ANTHROPIC_API_KEY=sk-ant-...     # Required for ad copy generation
-KIE_API_KEY=...                  # Optional for kie.ai video generation (models: veo3_fast, veo3)
+KIE_API_KEY=...                  # Optional for kie.ai video generation (Sora 2, Veo 3.1, Kling 2.6)
 
 # Super Admin
 SUPER_ADMIN_EMAILS=admin@example.com  # Comma-separated list of super admin emails
@@ -496,6 +499,9 @@ REDIS_URL=redis://...            # Optional — ioredis connection string for Bu
 
 # Background Workers (Railway)
 WORKER_MODE=true                 # Set on worker service — starts BullMQ workers instead of web server
+
+# Cron (Railway cron service)
+CRON_SECRET=...                  # Optional — shared secret for cron service to call /api/admin/cleanup
 
 # Database Pool
 DB_POOL_SIZE=20                  # Optional — max connections per instance (default: 20)
@@ -753,8 +759,10 @@ OAuth2 integration allowing users to export rendered videos directly to Google D
 ### In-App Notifications
 - `NotificationBell` component in app header — bell icon with unread badge count
 - Dropdown shows recent notifications with mark-as-read
-- 30-second polling for new notifications
-- API routes: `/api/notifications` (list), `/api/notifications/[id]/read` (mark read), `/api/notifications/mark-all-read` (bulk)
+- **SSE push** via `/api/notifications/stream` — Redis pub/sub per user for real-time delivery
+- Falls back to 30-second polling when Redis/SSE unavailable
+- `notifications.ts` publishes to Redis pub/sub when creating notifications (single or company-wide)
+- API routes: `/api/notifications` (list), `/api/notifications/[id]/read` (mark read), `/api/notifications/mark-all-read` (bulk), `/api/notifications/stream` (SSE)
 - `Notification` model in Prisma with per-user read/unread state
 
 ### Email Templates (11 total in `src/lib/email.ts`)
@@ -769,6 +777,12 @@ OAuth2 integration allowing users to export rendered videos directly to Google D
 9. Subscription renewal
 10. Ticket created
 11. Ticket reply
+
+### Email Queue
+- `src/lib/email-queue.ts` — BullMQ queue for reliable email delivery with 3 retries + exponential backoff
+- `src/workers/email-worker.ts` — processes email jobs, rate-limited to 20/10s (Resend limit)
+- Falls back to direct send when Redis unavailable
+- Use `enqueueEmail(template, args)` for reliability-critical paths
 
 ### Password Change
 - `/api/auth/change-password` — Authenticated password change (requires current password)
@@ -843,6 +857,46 @@ Phase 2 adds Redis for cross-instance state and caching, plus DB connection pool
 New files: `src/lib/redis.ts`, `src/lib/rate-limit.ts`, `src/lib/cache.ts`
 New dependency: `ioredis`
 New env vars: `REDIS_URL`, `DB_POOL_SIZE`
+
+## Scaling (Phase 3 — Background Job Queue)
+
+Phase 3 moves long-running operations (render, video gen) to BullMQ background workers:
+
+- **BullMQ setup** (`src/lib/queue.ts`): `renderQueue` and `videoGenQueue` backed by Redis. Returns null when Redis unavailable.
+- **Job types** (`src/lib/job-types.ts`): Type-safe payloads for render, video-gen, and job status.
+- **Worker processes** (`src/workers/`): Separate Railway service (same Docker image, `WORKER_MODE=true`). `render-worker.ts` (concurrency 2) and `video-gen-worker.ts` (concurrency 1). Handles token refund on failure, notifications, email on completion.
+- **Job status API** (`/api/jobs/[id]`): GET returns state/progress/result, auth-gated to job owner's company.
+- **Client-side polling** (`src/lib/poll-job.ts`): Exponential backoff (3s→5s→10s→15s), AbortSignal support.
+- **Route changes**: Render and video-gen routes enqueue BullMQ jobs and return `{ jobId }` immediately. Fall back to synchronous when Redis unavailable.
+- **Docker**: `WORKER_MODE=true` starts BullMQ workers instead of web server via `docker-entrypoint.sh`.
+
+New files: `src/lib/queue.ts`, `src/lib/job-types.ts`, `src/lib/poll-job.ts`, `src/workers/index.ts`, `src/workers/render-worker.ts`, `src/workers/video-gen-worker.ts`, `src/app/api/jobs/[id]/route.ts`
+New dependency: `bullmq`
+New env var: `WORKER_MODE`
+
+## Scaling (Phase 4 — Cloud Storage + DB Optimization)
+
+Phase 4 optimizes memory usage and data integrity:
+
+- **Streaming S3 uploads** (`src/lib/storage.ts`): `@aws-sdk/lib-storage` `Upload` class streams files instead of `readFileSync`. Memory drops from O(fileSize) to O(streamBuffer).
+- **CDN file URLs** (`src/lib/file-url.ts`): When `CDN_URL` or `S3_PUBLIC_URL` set, returns direct CDN URLs instead of `/api/files`. Offloads file serving from Node.js.
+- **Streaming file uploads** (`src/app/api/upload/route.ts`): `Readable.fromWeb(file.stream())` + `pipeline()` avoids buffering 500MB files in memory.
+- **Atomic token deduction** (`src/lib/token-balance.ts`): Raw SQL `UPDATE ... WHERE balance >= amount RETURNING balance` eliminates TOCTOU race condition.
+
+New dependency: `@aws-sdk/lib-storage`
+New env var: `CDN_URL`
+
+## Scaling (Phase 5 — Polish)
+
+Phase 5 adds real-time notifications, DB cleanup, email reliability, and auto-save:
+
+- **SSE notifications** (`/api/notifications/stream`): Server-Sent Events endpoint using Redis pub/sub per user. `NotificationBell` uses EventSource for real-time push, falls back to 30s polling when SSE unavailable. `notifications.ts` publishes to Redis on notification create.
+- **DB archival** (`/api/admin/cleanup`): POST handler now also archives old DB records — ApiUsageLog >90 days, read Notifications >30 days, ProcessedWebhookEvent >7 days. Supports `CRON_SECRET` header for Railway cron service.
+- **Email queue** (`src/lib/email-queue.ts`): BullMQ queue with 3 retries + exponential backoff (5s, 10s, 20s). `email-worker.ts` processes jobs with concurrency 5 and rate limiting (20/10s). Falls back to direct send without Redis.
+- **Auto-save wizard state**: When working on a saved project, debounced save to `/api/projects/[id]` every 30s. Only saves when state changes. localStorage remains the primary backup.
+
+New files: `src/app/api/notifications/stream/route.ts`, `src/lib/email-queue.ts`, `src/workers/email-worker.ts`
+New env var: `CRON_SECRET`
 
 ## Prerequisites
 

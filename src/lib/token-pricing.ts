@@ -8,6 +8,8 @@
  * users never get stuck with ads they can't render.
  */
 
+import { VIDEO_MODELS } from '@/lib/types';
+
 export const TOKEN_COSTS = {
   /** Full ad set generation (10 ads) — included free, costs 0 tokens */
   GENERATE_ADS: 0,
@@ -15,8 +17,8 @@ export const TOKEN_COSTS = {
   REGENERATE_AD: 0,
   /** Render 1 finished ad video (user's own background video) */
   RENDER_VIDEO: 1,
-  /** 1 AI-generated video via Veo — includes all renders onto it */
-  GENERATE_VIDEO: 10,
+  /** Default fallback for AI video — used when model lookup fails */
+  GENERATE_VIDEO: 5,
 } as const;
 
 export type TokenOperation = keyof typeof TOKEN_COSTS;
@@ -31,9 +33,13 @@ export function calculateRenderTokens(outputCount: number): number {
 
 /**
  * Calculate total token cost for AI video generation.
- * Each Veo video costs 10 tokens (includes all renders onto it).
+ * Token cost varies by model — each model is priced to cover API cost + margin.
  */
-export function calculateVeoTokens(videoCount: number): number {
+export function calculateVeoTokens(videoCount: number, modelId?: string): number {
+  if (modelId) {
+    const model = VIDEO_MODELS.find((m) => m.id === modelId);
+    if (model) return videoCount * model.tokenCost;
+  }
   return videoCount * TOKEN_COSTS.GENERATE_VIDEO;
 }
 

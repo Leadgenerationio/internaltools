@@ -24,6 +24,12 @@ export const PRICING = {
     'veo3_fast': { perVideoPence: 32 },
     // kie.ai Veo 3.1 Quality — $2.00/video (~£1.60)
     'veo3': { perVideoPence: 160 },
+    // kie.ai Kling 2.6 — $0.55/video (~£0.44)
+    'kling-2.6/text-to-video': { perVideoPence: 44 },
+    // kie.ai Sora 2 — $0.15/video (~£0.12)
+    'sora-2-text-to-video': { perVideoPence: 12 },
+    // kie.ai Sora 2 Pro — $0.40/video (~£0.32)
+    'sora-2-pro-text-to-video': { perVideoPence: 32 },
     // Fallback
     default: { perVideoPence: 32 },
   },

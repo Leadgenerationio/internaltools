@@ -13,6 +13,7 @@ import { deductTokens, refundTokens } from '@/lib/token-balance';
 import { calculateVeoTokens } from '@/lib/token-pricing';
 import { fileUrl } from '@/lib/file-url';
 import { VIDEO_MODELS } from '@/lib/types';
+import type { VideoModel } from '@/lib/types';
 import { getVideoGenQueue } from '@/lib/queue';
 import type { VideoGenJobData } from '@/lib/job-types';
 import { execFile } from 'child_process';
@@ -27,6 +28,173 @@ const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
 const POLL_INTERVAL_MS = 10_000;
 const MAX_POLL_TIME_MS = 4 * 60 * 1000; // 4 minutes (under maxDuration for clean error)
 const MAX_RETRIES = 2;
+
+// ── Market API helpers (Kling, Sora) ──
+
+function buildMarketInput(model: VideoModel, prompt: string, ar: string, includeSound: boolean): Record<string, any> {
+  const modelId = model.id;
+
+  // Sora models — uses portrait/landscape, n_frames for duration
+  if (modelId.startsWith('sora-2')) {
+    return {
+      prompt,
+      aspect_ratio: ar === '9:16' ? 'portrait' : 'landscape',
+      n_frames: String(model.duration),
+      remove_watermark: true,
+      upload_method: 's3',
+    };
+  }
+
+  // Kling models — uses 9:16/16:9/1:1, duration string, sound boolean
+  if (modelId.startsWith('kling')) {
+    return {
+      prompt,
+      sound: includeSound,
+      aspect_ratio: ar,
+      duration: String(model.duration),
+    };
+  }
+
+  throw new Error(`Unknown market model: ${modelId}`);
+}
+
+async function submitMarketJob(apiKey: string, model: VideoModel, prompt: string, ar: string, includeSound: boolean): Promise<string> {
+  const res = await fetch(`${KIE_API_BASE}/jobs/createTask`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: model.id,
+      input: buildMarketInput(model, prompt, ar, includeSound),
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    if (res.status === 429) throw new Error('Rate limited by kie.ai (429)');
+    if (res.status === 402) throw new Error('Insufficient kie.ai credits — top up at kie.ai');
+    throw new Error(`kie.ai submit failed (${res.status}): ${errText}`);
+  }
+
+  const data = await res.json();
+  const taskId = data?.data?.taskId;
+  if (!taskId) throw new Error(`kie.ai returned no taskId: ${JSON.stringify(data)}`);
+  return taskId;
+}
+
+async function pollMarketJob(apiKey: string, taskId: string): Promise<string[]> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < MAX_POLL_TIME_MS) {
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+
+    const res = await fetch(
+      `${KIE_API_BASE}/jobs/recordInfo?taskId=${taskId}`,
+      { headers: { 'Authorization': `Bearer ${apiKey}` } }
+    );
+
+    if (!res.ok) {
+      logger.warn(`Market poll failed (${res.status}), retrying...`);
+      continue;
+    }
+
+    const pollData = await res.json();
+    const state = pollData?.data?.state;
+
+    if (state === 'success') {
+      // resultJson is a JSON string containing { resultUrls: [...] }
+      const resultJsonStr = pollData?.data?.resultJson;
+      if (!resultJsonStr) return [];
+      try {
+        const parsed = JSON.parse(resultJsonStr);
+        return Array.isArray(parsed.resultUrls) ? parsed.resultUrls : [];
+      } catch {
+        return [];
+      }
+    }
+
+    if (state === 'fail') {
+      const reason = pollData?.data?.failMsg || pollData?.data?.failCode || 'generation failed';
+      throw new Error(`Video generation failed: ${reason}`);
+    }
+
+    // waiting, queuing, generating — continue polling
+  }
+
+  return []; // timed out
+}
+
+// ── Veo API helpers ──
+
+async function submitVeoJob(apiKey: string, modelId: string, prompt: string, ar: string): Promise<string> {
+  const res = await fetch(`${KIE_API_BASE}/veo/generate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      prompt: prompt.trim(),
+      model: modelId,
+      aspect_ratio: ar,
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    if (res.status === 429) throw new Error('Rate limited by kie.ai (429)');
+    if (res.status === 402) throw new Error('Insufficient kie.ai credits — top up at kie.ai');
+    throw new Error(`kie.ai submit failed (${res.status}): ${errText}`);
+  }
+
+  const data = await res.json();
+  const taskId = data?.data?.taskId;
+  if (!taskId) throw new Error(`kie.ai returned no taskId: ${JSON.stringify(data)}`);
+  return taskId;
+}
+
+async function pollVeoJob(apiKey: string, taskId: string): Promise<string[]> {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < MAX_POLL_TIME_MS) {
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+
+    const res = await fetch(
+      `${KIE_API_BASE}/veo/record-info?taskId=${taskId}`,
+      { headers: { 'Authorization': `Bearer ${apiKey}` } }
+    );
+
+    if (!res.ok) {
+      logger.warn(`Veo poll failed (${res.status}), retrying...`);
+      continue;
+    }
+
+    const pollData = await res.json();
+    const flag = pollData?.data?.successFlag;
+
+    if (flag === 1) {
+      const urlsRaw = pollData?.data?.response?.resultUrls;
+      if (typeof urlsRaw === 'string') {
+        try { return JSON.parse(urlsRaw); } catch { return [urlsRaw]; }
+      }
+      if (Array.isArray(urlsRaw)) return urlsRaw;
+      return [];
+    }
+
+    if (flag === 2 || flag === 3) {
+      const reason = pollData?.data?.errorMessage || pollData?.data?.failReason || 'generation failed';
+      throw new Error(`Video generation failed: ${reason}`);
+    }
+
+    // flag === 0 — still generating
+  }
+
+  return []; // timed out
+}
+
+// ── Main route handler ──
 
 export async function POST(request: NextRequest) {
   // Auth check
@@ -45,12 +213,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Declare tokenCost outside try so catch block can access it for refunds
   let tokenCost = 0;
-  let selectedModelId = 'veo3_fast';
+  let tokensRefunded = 0;
+  let selectedModelId = 'sora-2-text-to-video';
 
   try {
-    // Validate payload size
     const rawBody = await request.text();
     if (rawBody.length > 10_000) {
       return NextResponse.json({ error: 'Request payload too large' }, { status: 413 });
@@ -65,13 +232,10 @@ export async function POST(request: NextRequest) {
 
     const { prompt, count, aspectRatio, model, includeSound } = body;
 
-    // Validate inputs
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
       return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
     }
     const videoCount = Math.min(Math.max(Number(count) || 1, 1), 4);
-    const validAspectRatios = ['9:16', '16:9'];
-    const ar = validAspectRatios.includes(aspectRatio) ? aspectRatio : '9:16';
 
     // Validate model
     const validModel = VIDEO_MODELS.find((m) => m.id === model);
@@ -81,15 +245,19 @@ export async function POST(request: NextRequest) {
     selectedModelId = validModel.id;
     const videoDuration = validModel.duration;
 
+    // Validate aspect ratio against model's supported ratios
+    const ar = validModel.aspectRatios.includes(aspectRatio) ? aspectRatio : validModel.aspectRatios[0];
+
     logger.info('Generate request', {
       prompt: prompt.slice(0, 100),
       count: videoCount,
       aspectRatio: ar,
       model: selectedModelId,
+      apiType: validModel.apiType,
     });
 
-    // Check and deduct tokens (10 per AI video — includes future renders onto it)
-    tokenCost = calculateVeoTokens(videoCount);
+    // Check and deduct tokens (per-model pricing)
+    tokenCost = calculateVeoTokens(videoCount, selectedModelId);
     const limitError = await checkTokenBalance(companyId, tokenCost);
     if (limitError) return limitError;
 
@@ -98,7 +266,7 @@ export async function POST(request: NextRequest) {
       userId,
       amount: tokenCost,
       reason: 'GENERATE_VIDEO',
-      description: `Generate ${videoCount} AI video${videoCount !== 1 ? 's' : ''} (${tokenCost} tokens)`,
+      description: `Generate ${videoCount}× ${validModel.label} (${tokenCost} tokens)`,
     });
 
     if (!deduction.success) {
@@ -121,9 +289,10 @@ export async function POST(request: NextRequest) {
         userId,
         prompt: prompt.trim(),
         count: videoCount,
-        aspectRatio: ar as '9:16' | '16:9',
+        aspectRatio: ar as '9:16' | '16:9' | '1:1',
         model: selectedModelId,
         includeSound: !!includeSound,
+        apiType: validModel.apiType,
         tokenCost,
       };
 
@@ -142,7 +311,6 @@ export async function POST(request: NextRequest) {
 
     // Fallback: synchronous generation (no Redis available)
 
-    // Ensure upload directory exists
     if (!existsSync(UPLOAD_DIR)) {
       await mkdir(UPLOAD_DIR, { recursive: true });
     }
@@ -153,7 +321,7 @@ export async function POST(request: NextRequest) {
 
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         if (attempt > 0) {
-          const backoff = attempt * 5000; // 5s, 10s
+          const backoff = attempt * 5000;
           logger.info(`Retrying generation ${i + 1} (attempt ${attempt + 1}) after ${backoff}ms`);
           await new Promise((resolve) => setTimeout(resolve, backoff));
         }
@@ -161,72 +329,17 @@ export async function POST(request: NextRequest) {
         try {
           logger.info(`Starting generation ${i + 1}/${videoCount}${attempt > 0 ? ` (retry ${attempt})` : ''}`);
 
-          // ── Step 1: Submit generation to kie.ai ──
-          const submitRes = await fetch(`${KIE_API_BASE}/veo/generate`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify({
-              prompt: prompt.trim(),
-              model: selectedModelId,
-              aspect_ratio: ar,
-            }),
-          });
+          // ── Submit + Poll (branched by API type) ──
+          let resultUrls: string[];
 
-          if (!submitRes.ok) {
-            const errText = await submitRes.text().catch(() => '');
-            if (submitRes.status === 429) throw new Error('Rate limited by kie.ai (429)');
-            if (submitRes.status === 402) throw new Error('Insufficient kie.ai credits — top up at kie.ai');
-            throw new Error(`kie.ai submit failed (${submitRes.status}): ${errText}`);
-          }
-
-          const submitData = await submitRes.json();
-          const taskId = submitData?.data?.taskId;
-          if (!taskId) {
-            throw new Error(`kie.ai returned no taskId: ${JSON.stringify(submitData)}`);
-          }
-
-          logger.info(`Generation ${i + 1} submitted`, { taskId });
-
-          // ── Step 2: Poll for completion ──
-          const startTime = Date.now();
-          let resultUrls: string[] = [];
-
-          while (Date.now() - startTime < MAX_POLL_TIME_MS) {
-            await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-
-            const pollRes = await fetch(
-              `${KIE_API_BASE}/veo/record-info?taskId=${taskId}`,
-              { headers: { 'Authorization': `Bearer ${apiKey}` } }
-            );
-
-            if (!pollRes.ok) {
-              logger.warn(`Poll failed (${pollRes.status}), retrying...`);
-              continue;
-            }
-
-            const pollData = await pollRes.json();
-            const flag = pollData?.data?.successFlag;
-
-            if (flag === 1) {
-              // Success — parse resultUrls (stringified JSON array)
-              const urlsRaw = pollData?.data?.response?.resultUrls;
-              if (typeof urlsRaw === 'string') {
-                try { resultUrls = JSON.parse(urlsRaw); } catch { resultUrls = [urlsRaw]; }
-              } else if (Array.isArray(urlsRaw)) {
-                resultUrls = urlsRaw;
-              }
-              break;
-            }
-
-            if (flag === 2 || flag === 3) {
-              const reason = pollData?.data?.errorMessage || pollData?.data?.failReason || 'generation failed';
-              throw new Error(`Video generation failed: ${reason}`);
-            }
-
-            // flag === 0 — still generating, continue polling
+          if (validModel.apiType === 'market') {
+            const taskId = await submitMarketJob(apiKey, validModel, prompt.trim(), ar, !!includeSound);
+            logger.info(`Generation ${i + 1} submitted (market)`, { taskId });
+            resultUrls = await pollMarketJob(apiKey, taskId);
+          } else {
+            const taskId = await submitVeoJob(apiKey, selectedModelId, prompt.trim(), ar);
+            logger.info(`Generation ${i + 1} submitted (veo)`, { taskId });
+            resultUrls = await pollVeoJob(apiKey, taskId);
           }
 
           if (resultUrls.length === 0) {
@@ -235,7 +348,7 @@ export async function POST(request: NextRequest) {
 
           logger.info(`Generation ${i + 1} complete`);
 
-          // ── Step 3: Download the video ──
+          // ── Download the video ──
           const id = crypto.randomUUID();
           const filename = `${id}.mp4`;
           const filepath = path.join(UPLOAD_DIR, filename);
@@ -249,8 +362,8 @@ export async function POST(request: NextRequest) {
           fs.writeFileSync(filepath, buffer);
           logger.info(`Downloaded video ${i + 1}`, { filepath, bytes: buffer.length });
 
-          // Strip audio if user wants silent video
-          if (!includeSound) {
+          // Strip audio if user wants silent video (only for models that have audio)
+          if (!includeSound && validModel.supportsSound) {
             const silentPath = filepath.replace('.mp4', '_silent.mp4');
             try {
               await execFileAsync('ffmpeg', [
@@ -321,15 +434,16 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Refund tokens for failed videos (10 tokens each)
+    // Refund tokens for failed videos
     if (failures.length > 0) {
-      const refundAmount = calculateVeoTokens(failures.length);
+      const refundAmount = calculateVeoTokens(failures.length, selectedModelId);
       await refundTokens({
         companyId,
         userId,
         amount: refundAmount,
         description: `Refund: ${failures.length} AI video${failures.length !== 1 ? 's' : ''} failed to generate`,
       });
+      tokensRefunded = refundAmount;
       logger.info(`Refunded ${refundAmount} tokens for ${failures.length} failed videos`);
     }
 
@@ -338,7 +452,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: firstError }, { status: 500 });
     }
 
-    const tokensCharged = calculateVeoTokens(videos.length);
+    const tokensCharged = calculateVeoTokens(videos.length, selectedModelId);
 
     // Track API cost (fire-and-forget)
     trackVeoUsage({
@@ -362,13 +476,16 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     logger.error('Generate-video error', { error: error.message, stack: error.stack });
 
-    // Refund all tokens on total failure
-    await refundTokens({
-      companyId,
-      userId,
-      amount: tokenCost,
-      description: `Refund: video generation failed — ${error.message}`,
-    });
+    // Refund remaining tokens on total failure (subtract any partial refunds already issued)
+    const remainingRefund = tokenCost - tokensRefunded;
+    if (remainingRefund > 0) {
+      await refundTokens({
+        companyId,
+        userId,
+        amount: remainingRefund,
+        description: `Refund: video generation failed — ${error.message}`,
+      });
+    }
 
     trackVeoUsage({
       companyId,

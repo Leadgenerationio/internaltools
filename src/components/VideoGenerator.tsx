@@ -25,9 +25,10 @@ interface Props {
 }
 
 const COUNT_OPTIONS = [1, 2, 3, 4] as const;
-const ASPECT_OPTIONS = [
+const ALL_ASPECT_OPTIONS = [
   { value: '9:16' as const, label: '9:16 Portrait' },
   { value: '16:9' as const, label: '16:9 Landscape' },
+  { value: '1:1' as const, label: '1:1 Square' },
 ];
 
 interface GenerationBatch {
@@ -39,7 +40,7 @@ interface GenerationBatch {
 export default function VideoGenerator({ videos, onUpload, generating, setGenerating }: Props) {
   const [prompt, setPrompt] = useState('');
   const [count, setCount] = useState(2);
-  const [aspectRatio, setAspectRatio] = useState<'9:16' | '16:9'>('9:16');
+  const [aspectRatio, setAspectRatio] = useState<'9:16' | '16:9' | '1:1'>('9:16');
   const [model, setModel] = useState(DEFAULT_VIDEO_MODEL);
   const [includeSound, setIncludeSound] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,8 +49,18 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
   const abortRef = useRef<AbortController | null>(null);
 
   const selectedModel = VIDEO_MODELS.find((m) => m.id === model) || VIDEO_MODELS[0];
+  const aspectOptions = ALL_ASPECT_OPTIONS.filter((opt) => selectedModel.aspectRatios.includes(opt.value));
   const canGenerate = prompt.trim().length > 0 && !generating;
   const aiVideoCount = videos.filter((v) => v.originalName.startsWith('AI:')).length;
+
+  // Reset aspect ratio if current selection isn't supported by the new model
+  const handleModelChange = (newModel: string) => {
+    setModel(newModel);
+    const m = VIDEO_MODELS.find((v) => v.id === newModel);
+    if (m && !m.aspectRatios.includes(aspectRatio)) {
+      setAspectRatio(m.aspectRatios[0] as '9:16' | '16:9' | '1:1');
+    }
+  };
 
   const handleCancel = () => {
     abortRef.current?.abort();
@@ -235,7 +246,7 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
           <div className="relative">
             <select
               value={model}
-              onChange={(e) => setModel(e.target.value)}
+              onChange={(e) => handleModelChange(e.target.value)}
               disabled={generating}
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 pr-8 text-sm text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none cursor-pointer disabled:opacity-50"
             >
@@ -261,7 +272,7 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-1.5">Aspect ratio</label>
           <div className="flex gap-1.5">
-            {ASPECT_OPTIONS.map((opt) => (
+            {aspectOptions.map((opt) => (
               <button
                 key={opt.value}
                 onClick={() => setAspectRatio(opt.value)}
@@ -279,24 +290,26 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
         </div>
       </div>
 
-      {/* Include sound toggle */}
-      <label className="flex items-center gap-3 cursor-pointer group">
-        <div className="relative">
-          <input
-            type="checkbox"
-            checked={includeSound}
-            onChange={(e) => setIncludeSound(e.target.checked)}
-            disabled={generating}
-            className="sr-only peer"
-          />
-          <div className="w-10 h-6 bg-gray-700 rounded-full peer-checked:bg-blue-600 transition-colors" />
-          <div className="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4" />
-        </div>
-        <span className="text-sm text-gray-300 group-hover:text-white transition-colors">
-          Include AI-generated sound
-        </span>
-        <span className="text-xs text-gray-500">(AI generates audio by default — disable for silent background videos)</span>
-      </label>
+      {/* Include sound toggle — only for models that support audio */}
+      {selectedModel.supportsSound && (
+        <label className="flex items-center gap-3 cursor-pointer group">
+          <div className="relative">
+            <input
+              type="checkbox"
+              checked={includeSound}
+              onChange={(e) => setIncludeSound(e.target.checked)}
+              disabled={generating}
+              className="sr-only peer"
+            />
+            <div className="w-10 h-6 bg-gray-700 rounded-full peer-checked:bg-blue-600 transition-colors" />
+            <div className="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4" />
+          </div>
+          <span className="text-sm text-gray-300 group-hover:text-white transition-colors">
+            Include AI-generated sound
+          </span>
+          <span className="text-xs text-gray-500">(disable for silent background videos)</span>
+        </label>
+      )}
 
       {/* Generate / Cancel button */}
       {generating ? (
@@ -322,7 +335,7 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
               : 'bg-green-600 hover:bg-green-500 text-white shadow-lg shadow-green-600/20'
           }`}
         >
-          {`Generate ${count} Video${count > 1 ? 's' : ''}`}
+          {`Generate ${count} Video${count > 1 ? 's' : ''} (${count * selectedModel.tokenCost} tokens)`}
         </button>
       )}
 

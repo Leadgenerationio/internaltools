@@ -119,6 +119,8 @@ export interface GeneratedAd {
 
 // === AI Video Model Definitions ===
 
+export type VideoApiType = 'veo' | 'market';
+
 export interface VideoModel {
   id: string;
   label: string;
@@ -126,28 +128,64 @@ export interface VideoModel {
   duration: number;       // fixed output duration in seconds
   aspectRatios: string[];
   supportsSound: boolean;
+  apiType: VideoApiType;  // which kie.ai endpoint pattern to use
+  tokenCost: number;      // tokens per video (priced to ensure profit at all plan tiers)
 }
 
 export const VIDEO_MODELS: VideoModel[] = [
   {
+    id: 'sora-2-text-to-video',
+    label: 'Sora 2',
+    priceLabel: '$0.15 · 3 tokens',
+    duration: 10,
+    aspectRatios: ['9:16', '16:9'],
+    supportsSound: false,
+    apiType: 'market',
+    tokenCost: 3,
+  },
+  {
     id: 'veo3_fast',
     label: 'Veo 3.1 Fast',
-    priceLabel: '$0.40/video',
+    priceLabel: '$0.40 · 5 tokens',
     duration: 8,
     aspectRatios: ['9:16', '16:9'],
     supportsSound: true,
+    apiType: 'veo',
+    tokenCost: 5,
+  },
+  {
+    id: 'sora-2-pro-text-to-video',
+    label: 'Sora 2 Pro',
+    priceLabel: '$0.40 · 5 tokens',
+    duration: 10,
+    aspectRatios: ['9:16', '16:9'],
+    supportsSound: false,
+    apiType: 'market',
+    tokenCost: 5,
+  },
+  {
+    id: 'kling-2.6/text-to-video',
+    label: 'Kling 2.6',
+    priceLabel: '$0.55 · 7 tokens',
+    duration: 5,
+    aspectRatios: ['9:16', '16:9', '1:1'],
+    supportsSound: true,
+    apiType: 'market',
+    tokenCost: 7,
   },
   {
     id: 'veo3',
     label: 'Veo 3.1 Quality',
-    priceLabel: '$2.00/video',
+    priceLabel: '$2.00 · 25 tokens',
     duration: 8,
     aspectRatios: ['9:16', '16:9'],
     supportsSound: true,
+    apiType: 'veo',
+    tokenCost: 25,
   },
 ];
 
-export const DEFAULT_VIDEO_MODEL = 'veo3_fast';
+export const DEFAULT_VIDEO_MODEL = 'sora-2-text-to-video';
 
 // Preset templates
 export const OVERLAY_PRESETS = {

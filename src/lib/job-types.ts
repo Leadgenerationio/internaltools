@@ -53,9 +53,10 @@ export interface VideoGenJobData {
   /** Generation inputs */
   prompt: string;
   count: number;
-  aspectRatio: '9:16' | '16:9';
+  aspectRatio: '9:16' | '16:9' | '1:1';
   model: string;
   includeSound: boolean;
+  apiType: 'veo' | 'market';
 
   /** Token cost already deducted */
   tokenCost: number;
