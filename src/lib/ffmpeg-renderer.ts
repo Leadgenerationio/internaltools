@@ -147,7 +147,8 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
         : `[0:v]${scaleCrop}[outv]`;
 
     // Build FFmpeg args as an array (no shell interpolation)
-    const args: string[] = ['-y'];
+    // Limit threads to reduce memory usage on constrained containers (Railway)
+    const args: string[] = ['-y', '-threads', '2'];
 
     // Trim: seek to start time before input for efficiency
     if (hasTrim && trimStart && trimStart > 0) {
@@ -186,14 +187,14 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
 
       args.push('-filter_complex', filterComplex);
       args.push('-map', '[outv]', '-map', '[outa]');
-      args.push('-c:v', 'libx264', '-preset', preset, '-crf', crf);
+      args.push('-c:v', 'libx264', '-preset', preset, '-crf', crf, '-x264-params', 'threads=2');
       args.push('-c:a', 'aac', '-b:a', '192k');
       args.push('-movflags', '+faststart');
       args.push('-t', String(videoDuration));
     } else {
       args.push('-filter_complex', videoFilter);
       args.push('-map', '[outv]');
-      args.push('-c:v', 'libx264', '-preset', preset, '-crf', crf);
+      args.push('-c:v', 'libx264', '-preset', preset, '-crf', crf, '-x264-params', 'threads=2');
 
       // Only include source audio if the video actually has an audio stream
       const videoHasAudio = await hasAudioStream(inputVideoPath);
@@ -209,7 +210,7 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
 
     console.log('FFmpeg args:', args.join(' '));
 
-    const { stdout, stderr } = await execFileAsync('ffmpeg', args, { maxBuffer: 1024 * 1024 * 50 });
+    const { stdout, stderr } = await execFileAsync('ffmpeg', args, { maxBuffer: 1024 * 1024 * 10 });
     console.log('FFmpeg stdout:', stdout);
     if (stderr) console.log('FFmpeg stderr:', stderr);
     return outputPath;
