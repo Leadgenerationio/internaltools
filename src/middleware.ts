@@ -101,12 +101,17 @@ export async function middleware(request: NextRequest) {
 
   // ── Auth: redirect unauthenticated users to /welcome ──
   if (!isPublicRoute(pathname)) {
-    // secureCookie: true ensures getToken reads the __Secure- prefixed cookie
-    // (required when behind a reverse proxy like Railway that terminates TLS)
-    const token = await getToken({ req: request, secret: SECRET, secureCookie: true });
-    if (!token) {
-      const welcomeUrl = new URL('/welcome', request.url);
-      return NextResponse.redirect(welcomeUrl);
+    // Allow admin cleanup endpoint with secret key (for CLI/cron)
+    if (pathname === '/api/admin/cleanup' && request.nextUrl.searchParams.get('key') === process.env.AUTH_SECRET) {
+      // Authorized via secret key — skip JWT check
+    } else {
+      // secureCookie: true ensures getToken reads the __Secure- prefixed cookie
+      // (required when behind a reverse proxy like Railway that terminates TLS)
+      const token = await getToken({ req: request, secret: SECRET, secureCookie: true });
+      if (!token) {
+        const welcomeUrl = new URL('/welcome', request.url);
+        return NextResponse.redirect(welcomeUrl);
+      }
     }
   }
 
