@@ -18,6 +18,38 @@ const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
 const OUTPUT_DIR = path.join(process.cwd(), 'public', 'outputs');
 const PUBLIC_DIR = path.join(process.cwd(), 'public');
 
+/** Clean output files older than maxAgeMs to prevent disk-full errors.
+ *  Keeps recent files from the current render session intact. */
+function cleanOldOutputs(maxAgeMs = 30 * 60 * 1000): void {
+  if (!fs.existsSync(OUTPUT_DIR)) return;
+  const cutoff = Date.now() - maxAgeMs;
+  let deleted = 0;
+  let bytes = 0;
+
+  try {
+    const entries = fs.readdirSync(OUTPUT_DIR);
+    for (const entry of entries) {
+      const fullPath = path.join(OUTPUT_DIR, entry);
+      try {
+        const stat = fs.statSync(fullPath);
+        if (stat.mtimeMs < cutoff) {
+          bytes += stat.isDirectory() ? 0 : stat.size;
+          if (stat.isDirectory()) {
+            fs.rmSync(fullPath, { recursive: true });
+          } else {
+            fs.unlinkSync(fullPath);
+          }
+          deleted++;
+        }
+      } catch { /* ignore individual file errors */ }
+    }
+  } catch { /* ignore readdir errors */ }
+
+  if (deleted > 0) {
+    console.log(`Pre-render cleanup: deleted ${deleted} old outputs (${(bytes / 1024 / 1024).toFixed(1)}MB)`);
+  }
+}
+
 function isPathSafe(resolvedPath: string, allowedDir: string): boolean {
   const normalized = path.normalize(resolvedPath);
   return normalized.startsWith(path.normalize(allowedDir));
@@ -137,6 +169,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Clean outputs older than 30 min to free disk (preserves current session)
+    cleanOldOutputs();
+
     let outputPaths: string[];
     try {
       outputPaths = await batchRender(videoPaths, overlays, musicConfig, undefined, quality);
@@ -154,6 +189,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Upload to cloud storage if configured, otherwise return local paths
+    const usingCloud = isCloudStorage();
     const results = [];
     for (let i = 0; i < outputPaths.length; i++) {
       const p = outputPaths[i];
@@ -164,6 +200,10 @@ export async function POST(request: NextRequest) {
         originalName: videos[i].originalName,
         outputUrl,
       });
+      // If using cloud storage, delete local file to save disk space
+      if (usingCloud) {
+        try { fs.unlinkSync(p); } catch { /* ignore */ }
+      }
     }
 
     // Check token alerts after successful render
