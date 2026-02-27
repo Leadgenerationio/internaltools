@@ -32,7 +32,7 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
   /api/generate-ads  /api/generate-ads  /api/upload     /api/render
   (Claude API)       (regenerate)    /api/upload-music  (FFmpeg)
   (Cost tracking)                    /api/generate-video (Cost tracking)
-                                     (Google Veo)
+                                     (kie.ai)
                                      (Cost tracking)
         │
         ▼
@@ -49,6 +49,9 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
   - AdminAuditLog (admin action audit trail)
   - Notifications (in-app, per-user, read/unread)
   - ProjectTemplates (system + company-owned)
+  - PasswordResetTokens (DB-backed, replaces in-memory Map)
+  - ProcessedWebhookEvents (Stripe idempotency deduplication)
+  - SpendAlertLogs (budget threshold tracking, replaces in-memory Set)
 ```
 
 ## Tech Stack
@@ -63,7 +66,7 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 | Video processing | FFmpeg (shell exec) | Compositing, scaling, audio mixing |
 | Overlay rendering | @napi-rs/canvas | Text-to-PNG with emoji support |
 | AI copy generation | Anthropic SDK (Claude Sonnet) | TOFU/MOFU/BOFU ad scripts |
-| AI video generation | Google Veo 3.1 | Optional AI background videos |
+| AI video generation | kie.ai REST API (veo3_fast / veo3) | Optional AI background videos |
 | Token billing | Prisma transactions | Atomic token deduction/credit, append-only ledger, budget alerts |
 | Payments | Stripe (Checkout + Customer Portal) | Subscriptions, one-time token top-ups, webhook handling |
 | Email | Resend SDK | Transactional emails (11 templates — welcome, reset, budget alerts, receipts, team invite, render complete/failed, subscription renewal, ticket created/reply) |
@@ -93,7 +96,7 @@ Users are billed in tokens, not raw API costs. This abstracts away internal cost
 - **Token model**:
   - Ad copy generation = **FREE** (0 tokens) — users can create and regenerate unlimited ad scripts
   - 1 finished ad video = **1 token** (using own uploaded background video)
-  - 1 AI-generated video (Veo) = **10 tokens** (bundled — includes all renders onto it)
+  - 1 AI-generated video (kie.ai) = **10 tokens** (bundled — includes all renders onto it)
 - **Plan tiers**: FREE (40 tokens/mo), STARTER (500 tokens/mo, £29), PRO (2,500 tokens/mo, £99), ENTERPRISE (custom)
 - **Top-ups**: Paid plans can purchase additional token packages (Small/Medium/Large at plan-specific per-token rates)
 - **Pre-deduction pattern**: Tokens are deducted atomically BEFORE expensive API calls using Prisma interactive transactions with row-level locking. If the operation fails, tokens are automatically refunded.
@@ -149,7 +152,7 @@ Each ad has 4-5 editable text boxes. User can:
 - Approve all at once
 
 ### Step 3: Media
-- Upload background videos (drag-drop, multiple) or generate via Veo
+- Upload background videos (drag-drop, multiple) or generate via kie.ai
 - Upload background music (optional) with volume/fade controls
 - Configure overlay style: preset picker + custom colours, font, opacity, stagger timing
 - Preview any approved ad overlaid on the video in a 9:16 preview player
@@ -258,7 +261,7 @@ src/
 │       ├── projects/[id]/ads/
 │       │   └── route.ts             # Save ads to project (POST — replace all)
 │       ├── generate-ads/route.ts     # Claude API → ad copy (+ cost tracking)
-│       ├── generate-video/route.ts   # Google Veo → AI videos (+ cost tracking)
+│       ├── generate-video/route.ts   # kie.ai → AI videos (+ cost tracking)
 │       ├── render/route.ts           # FFmpeg batch render + cloud storage (+ cost tracking)
 │       ├── upload/route.ts           # Video file upload
 │       ├── upload-music/route.ts     # Music file upload
@@ -272,7 +275,7 @@ src/
 │   ├── StyleConfigurator.tsx         # Overlay style presets + custom controls + template library
 │   ├── VideoSourceTabs.tsx           # Upload vs AI generate tabs
 │   ├── VideoUploader.tsx             # Drag-drop video upload with cancel
-│   ├── VideoGenerator.tsx            # Veo video generation with cancel
+│   ├── VideoGenerator.tsx            # kie.ai video generation with cancel
 │   ├── MusicSelector.tsx             # Upload and configure background music
 │   ├── VideoPreview.tsx              # Real-time 9:16 preview + trim controls
 │   ├── TextOverlayEditor.tsx         # Manual overlay editor
@@ -310,7 +313,7 @@ src/
 │   ├── sanitize.ts                   # HTML stripping for ticket/message input sanitization
 │   └── file-url.ts                   # Helper: converts paths to /api/files URLs
 ├── prisma/
-│   ├── schema.prisma                 # Data models: Company, User, Session, ApiUsage, SupportTicket, TicketMessage, AdminAuditLog, Notification, ProjectTemplate
+│   ├── schema.prisma                 # Data models: Company, User, Session, ApiUsage, SupportTicket, TicketMessage, AdminAuditLog, Notification, ProjectTemplate, PasswordResetToken, ProcessedWebhookEvent, SpendAlertLog
 │   └── migrations/                   # Database migrations
 └── auth.config.ts                    # NextAuth v5 configuration
 ```
@@ -408,7 +411,7 @@ FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to 
 | `/api/projects/[id]` | DELETE | Delete project (cascades, OWNER/ADMIN/creator only) | default | required |
 | `/api/projects/[id]/ads` | POST | Save ads to project (replace all) | default | required |
 | `/api/generate-ads` | POST | Generate ad copy via Claude (FREE, 0 tokens) | 60s | required |
-| `/api/generate-video` | POST | Generate video via Veo (10 tokens/video) | 300s | required + token deduction |
+| `/api/generate-video` | POST | Generate video via kie.ai (10 tokens/video) | 300s | required + token deduction |
 | `/api/upload` | POST | Upload video files (max 500MB each) | 60s | required |
 | `/api/upload-music` | POST | Upload music (max 50MB, validated formats) | default | required |
 | `/api/render` | POST | Batch FFmpeg render (1 token/output video) | 300s | required + token deduction |
@@ -428,7 +431,7 @@ NEXTAUTH_URL=http://localhost:3000  # Required — Base URL for NextAuth callbac
 
 # API Keys
 ANTHROPIC_API_KEY=sk-ant-...     # Required for ad copy generation
-GOOGLE_API_KEY=...               # Optional for Veo video generation
+KIE_API_KEY=...                  # Optional for kie.ai video generation (models: veo3_fast, veo3)
 
 # Super Admin
 SUPER_ADMIN_EMAILS=admin@example.com  # Comma-separated list of super admin emails
@@ -612,7 +615,7 @@ Plan tiers (FREE/STARTER/PRO/ENTERPRISE) defined in `src/lib/plans.ts`:
 - Plan upgrade/downgrade via Billing page (Stripe Checkout + Customer Portal)
 
 ### Token Flow
-1. User initiates operation (render, Veo generation)
+1. User initiates operation (render, kie.ai video generation)
 2. `checkTokenBalance()` verifies sufficient tokens + monthly budget
 3. `deductTokens()` atomically deducts in a Prisma transaction
 4. Operation proceeds
@@ -754,12 +757,24 @@ OAuth2 integration allowing users to export rendered videos directly to Google D
 - **File serving**: Next.js standalone does NOT serve runtime-generated files from `public/`. All file URLs use `/api/files?path=xxx` (served by `src/app/api/files/route.ts`)
 - **Startup**: `docker-entrypoint.sh` handles volume symlinks → Prisma migrate → server start
 
+## Scaling (Phase 1 — Reliability)
+
+Phase 1 eliminates single-instance bottlenecks without adding new infrastructure:
+
+- **File streaming**: `/api/files` uses `createReadStream()` with HTTP Range header support instead of `readFile()`. Memory usage drops from O(fileSize × concurrent requests) to O(streamBuffer × concurrent requests). Enables video seeking without buffering the entire file.
+- **Password reset tokens → database**: `PasswordResetToken` Prisma model replaces the in-memory `Map`. Tokens survive server restarts and work across multiple instances. Expired/used tokens cleaned up on each request.
+- **Stripe webhook idempotency**: `ProcessedWebhookEvent` table stores processed Stripe event IDs. Duplicate webhooks (Stripe retries) are skipped. Events older than 7 days auto-cleaned.
+- **Spend alerts → database**: `SpendAlertLog` table with unique constraint on (companyId, monthKey, threshold) replaces in-memory `Set`. Alerts survive restarts, and the unique constraint prevents duplicate sends across instances.
+- **Video gen timeout alignment**: Timeout aligned under `maxDuration` so users get a clean error instead of a connection reset.
+
+Migration: `20260227100000_add_scaling_phase1`
+
 ## Prerequisites
 
 - Node.js 18+
 - PostgreSQL 14+ (local or remote)
 - FFmpeg installed (`brew install ffmpeg` / `apt install ffmpeg`)
 - Anthropic API key for ad copy generation
-- Google API key for Veo video generation (optional)
+- kie.ai API key for AI video generation (optional)
 - SMTP server for email invitations (or use sendgrid/mailgun with adapter)
 - 32+ char random string for `NEXTAUTH_SECRET`

@@ -69,11 +69,11 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **Multi-tenancy**: Companies own users with roles (OWNER/ADMIN/MEMBER); all queries filtered by `company_id` from session
 - **Video processing**: FFmpeg via shell exec, @napi-rs/canvas for emoji-supporting overlay PNGs
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) — generates TOFU/MOFU/BOFU funnel ad text
-- **AI video generation**: Google Veo 3.1 (optional)
-- **Token billing**: Users pay in tokens (1 token = 1 finished video, 10 tokens = 1 Veo AI video bundled with renders). Ad copy generation is FREE. See `src/lib/token-pricing.ts`, `src/lib/token-balance.ts`.
+- **AI video generation**: kie.ai REST API — models veo3_fast ($0.40/video) and veo3 ($2.00/video), fixed 8s duration (optional)
+- **Token billing**: Users pay in tokens (1 token = 1 finished video, 10 tokens = 1 kie.ai AI video bundled with renders). Ad copy generation is FREE. See `src/lib/token-pricing.ts`, `src/lib/token-balance.ts`.
 - **Internal cost tracking**: Per-call API cost logging (in cents) via `src/lib/track-usage.ts` — admin-only, hidden from users
 - **Files**: uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/` — symlinked to Railway Volume (`/app/data`) via `docker-entrypoint.sh`
-- **File serving**: All file URLs use `/api/files?path=xxx` — Next.js standalone doesn't serve runtime files from `public/`. Always use `fileUrl()` from `src/lib/file-url.ts` to generate URLs.
+- **File serving**: All file URLs use `/api/files?path=xxx` — Next.js standalone doesn't serve runtime files from `public/`. Always use `fileUrl()` from `src/lib/file-url.ts` to generate URLs. Files are streamed via `createReadStream()` with HTTP Range header support (not `readFile()`).
 - **Cloud storage**: Optional S3/R2 via `src/lib/storage.ts` — activated by `S3_BUCKET` env var, lazy-loads AWS SDK
 - **Auth**: NextAuth v5 credentials provider — JWT sessions, `AUTH_SECRET` env var for signing, `secureCookie: true` in middleware for reverse proxy compatibility
 - **State management**: React useState, no external store
@@ -86,12 +86,12 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **No branding in ads**: "Andro Media" = Meta's ad system, not a brand to put in generated copy
 - **Super admin dashboard**: Full control panel at `/admin` with 5 tabs (Overview, Companies, Users, Transactions, Support). API routes at `/api/admin/*`. Access gated by `SUPER_ADMIN_EMAILS` env var. Features: company management (plan change, suspension, token grants), user impersonation, platform-wide transaction viewer, audit logging via `AdminAuditLog` model. Auth helper at `src/lib/admin-auth.ts`.
 - **Company suspension**: `suspended` flag on Company model. When suspended, `getAuthContext()` in `api-auth.ts` blocks all API calls with 403. Suspended users see `/suspended` page. Suspension requires typing company name to confirm.
-- **Plan enforcement**: Plan tiers (FREE 40tok/STARTER 500tok £29/PRO 2500tok £99/ENTERPRISE custom) in `src/lib/plans.ts`. Token balance checked in `src/lib/check-limits.ts` before render and Veo operations. User limits checked on invite.
-- **Token budget alerts**: Webhook notifications at 50%/80%/100% of monthly token budget via `src/lib/spend-alerts.ts`
+- **Plan enforcement**: Plan tiers (FREE 40tok/STARTER 500tok £29/PRO 2500tok £99/ENTERPRISE custom) in `src/lib/plans.ts`. Token balance checked in `src/lib/check-limits.ts` before render and kie.ai video operations. User limits checked on invite.
+- **Token budget alerts**: Webhook notifications at 50%/80%/100% of monthly token budget via `src/lib/spend-alerts.ts`. Alert state stored in `SpendAlertLog` DB table (not in-memory) — survives restarts, works across instances.
 - **Projects**: CRUD API at `/api/projects`, list page at `/projects`, ads save at `/api/projects/[id]/ads`
-- **Billing & Stripe**: Token balance + plan comparison at `/billing`, token transaction history at `/usage`, monthly token budget editable in settings. Stripe Checkout for subscriptions (`/api/billing/create-checkout`) and one-time token top-ups. Stripe Customer Portal for subscription management (`/api/billing/manage`). Webhook at `/api/webhooks/stripe` handles checkout completion, invoice renewals, subscription changes/cancellations. Stripe client singleton at `src/lib/stripe.ts`. Company model stores `stripeCustomerId` + `stripeSubscriptionId`.
+- **Billing & Stripe**: Token balance + plan comparison at `/billing`, token transaction history at `/usage`, monthly token budget editable in settings. Stripe Checkout for subscriptions (`/api/billing/create-checkout`) and one-time token top-ups. Stripe Customer Portal for subscription management (`/api/billing/manage`). Webhook at `/api/webhooks/stripe` handles checkout completion, invoice renewals, subscription changes/cancellations — **idempotent** via `ProcessedWebhookEvent` deduplication table. Stripe client singleton at `src/lib/stripe.ts`. Company model stores `stripeCustomerId` + `stripeSubscriptionId`.
 - **Transactional email**: Resend SDK via `src/lib/email.ts` — 11 templates (welcome, password reset, plan upgrade, budget alert, payment receipt, team invite, render complete, render failed, subscription renewal, ticket created, ticket reply). Fire-and-forget, dark-themed HTML.
-- **Password reset**: Token-based reset flow at `/api/auth/reset-password` + `/reset-password` page (sends email via Resend)
+- **Password reset**: Token-based reset flow at `/api/auth/reset-password` + `/reset-password` page (sends email via Resend). Tokens stored in `PasswordResetToken` DB table (not in-memory).
 - **CSV export**: Token transaction data downloadable as CSV from `/api/usage/export`
 - **Company logo**: Upload at `/api/company/logo`, displayed in settings
 - **Help & Legal**: `/help` page (~28 FAQ articles, search, accordions), `/privacy` (GDPR-compliant), `/terms` (15 sections). All public routes.
