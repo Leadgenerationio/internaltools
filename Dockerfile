@@ -68,10 +68,16 @@ COPY --from=builder /app/src/generated ./src/generated
 
 # Install prisma CLI for migrations (has many transitive deps, easier to install fresh)
 # Pin to the same version as package.json to avoid compatibility issues
-RUN npm install prisma@7.4.1 --save-dev
+# Also install tsx for worker mode (TypeScript execution)
+RUN npm install prisma@7.4.1 --save-dev && npm install tsx@4
 
 # Create the public directory and subdirectories the app needs
 RUN mkdir -p public/uploads public/outputs public/music public/logos
+
+# Copy worker source files + tsconfig for worker mode (tsx resolves @/ paths)
+COPY --from=builder /app/src/workers ./src/workers
+COPY --from=builder /app/src/lib ./src/lib
+COPY --from=builder /app/tsconfig.json ./tsconfig.json
 
 # Copy startup script
 COPY docker-entrypoint.sh ./docker-entrypoint.sh

@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, Suspense } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { v4 as uuidv4 } from 'uuid';
 import AdBriefForm from '@/components/AdBriefForm';
 import FunnelReview from '@/components/FunnelReview';
@@ -58,6 +59,18 @@ function adsToOverlays(
 }
 
 export default function Home() {
+  return (
+    <Suspense>
+      <HomeContent />
+    </Suspense>
+  );
+}
+
+function HomeContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const projectIdParam = searchParams.get('projectId');
+
   // Step management
   const [step, setStep] = useState<AppStep>('brief');
 
@@ -106,7 +119,112 @@ export default function Home() {
   // Persist state to localStorage so user doesn't lose progress between refreshes
   const [isRestored, setIsRestored] = useState(false);
 
+  // Load project from DB when projectId is in the URL (e.g. opening from projects page or using a template)
   useEffect(() => {
+    if (!projectIdParam) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await fetch(`/api/projects/${projectIdParam}`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const p = data.project;
+        if (!p || cancelled) return;
+
+        // Populate brief (add defaults for fields that may be missing from older templates)
+        if (p.brief) {
+          setBrief({
+            productService: '',
+            targetAudience: '',
+            sellingPoints: '',
+            adExamples: '',
+            toneStyle: '',
+            additionalContext: '',
+            addEmojis: true,
+            language: 'English',
+            ...p.brief as Partial<AdBrief>,
+          });
+        }
+
+        // Populate overlay style
+        if (p.overlayStyle) setOverlayStyle(p.overlayStyle as TextStyle);
+        if (typeof p.staggerSeconds === 'number') setStaggerSeconds(p.staggerSeconds);
+        if (p.renderQuality) setRenderQuality(p.renderQuality);
+
+        // Populate ads (if saved)
+        if (p.ads?.length) {
+          const loadedAds: GeneratedAd[] = p.ads.map((ad: any) => ({
+            id: ad.id,
+            funnelStage: ad.funnelStage as FunnelStage,
+            variationLabel: ad.variationLabel,
+            textBoxes: ad.textBoxes || [],
+            approved: ad.approved,
+          }));
+          setAds(loadedAds);
+          // If there are approved ads, move to review step
+          if (loadedAds.some((a) => a.approved)) {
+            setStep('review');
+          }
+        }
+
+        // Populate videos (if any)
+        if (p.videos?.length) {
+          setVideos(
+            p.videos.map((v: any) => ({
+              id: v.id,
+              filename: v.originalName,
+              originalName: v.originalName,
+              path: v.file?.publicUrl || '',
+              duration: v.duration,
+              width: v.width,
+              height: v.height,
+              thumbnail: v.thumbnailUrl || '',
+              trimStart: v.trimStart ?? undefined,
+              trimEnd: v.trimEnd ?? undefined,
+            }))
+          );
+        }
+
+        // Populate music (if any)
+        if (p.music) {
+          setMusic({
+            id: p.music.id,
+            name: p.music.name,
+            file: p.music.file?.publicUrl || '',
+            volume: p.music.volume,
+            startTime: p.music.startTime,
+            fadeIn: p.music.fadeIn,
+            fadeOut: p.music.fadeOut,
+          });
+        }
+
+        // Determine the right step based on loaded data
+        if (p.renders?.length) {
+          setStep('render');
+        } else if (p.videos?.length) {
+          setStep('media');
+        } else if (p.ads?.length && p.ads.some((a: any) => a.approved)) {
+          setStep('review');
+        }
+
+        // Clean the URL so a refresh doesn't re-fetch
+        router.replace('/', { scroll: false });
+      } catch {
+        // Failed to load project — fall through to localStorage
+      } finally {
+        if (!cancelled) setIsRestored(true);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [projectIdParam, router]);
+
+  // Restore from localStorage when no projectId in URL
+  useEffect(() => {
+    if (projectIdParam) return; // Skip — project loading handles this
+
     // Migrate old direct file URLs (/uploads/xxx) to API-served URLs (/api/files?path=xxx)
     function migrateUrl(url: string | undefined): string | undefined {
       if (!url) return url;
@@ -140,7 +258,7 @@ export default function Home() {
       }
     } catch { /* ignore corrupt data */ }
     setIsRestored(true);
-  }, []);
+  }, [projectIdParam]);
 
   useEffect(() => {
     if (!isRestored) return;
@@ -318,73 +436,112 @@ export default function Home() {
     setRenderCurrent(0);
     setRenderProgress(`Starting render of ${totalCount} video${totalCount > 1 ? 's' : ''}...`);
 
-    const allResults: RenderResult[] = [];
-    let completed = 0;
-    let cancelled = false;
-
-    for (const ad of approvedAds) {
-      if (cancelled) break;
-      for (const vid of videos) {
-        if (abort.signal.aborted) {
-          cancelled = true;
-          break;
-        }
-
-        // Compute overlays per-video so timing matches each video's actual (trimmed) duration
+    // Build all render items (ad x video combos) upfront
+    const items = approvedAds.flatMap((ad) =>
+      videos.map((vid) => {
         const trimmedDuration = (vid.trimEnd ?? vid.duration) - (vid.trimStart ?? 0);
-        const overlays = adsToOverlays(ad, trimmedDuration, overlayStyle, staggerSeconds);
+        return {
+          video: vid,
+          overlays: adsToOverlays(ad, trimmedDuration, overlayStyle, staggerSeconds),
+          adLabel: ad.variationLabel,
+        };
+      })
+    );
 
-        setRenderProgress(`Rendering "${ad.variationLabel}" — ${vid.originalName} (${completed + 1} of ${totalCount})...`);
+    try {
+      const res = await fetch('/api/render', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items, music, quality: renderQuality }),
+        signal: abort.signal,
+      });
 
-        try {
-          const res = await fetch('/api/render', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ videos: [vid], overlays, music, quality: renderQuality }),
-            signal: abort.signal,
-          });
+      const data = await res.json();
 
-          const data = await res.json();
-
-          if (data.error) {
-            setRenderProgress(`Error on "${ad.variationLabel}" — ${vid.originalName}: ${data.error}`);
-            completed++;
-            setRenderCurrent(completed);
-            continue;
-          }
-
-          for (const r of data.results) {
-            completed++;
-            setRenderCurrent(completed);
-            allResults.push({
-              ...r,
-              adLabel: ad.variationLabel,
-            });
-          }
-
-          setRenderProgress(`Rendered ${completed} of ${totalCount}...`);
-        } catch (err: any) {
-          if (err.name === 'AbortError') { cancelled = true; break; }
-          setRenderProgress(`Error on "${ad.variationLabel}" — ${vid.originalName}: ${err.message}`);
-          completed++;
-          setRenderCurrent(completed);
-        }
+      if (!res.ok) {
+        setRenderProgress(data.error || `Render failed (${res.status})`);
+        setRendering(false);
+        renderAbortRef.current = null;
+        return;
       }
+
+      // Background job path — poll for results
+      if (data.jobId) {
+        setRenderProgress(`Render queued — waiting to start...`);
+
+        const { pollJob } = await import('@/lib/poll-job');
+        const result = await pollJob(data.jobId, 'render', {
+          signal: abort.signal,
+          onProgress: (progress, state) => {
+            const completed = Math.round((progress / 100) * totalCount);
+            setRenderCurrent(completed);
+            if (state === 'waiting') {
+              setRenderProgress(`Queued — waiting to start...`);
+            } else {
+              setRenderProgress(`Rendering... ${progress}% (${completed} of ${totalCount})`);
+            }
+          },
+        });
+
+        if (result.state === 'failed') {
+          setRenderProgress(result.error || 'Render failed');
+          setRendering(false);
+          renderAbortRef.current = null;
+          return;
+        }
+
+        const jobResult = result.result;
+        const allResults: RenderResult[] = (jobResult?.results || []).map((r: any) => ({
+          videoId: r.videoId,
+          originalName: r.originalName,
+          adLabel: r.adLabel,
+          outputUrl: r.outputUrl,
+        }));
+
+        setResults(allResults);
+        setRenderCurrent(totalCount);
+        const failCount = jobResult?.failed || 0;
+        setRenderProgress(
+          failCount === 0
+            ? `Done! ${allResults.length} video${allResults.length !== 1 ? 's' : ''} rendered.`
+            : `Done with ${allResults.length} of ${totalCount} videos (${failCount} failed).`
+        );
+        setRendering(false);
+        renderAbortRef.current = null;
+        if (allResults.length > 0) {
+          resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        return;
+      }
+
+      // Synchronous path (no Redis) — results returned directly
+      const allResults: RenderResult[] = (data.results || []).map((r: any) => ({
+        videoId: r.videoId,
+        originalName: r.originalName,
+        adLabel: r.adLabel || '',
+        outputUrl: r.outputUrl,
+      }));
+
+      setResults(allResults);
+      setRenderCurrent(totalCount);
+      const failCount = data.failed || 0;
+      setRenderProgress(
+        failCount === 0
+          ? `Done! ${allResults.length} video${allResults.length !== 1 ? 's' : ''} rendered.`
+          : `Done with ${allResults.length} of ${totalCount} videos (${failCount} failed).`
+      );
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        setRenderProgress('Render cancelled.');
+      } else {
+        setRenderProgress(`Render error: ${err.message}`);
+      }
+    } finally {
+      renderAbortRef.current = null;
+      setRendering(false);
     }
 
-    setResults(allResults);
-    if (!cancelled) {
-      setRenderProgress(
-        allResults.length === totalCount
-          ? `Done! ${allResults.length} video${allResults.length !== 1 ? 's' : ''} rendered.`
-          : `Done with ${allResults.length} of ${totalCount} videos (some failed).`
-      );
-    } else if (allResults.length > 0) {
-      setRenderProgress(`Cancelled. ${allResults.length} video${allResults.length !== 1 ? 's' : ''} completed before cancellation.`);
-    }
-    renderAbortRef.current = null;
-    setRendering(false);
-    if (allResults.length > 0) {
+    if (results.length > 0) {
       resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   };

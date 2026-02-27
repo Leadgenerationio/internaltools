@@ -48,5 +48,11 @@ fi
 echo "Running database migrations..."
 npx prisma migrate deploy
 
+# Worker mode: start BullMQ workers instead of web server
+if [ "$WORKER_MODE" = "true" ]; then
+  echo "Starting BullMQ workers..."
+  exec npx tsx src/workers/index.ts
+fi
+
 echo "Starting server..."
 exec node server.js

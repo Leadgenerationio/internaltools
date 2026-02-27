@@ -1,11 +1,26 @@
 import { PrismaClient } from '@/generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+import pg from 'pg';
 
 const globalForPrisma = globalThis as unknown as { prisma: any };
 
 function createPrismaClient(): any {
-  // Prisma 7 with prisma-client generator requires a driver adapter
-  const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+  // Configurable pool size — default 20 connections per instance
+  const poolSize = parseInt(process.env.DB_POOL_SIZE || '20', 10);
+
+  const pool = new pg.Pool({
+    connectionString: process.env.DATABASE_URL,
+    max: poolSize,
+    connectionTimeoutMillis: 5000,
+    idleTimeoutMillis: 30_000,
+  });
+
+  pool.on('error', (err) => {
+    console.error('[Prisma/pg] Pool error:', err.message);
+  });
+
+  // PrismaPg accepts pg.Pool directly as the first argument
+  const adapter = new PrismaPg(pool);
   return new (PrismaClient as any)({ adapter });
 }
 

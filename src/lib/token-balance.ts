@@ -4,6 +4,7 @@
  */
 
 import { prisma } from '@/lib/prisma';
+import { invalidateCompanyCache } from '@/lib/cache';
 
 type DebitResult =
   | { success: true; newBalance: number; transactionId: string }
@@ -22,21 +23,12 @@ export async function deductTokens(params: {
   apiUsageLogId?: string;
 }): Promise<DebitResult> {
   return prisma.$transaction(async (tx: any) => {
+    // Check monthly token budget if set (soft limit — read before deduction)
     const company = await tx.company.findUniqueOrThrow({
       where: { id: params.companyId },
-      select: { tokenBalance: true, monthlyTokenBudget: true },
+      select: { monthlyTokenBudget: true, tokenBalance: true },
     });
 
-    if (company.tokenBalance < params.amount) {
-      return {
-        success: false as const,
-        error: 'INSUFFICIENT_TOKENS' as const,
-        balance: company.tokenBalance,
-        required: params.amount,
-      };
-    }
-
-    // Check monthly token budget if set
     if (company.monthlyTokenBudget) {
       const startOfMonth = new Date();
       startOfMonth.setDate(1);
@@ -62,12 +54,29 @@ export async function deductTokens(params: {
       }
     }
 
-    const newBalance = company.tokenBalance - params.amount;
+    // Atomic balance deduction — single SQL statement prevents TOCTOU race condition.
+    // If balance < amount, UPDATE matches 0 rows and returns nothing.
+    const result: any[] = await tx.$queryRawUnsafe(
+      `UPDATE "Company" SET "tokenBalance" = "tokenBalance" - $1 WHERE id = $2 AND "tokenBalance" >= $1 RETURNING "tokenBalance"`,
+      params.amount,
+      params.companyId
+    );
 
-    await tx.company.update({
-      where: { id: params.companyId },
-      data: { tokenBalance: newBalance },
-    });
+    if (result.length === 0) {
+      // Insufficient balance
+      const current = await tx.company.findUnique({
+        where: { id: params.companyId },
+        select: { tokenBalance: true },
+      });
+      return {
+        success: false as const,
+        error: 'INSUFFICIENT_TOKENS' as const,
+        balance: current?.tokenBalance ?? 0,
+        required: params.amount,
+      };
+    }
+
+    const newBalance = Number(result[0].tokenBalance);
 
     const transaction = await tx.tokenTransaction.create({
       data: {
@@ -81,6 +90,9 @@ export async function deductTokens(params: {
         apiUsageLogId: params.apiUsageLogId,
       },
     });
+
+    // Invalidate cached balance so next check-limits read sees the new balance
+    invalidateCompanyCache(params.companyId).catch(() => {});
 
     return {
       success: true as const,
@@ -128,6 +140,9 @@ export async function creditTokens(params: {
         expiresAt: params.expiresAt,
       },
     });
+
+    // Invalidate cached balance
+    invalidateCompanyCache(params.companyId).catch(() => {});
 
     return { newBalance, transactionId: transaction.id };
   });

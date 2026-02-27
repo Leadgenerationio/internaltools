@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthContext } from '@/lib/api-auth';
 import { prisma } from '@/lib/prisma';
+import { invalidateUnreadCount } from '@/lib/cache';
 
 /**
  * PUT /api/notifications/[id]/read
@@ -30,6 +31,9 @@ export async function PUT(
       where: { id },
       data: { read: true },
     });
+
+    // Invalidate cached unread count
+    invalidateUnreadCount(userId).catch(() => {});
 
     return NextResponse.json({ success: true });
   } catch (error) {

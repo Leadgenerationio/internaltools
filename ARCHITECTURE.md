@@ -67,6 +67,7 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 | Overlay rendering | @napi-rs/canvas | Text-to-PNG with emoji support |
 | AI copy generation | Anthropic SDK (Claude Sonnet) | TOFU/MOFU/BOFU ad scripts |
 | AI video generation | kie.ai REST API (veo3_fast / veo3) | Optional AI background videos |
+| Background jobs | BullMQ + Redis (ioredis) | Async render + video gen, survives page refresh |
 | Token billing | Prisma transactions | Atomic token deduction/credit, append-only ledger, budget alerts |
 | Payments | Stripe (Checkout + Customer Portal) | Subscriptions, one-time token top-ups, webhook handling |
 | Email | Resend SDK | Transactional emails (11 templates — welcome, reset, budget alerts, receipts, team invite, render complete/failed, subscription renewal, ticket created/reply) |
@@ -99,7 +100,7 @@ Users are billed in tokens, not raw API costs. This abstracts away internal cost
   - 1 AI-generated video (kie.ai) = **10 tokens** (bundled — includes all renders onto it)
 - **Plan tiers**: FREE (40 tokens/mo), STARTER (500 tokens/mo, £29), PRO (2,500 tokens/mo, £99), ENTERPRISE (custom)
 - **Top-ups**: Paid plans can purchase additional token packages (Small/Medium/Large at plan-specific per-token rates)
-- **Pre-deduction pattern**: Tokens are deducted atomically BEFORE expensive API calls using Prisma interactive transactions with row-level locking. If the operation fails, tokens are automatically refunded.
+- **Pre-deduction pattern**: Tokens are deducted atomically BEFORE expensive API calls using raw SQL (`UPDATE ... WHERE balance >= amount RETURNING balance`) to prevent TOCTOU race conditions. If the operation fails, tokens are automatically refunded.
 - **Append-only ledger**: All token changes recorded in `TokenTransaction` table for full auditability
 - **Monthly token budget**: Owners can set an optional monthly cap on token usage in Settings
 - **Internal cost tracking**: Raw API costs (in cents) still logged in `ApiUsageLog` for admin visibility — hidden from users
@@ -260,9 +261,10 @@ src/
 │       ├── projects/[id]/route.ts   # Get, update, delete project (GET/PUT/DELETE)
 │       ├── projects/[id]/ads/
 │       │   └── route.ts             # Save ads to project (POST — replace all)
+│       ├── jobs/[id]/route.ts         # Background job status polling (state, progress, result)
 │       ├── generate-ads/route.ts     # Claude API → ad copy (+ cost tracking)
-│       ├── generate-video/route.ts   # kie.ai → AI videos (+ cost tracking)
-│       ├── render/route.ts           # FFmpeg batch render + cloud storage (+ cost tracking)
+│       ├── generate-video/route.ts   # kie.ai → AI videos — enqueues BullMQ job or falls back to sync
+│       ├── render/route.ts           # FFmpeg batch render — enqueues BullMQ job or falls back to sync
 │       ├── upload/route.ts           # Video file upload
 │       ├── upload-music/route.ts     # Music file upload
 │       ├── download-zip/route.ts     # Bundle outputs into ZIP
@@ -295,12 +297,12 @@ src/
 │   ├── ffmpeg-renderer.ts            # FFmpeg render pipeline (draft/final quality, trim)
 │   ├── overlay-renderer.ts           # Canvas → PNG overlay generation
 │   ├── get-video-info.ts             # ffprobe metadata + FFmpeg check
-│   ├── storage.ts                    # Cloud storage abstraction (local FS / S3 / R2)
+│   ├── storage.ts                    # Cloud storage abstraction (local FS / S3 / R2, streaming uploads)
 │   ├── logger.ts                     # Winston logger config
 │   ├── prisma.ts                     # Prisma client singleton
 │   ├── auth.ts                       # NextAuth session helpers, user context
 │   ├── token-pricing.ts               # Token costs per operation, calculation helpers
-│   ├── token-balance.ts               # Atomic token deduct/credit/refund/balance/history
+│   ├── token-balance.ts               # Atomic token deduct (raw SQL)/credit/refund/balance/history
 │   ├── pricing.ts                    # Internal API cost calculation (admin-only)
 │   ├── track-usage.ts                # Per-call API usage logging (internal costs)
 │   ├── plans.ts                      # Plan tiers with token allocations + top-up pricing
@@ -311,7 +313,17 @@ src/
 │   ├── api-auth.ts                   # Auth middleware helpers for API routes
 │   ├── admin-auth.ts                 # Super admin auth helper (SUPER_ADMIN_EMAILS check)
 │   ├── sanitize.ts                   # HTML stripping for ticket/message input sanitization
-│   └── file-url.ts                   # Helper: converts paths to /api/files URLs
+│   ├── file-url.ts                   # Helper: converts paths to /api/files URLs (or CDN URLs when CDN_URL set)
+│   ├── redis.ts                      # ioredis singleton (lazy, graceful fallback)
+│   ├── rate-limit.ts                 # Redis sorted-set sliding window rate limiter
+│   ├── cache.ts                      # Redis-backed TTL cache (company info, unread counts)
+│   ├── queue.ts                      # BullMQ queue setup (renderQueue, videoGenQueue)
+│   ├── job-types.ts                  # Type-safe job payloads for background jobs
+│   └── poll-job.ts                   # Client-side job polling with exponential backoff
+├── workers/
+│   ├── index.ts                      # Worker entry point (starts all BullMQ workers)
+│   ├── render-worker.ts              # Render job processor (FFmpeg, uploads, notifications)
+│   └── video-gen-worker.ts           # Video gen job processor (kie.ai, download, thumbnail)
 ├── prisma/
 │   ├── schema.prisma                 # Data models: Company, User, Session, ApiUsage, SupportTicket, TicketMessage, AdminAuditLog, Notification, ProjectTemplate, PasswordResetToken, ProcessedWebhookEvent, SpendAlertLog
 │   └── migrations/                   # Database migrations
@@ -337,6 +349,45 @@ src/
 
 ### Why Canvas PNGs instead of FFmpeg drawtext?
 FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to PNG with @napi-rs/canvas (which uses system emoji fonts), we get full emoji support. The PNGs are then composited using FFmpeg's `overlay` filter.
+
+## Background Job System (BullMQ)
+
+Long-running operations (render, video generation) are processed asynchronously via BullMQ when Redis is available. This prevents HTTP timeouts and survives page refreshes.
+
+### Architecture
+```
+Client (browser)
+  │ POST /api/render or /api/generate-video
+  ▼
+API Route (validation + token deduction)
+  │ If Redis available: enqueue job → return { jobId } immediately
+  │ If no Redis: process synchronously (fallback)
+  ▼
+Redis (BullMQ queue)
+  │
+  ▼
+Worker Service (separate Railway instance, WORKER_MODE=true)
+  ├── render-worker (concurrency: 2) — FFmpeg render, upload, email, notification
+  └── video-gen-worker (concurrency: 2) — kie.ai submit, poll, download, thumbnail
+  │
+  ▼
+Client polls /api/jobs/[id]?type=render|video-gen
+  │ Exponential backoff: 3s → 5s → 10s → 15s
+  ▼
+Job completed → results shown
+```
+
+### Key files
+- `src/lib/queue.ts` — Queue factory (renderQueue, videoGenQueue)
+- `src/lib/job-types.ts` — Type-safe job payloads (RenderJobData, VideoGenJobData, JobStatus)
+- `src/lib/poll-job.ts` — Client-side polling utility with exponential backoff
+- `src/workers/index.ts` — Worker entry point
+- `src/workers/render-worker.ts` — Render job processor
+- `src/workers/video-gen-worker.ts` — Video gen job processor
+- `src/app/api/jobs/[id]/route.ts` — Job status polling endpoint
+
+### Graceful degradation
+When `REDIS_URL` is not configured, all operations fall back to synchronous in-route processing (the pre-Phase 3 behavior). No code changes needed to run without Redis.
 
 ## Data Flow
 
@@ -410,11 +461,12 @@ FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to 
 | `/api/projects/[id]` | PUT | Update project fields | default | required |
 | `/api/projects/[id]` | DELETE | Delete project (cascades, OWNER/ADMIN/creator only) | default | required |
 | `/api/projects/[id]/ads` | POST | Save ads to project (replace all) | default | required |
+| `/api/jobs/[id]` | GET | Poll background job status (state, progress, result) | default | required (company-scoped) |
 | `/api/generate-ads` | POST | Generate ad copy via Claude (FREE, 0 tokens) | 60s | required |
-| `/api/generate-video` | POST | Generate video via kie.ai (10 tokens/video) | 300s | required + token deduction |
-| `/api/upload` | POST | Upload video files (max 500MB each) | 60s | required |
+| `/api/generate-video` | POST | Generate video via kie.ai (10 tokens/video) — enqueues BullMQ job if Redis available | 300s | required + token deduction |
+| `/api/upload` | POST | Upload video files (max 500MB each, streams to disk) | 60s | required |
 | `/api/upload-music` | POST | Upload music (max 50MB, validated formats) | default | required |
-| `/api/render` | POST | Batch FFmpeg render (1 token/output video) | 300s | required + token deduction |
+| `/api/render` | POST | Batch FFmpeg render (1 token/output video) — enqueues BullMQ job if Redis available | 300s | required + token deduction |
 | `/api/download-zip` | POST | Bundle rendered videos into a ZIP file | default | required |
 | `/api/log` | POST | Ingest client-side logs | default | public |
 | `/api/logs` | GET | Retrieve recent log lines | default | required |
@@ -439,6 +491,15 @@ SUPER_ADMIN_EMAILS=admin@example.com  # Comma-separated list of super admin emai
 # Spend Alerts (optional)
 SPEND_ALERT_WEBHOOK_URL=https://...   # Optional — webhook URL for budget alerts (50%/80%/100%)
 
+# Redis (optional — enables background jobs, rate limiting, caching)
+REDIS_URL=redis://...            # Optional — ioredis connection string for BullMQ + cache + rate limiting
+
+# Background Workers (Railway)
+WORKER_MODE=true                 # Set on worker service — starts BullMQ workers instead of web server
+
+# Database Pool
+DB_POOL_SIZE=20                  # Optional — max connections per instance (default: 20)
+
 # Persistent Storage (Railway)
 DATA_DIR=/app/data               # Set when using Railway Volume — entrypoint symlinks storage dirs
 
@@ -447,7 +508,8 @@ S3_BUCKET=your-bucket            # Optional — enable cloud storage (S3/R2)
 S3_ENDPOINT=https://...          # Required with S3_BUCKET
 S3_ACCESS_KEY_ID=...             # Required with S3_BUCKET
 S3_SECRET_ACCESS_KEY=...         # Required with S3_BUCKET
-S3_PUBLIC_URL=https://...        # Optional — public URL prefix for S3 files
+S3_PUBLIC_URL=https://...        # Optional — public URL prefix for S3 files (also used as CDN_URL fallback)
+CDN_URL=https://cdn.example.com  # Optional — CDN URL for file serving (overrides /api/files, offloads Node.js)
 
 # Stripe (payments)
 STRIPE_SECRET_KEY=sk_...         # Required for Stripe Checkout + Customer Portal
@@ -768,6 +830,19 @@ Phase 1 eliminates single-instance bottlenecks without adding new infrastructure
 - **Video gen timeout alignment**: Timeout aligned under `maxDuration` so users get a clean error instead of a connection reset.
 
 Migration: `20260227100000_add_scaling_phase1`
+
+## Scaling (Phase 2 — Redis + Caching + DB Pool)
+
+Phase 2 adds Redis for cross-instance state and caching, plus DB connection pooling:
+
+- **Redis client** (`src/lib/redis.ts`): `ioredis` singleton with lazy connection from `REDIS_URL`. Graceful degradation — all features fall back to in-memory when Redis unavailable.
+- **Rate limiting** (`src/lib/rate-limit.ts`): Redis sorted-set sliding window rate limiter. Falls back to in-memory Map. Middleware keeps per-instance in-memory rate limiting (Edge runtime can't use ioredis). Redis rate limiter available for API routes to import for cross-instance protection.
+- **Hot-path caching** (`src/lib/cache.ts`): Redis-backed TTL cache. Company plan/balance cached 10s (reduces DB hits on billable operations), notification unread count cached 15s (reduces polling DB load). Cache invalidated on writes (token deduct/credit, notification create/read).
+- **DB connection pool** (`src/lib/prisma.ts`): Explicit `pg.Pool` with configurable `max` (default 20 via `DB_POOL_SIZE` env var), `connectionTimeoutMillis: 5000`, `idleTimeoutMillis: 30000`.
+
+New files: `src/lib/redis.ts`, `src/lib/rate-limit.ts`, `src/lib/cache.ts`
+New dependency: `ioredis`
+New env vars: `REDIS_URL`, `DB_POOL_SIZE`
 
 ## Prerequisites
 

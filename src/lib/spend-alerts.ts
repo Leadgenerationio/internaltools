@@ -2,18 +2,15 @@ import { prisma } from '@/lib/prisma';
 import { formatTokens } from '@/lib/token-pricing';
 import { sendTokenBudgetAlert } from '@/lib/email';
 
-/**
- * In-memory set tracking which threshold alerts have already been sent
- * this month. Keyed by "companyId:YYYY-MM:threshold".
- */
-const notifiedThresholds = new Set<string>();
-
 /** Thresholds (as percentages) at which we fire alerts. */
 const ALERT_THRESHOLDS = [50, 80, 100] as const;
 
 /**
  * Check whether a company's token usage has crossed any alert thresholds
  * and fire a webhook if so. Fire-and-forget — never throws.
+ *
+ * Uses database-backed SpendAlertLog to track which alerts have been sent,
+ * so alerts survive server restarts and work across instances.
  */
 export async function checkTokenAlerts(companyId: string): Promise<void> {
   try {
@@ -49,10 +46,29 @@ export async function checkTokenAlerts(companyId: string): Promise<void> {
     for (const threshold of ALERT_THRESHOLDS) {
       if (usagePct < threshold) continue;
 
-      const key = `${companyId}:${monthKey}:${threshold}`;
-      if (notifiedThresholds.has(key)) continue;
+      // Check if this alert has already been sent (database-backed, survives restarts)
+      const existing = await prisma.spendAlertLog.findUnique({
+        where: {
+          companyId_monthKey_threshold: {
+            companyId,
+            monthKey,
+            threshold,
+          },
+        },
+      });
 
-      notifiedThresholds.add(key);
+      if (existing) continue;
+
+      // Record that we're sending this alert (unique constraint prevents duplicates)
+      try {
+        await prisma.spendAlertLog.create({
+          data: { companyId, monthKey, threshold },
+        });
+      } catch (e: any) {
+        // Unique constraint violation = another instance already sent it
+        if (e.code === 'P2002') continue;
+        throw e;
+      }
 
       const message =
         threshold >= 100

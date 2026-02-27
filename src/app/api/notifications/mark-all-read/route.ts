@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAuthContext } from '@/lib/api-auth';
 import { prisma } from '@/lib/prisma';
+import { invalidateUnreadCount } from '@/lib/cache';
 
 /**
  * POST /api/notifications/mark-all-read
@@ -16,6 +17,9 @@ export async function POST() {
       where: { userId, read: false },
       data: { read: true },
     });
+
+    // Invalidate cached unread count
+    invalidateUnreadCount(userId).catch(() => {});
 
     return NextResponse.json({ success: true, updated: result.count });
   } catch (error) {

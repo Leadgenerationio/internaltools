@@ -13,6 +13,8 @@ import { deductTokens, refundTokens } from '@/lib/token-balance';
 import { calculateVeoTokens } from '@/lib/token-pricing';
 import { fileUrl } from '@/lib/file-url';
 import { VIDEO_MODELS } from '@/lib/types';
+import { getVideoGenQueue } from '@/lib/queue';
+import type { VideoGenJobData } from '@/lib/job-types';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
@@ -110,6 +112,35 @@ export async function POST(request: NextRequest) {
         { status: 402 }
       );
     }
+
+    // Try to enqueue as background job (returns immediately)
+    const queue = getVideoGenQueue();
+    if (queue) {
+      const jobData: VideoGenJobData = {
+        companyId,
+        userId,
+        prompt: prompt.trim(),
+        count: videoCount,
+        aspectRatio: ar as '9:16' | '16:9',
+        model: selectedModelId,
+        includeSound: !!includeSound,
+        tokenCost,
+      };
+
+      const job = await queue.add('video-gen', jobData, {
+        attempts: 1,
+        removeOnComplete: { age: 3600 },
+        removeOnFail: { age: 3600 },
+      });
+
+      return NextResponse.json({
+        jobId: job.id,
+        type: 'video-gen' as const,
+        message: 'Video generation job queued',
+      });
+    }
+
+    // Fallback: synchronous generation (no Redis available)
 
     // Ensure upload directory exists
     if (!existsSync(UPLOAD_DIR)) {

@@ -6,6 +6,7 @@
  */
 
 import { prisma } from '@/lib/prisma';
+import { getCachedUnreadCount, setCachedUnreadCount, invalidateUnreadCount } from '@/lib/cache';
 
 export type NotificationType =
   | 'RENDER_COMPLETE'
@@ -31,6 +32,8 @@ export async function createNotification(
     await prisma.notification.create({
       data: { userId, type, title, body, link: link || null },
     });
+    // Invalidate cached unread count for this user
+    invalidateUnreadCount(userId).catch(() => {});
   } catch (error) {
     console.error('[Notifications] Failed to create notification:', error);
   }
@@ -64,6 +67,11 @@ export async function createCompanyNotification(
         link: link || null,
       })),
     });
+
+    // Invalidate cached unread counts for all users in the company
+    await Promise.allSettled(
+      users.map((u: { id: string }) => invalidateUnreadCount(u.id))
+    );
   } catch (error) {
     console.error('[Notifications] Failed to create company notification:', error);
   }
@@ -71,13 +79,22 @@ export async function createCompanyNotification(
 
 /**
  * Get the count of unread notifications for a user.
- * Used for the badge on the notification bell.
+ * Used for the badge on the notification bell (polled every 30s).
+ * Cached in Redis (15s TTL) to reduce DB load from polling.
  */
 export async function getUnreadCount(userId: string): Promise<number> {
   try {
-    return await prisma.notification.count({
+    // Try cache first (15s TTL)
+    const cached = await getCachedUnreadCount(userId);
+    if (cached !== null) return cached;
+
+    const count = await prisma.notification.count({
       where: { userId, read: false },
     });
+
+    // Cache for next poll
+    await setCachedUnreadCount(userId, count);
+    return count;
   } catch (error) {
     console.error('[Notifications] Failed to get unread count:', error);
     return 0;

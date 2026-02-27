@@ -462,6 +462,40 @@ enum NotificationType {
   SYSTEM
 }
 
+// ─── Scaling Phase 1 ────────────────────────────────────────
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  email     String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([expiresAt])
+}
+
+model ProcessedWebhookEvent {
+  id        String   @id // Uses Stripe event ID as primary key
+  type      String
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model SpendAlertLog {
+  id        String   @id @default(cuid())
+  companyId String
+  monthKey  String   // "YYYY-MM"
+  threshold Int      // 50, 80, or 100
+
+  createdAt DateTime @default(now())
+
+  @@unique([companyId, monthKey, threshold])
+  @@index([createdAt])
+}
+
 // ─── Project Templates ──────────────────────────────────────
 
 model ProjectTemplate {

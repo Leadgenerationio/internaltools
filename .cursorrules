@@ -9,19 +9,26 @@ After any new feature or major change, always update `ARCHITECTURE.md`, `CLAUDE.
 - **Database**: PostgreSQL + Prisma ORM (multi-tenant companies, users, API usage tracking)
 - **Authentication**: NextAuth v5 (credentials provider, JWT sessions, httpOnly cookies)
 - **Multi-tenancy**: Companies with users (roles: OWNER/ADMIN/MEMBER), data filtered by company_id
-- **Token billing**: Token-based billing system (`src/lib/token-pricing.ts`, `src/lib/token-balance.ts`). 1 token = 1 finished video, 10 tokens = 1 Veo AI video (bundled with renders). Ad copy generation is FREE.
+- **Token billing**: Token-based billing system (`src/lib/token-pricing.ts`, `src/lib/token-balance.ts`). 1 token = 1 finished video, 10 tokens = 1 Veo AI video (bundled with renders). Ad copy generation is FREE. Atomic deduction via raw SQL prevents race conditions.
+- **Cloud storage**: Optional S3/R2 via `src/lib/storage.ts`. Streaming uploads via `@aws-sdk/lib-storage`. CDN offloading via `CDN_URL` env var in `fileUrl()`.
 - **Payments**: Stripe Checkout + Customer Portal for subscriptions and token top-ups (`src/lib/stripe.ts`, `/api/billing/create-checkout`, `/api/billing/manage`, `/api/webhooks/stripe`)
 - **Email**: Resend SDK for transactional emails — 11 templates including welcome, reset, upgrade, budget alerts, receipts, team invite, render complete/failed, subscription renewal, ticket created/reply (`src/lib/email.ts`)
 - **Internal cost tracking**: Per-call API usage logging in cents (`src/lib/track-usage.ts`, `src/lib/pricing.ts`) — admin-only, hidden from users
 - **Video processing**: FFmpeg via shell exec (server-side), @napi-rs/canvas for emoji-supporting overlay PNGs
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) for generating TOFU/MOFU/BOFU ad text
-- **AI video generation**: Google Veo 3.1 (optional — users can also upload their own videos)
+- **AI video generation**: Google Veo 2.0 (optional — users can also upload their own videos)
 - **File handling**: Uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/` (symlinked to Railway Volume via `docker-entrypoint.sh`)
-- **File serving**: All file URLs use `/api/files?path=xxx` (Next.js standalone doesn't serve runtime files from `public/`). Use `fileUrl()` from `src/lib/file-url.ts` to generate URLs.
+- **File serving**: All file URLs use `/api/files?path=xxx` (Next.js standalone doesn't serve runtime files from `public/`). Use `fileUrl()` from `src/lib/file-url.ts` to generate URLs. Files streamed with Range header support.
 - **Cloud storage**: Optional S3/R2 support via `src/lib/storage.ts` (activated by `S3_BUCKET` env var)
+- **Redis**: Optional `ioredis` via `src/lib/redis.ts` (from `REDIS_URL`). Used for rate limiting + caching. Graceful fallback when unavailable.
+- **Caching**: `src/lib/cache.ts` — Redis-backed TTL cache for company balance (10s) and notification count (15s). Invalidated on writes.
+- **Rate limiting**: Dual-layer — in-memory in middleware (Edge), Redis sorted-set in `src/lib/rate-limit.ts` (Node.js API routes)
+- **DB Pool**: `pg.Pool` with `max: 20` (configurable via `DB_POOL_SIZE`) in `src/lib/prisma.ts`
 - **State**: React useState (no external state management)
 - **Logging**: Winston with daily-rotate-file, client-side logs forwarded via `/api/log`
-- **Deployment**: Railway with Docker, Next.js standalone output, Railway Volume for persistent file storage
+- **Background jobs**: BullMQ + Redis for async render/video-gen. Routes return `{ jobId }`, client polls `/api/jobs/[id]`. Workers run as separate Railway service (`WORKER_MODE=true`). Falls back to sync when no Redis.
+- **Redis**: ioredis at `src/lib/redis.ts` — queues, rate limiting, caching. All features degrade gracefully.
+- **Deployment**: Railway with Docker, Next.js standalone output, Railway Volume for persistent file storage. Worker service uses same Docker image with `WORKER_MODE=true`.
 - **Admin dashboard**: Super admin panel at `/admin` with 5 tabs (Overview, Companies, Users, Transactions, Support). Auth via `src/lib/admin-auth.ts`. Audit logging via `AdminAuditLog` model.
 - **Support ticketing**: User pages at `/tickets/*`, admin routes at `/api/admin/tickets/*`. Auto-incrementing numbers, email notifications, `src/lib/sanitize.ts` for input sanitization.
 - **Google Drive export**: OAuth2 integration with 6 routes at `/api/integrations/google-drive/*`. `GoogleDriveButton` component in render results. User model stores Drive tokens.

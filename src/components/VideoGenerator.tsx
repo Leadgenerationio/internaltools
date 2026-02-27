@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react';
 import type { UploadedVideo } from '@/lib/types';
 import { VIDEO_MODELS, DEFAULT_VIDEO_MODEL } from '@/lib/types';
+import { pollJob } from '@/lib/poll-job';
 
 const log = async (level: string, message: string, meta?: object) => {
   try {
@@ -57,6 +58,30 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
     setStatusMessage('Generation cancelled.');
   };
 
+  const handleGenerationSuccess = (generatedVideos: UploadedVideo[], currentPrompt: string) => {
+    const promptLabel = currentPrompt.length > 40
+      ? currentPrompt.slice(0, 40) + '...'
+      : currentPrompt;
+    const labelledVideos = generatedVideos.map((v, i) => ({
+      ...v,
+      originalName: `AI: ${promptLabel}${generatedVideos.length > 1 ? ` (${i + 1})` : ''}`,
+    }));
+
+    onUpload([...videos, ...labelledVideos]);
+
+    setBatches((prev) => [
+      ...prev,
+      {
+        prompt: currentPrompt,
+        count: labelledVideos.length,
+        videoIds: labelledVideos.map((v) => v.id),
+      },
+    ]);
+
+    setStatusMessage(`Generated ${generatedVideos.length} video${generatedVideos.length > 1 ? 's' : ''}. Enter a new prompt to generate more.`);
+    setPrompt('');
+  };
+
   const handleGenerate = async () => {
     if (!canGenerate) return;
 
@@ -78,7 +103,7 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
         signal: abort.signal,
       });
 
-      let data: { videos?: UploadedVideo[]; error?: string };
+      let data: any;
       try {
         data = await res.json();
       } catch {
@@ -92,39 +117,53 @@ export default function VideoGenerator({ videos, onUpload, generating, setGenera
         return;
       }
 
+      // Background job path — poll for results
+      if (data.jobId) {
+        log('info', 'Video generation job queued', { jobId: data.jobId });
+        setStatusMessage(`Generating ${count} video${count > 1 ? 's' : ''} in background... 0%`);
+
+        const result = await pollJob(data.jobId, 'video-gen', {
+          signal: abort.signal,
+          onProgress: (progress, state) => {
+            if (state === 'waiting') {
+              setStatusMessage(`Queued — waiting to start...`);
+            } else {
+              setStatusMessage(`Generating ${count} video${count > 1 ? 's' : ''}... ${progress}%`);
+            }
+          },
+        });
+
+        if (result.state === 'failed') {
+          setError(result.error || 'Video generation failed');
+          setStatusMessage('');
+          return;
+        }
+
+        const jobResult = result.result;
+        if (jobResult?.videos?.length > 0) {
+          log('info', 'Generation success (background)', { count: jobResult.videos.length });
+          handleGenerationSuccess(jobResult.videos, currentPrompt);
+          if (jobResult.warning) {
+            setStatusMessage(jobResult.warning);
+          }
+        } else {
+          setError('No videos returned');
+          setStatusMessage('');
+        }
+        return;
+      }
+
+      // Synchronous path (no Redis) — results returned directly
       if (data.videos && data.videos.length > 0) {
         log('info', 'Generation success', { count: data.videos.length });
-
-        // Label videos with prompt snippet
-        const promptLabel = currentPrompt.length > 40
-          ? currentPrompt.slice(0, 40) + '...'
-          : currentPrompt;
-        const labelledVideos = data.videos.map((v, i) => ({
-          ...v,
-          originalName: `AI: ${promptLabel}${data.videos!.length > 1 ? ` (${i + 1})` : ''}`,
-        }));
-
-        onUpload([...videos, ...labelledVideos]);
-
-        // Track batch
-        setBatches((prev) => [
-          ...prev,
-          {
-            prompt: currentPrompt,
-            count: labelledVideos.length,
-            videoIds: labelledVideos.map((v) => v.id),
-          },
-        ]);
-
-        setStatusMessage(`Generated ${data.videos.length} video${data.videos.length > 1 ? 's' : ''}. Enter a new prompt to generate more.`);
-        setPrompt('');
+        handleGenerationSuccess(data.videos, currentPrompt);
       } else {
         log('warn', 'No videos in generation response', { data });
         setError(data.error || 'No videos returned');
         setStatusMessage('');
       }
     } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') return; // Handled by cancel
+      if (err instanceof Error && err.name === 'AbortError') return;
       log('error', 'Generation exception', { error: String(err) });
       setError(err instanceof Error ? err.message : 'Generation failed');
       setStatusMessage('');

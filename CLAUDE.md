@@ -74,8 +74,15 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **Internal cost tracking**: Per-call API cost logging (in cents) via `src/lib/track-usage.ts` — admin-only, hidden from users
 - **Files**: uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/` — symlinked to Railway Volume (`/app/data`) via `docker-entrypoint.sh`
 - **File serving**: All file URLs use `/api/files?path=xxx` — Next.js standalone doesn't serve runtime files from `public/`. Always use `fileUrl()` from `src/lib/file-url.ts` to generate URLs. Files are streamed via `createReadStream()` with HTTP Range header support (not `readFile()`).
-- **Cloud storage**: Optional S3/R2 via `src/lib/storage.ts` — activated by `S3_BUCKET` env var, lazy-loads AWS SDK
+- **Cloud storage**: Optional S3/R2 via `src/lib/storage.ts` — activated by `S3_BUCKET` env var, lazy-loads AWS SDK, streaming uploads via `@aws-sdk/lib-storage` (no full-file buffering)
+- **CDN file serving**: When `CDN_URL` or `S3_PUBLIC_URL` is set, `fileUrl()` returns direct CDN URLs instead of `/api/files`, offloading file serving from Node.js
+- **Atomic token deduction**: `deductTokens()` uses raw SQL (`UPDATE ... WHERE balance >= amount RETURNING balance`) to prevent TOCTOU race conditions between concurrent requests
+- **Streaming uploads**: `/api/upload` streams files to disk via `Readable.fromWeb()` + `pipeline()` — never buffers 500MB files in memory
 - **Auth**: NextAuth v5 credentials provider — JWT sessions, `AUTH_SECRET` env var for signing, `secureCookie: true` in middleware for reverse proxy compatibility
+- **Redis**: Optional `ioredis` via `src/lib/redis.ts` — lazy connection from `REDIS_URL`, graceful fallback to in-memory when unavailable. Used for rate limiting (`src/lib/rate-limit.ts`) and caching (`src/lib/cache.ts`).
+- **Caching**: Redis-backed TTL cache. Company plan/balance (10s), notification unread count (15s). Invalidated on writes. Falls back to direct DB queries without Redis.
+- **Rate limiting**: Dual-layer — in-memory in Edge middleware (per-instance), Redis sorted-set sliding window in `src/lib/rate-limit.ts` (cross-instance, for API routes).
+- **DB connection pool**: Explicit `pg.Pool` in `src/lib/prisma.ts` with `max: 20` (configurable via `DB_POOL_SIZE`), `connectionTimeoutMillis: 5000`.
 - **State management**: React useState, no external store
 - **Logging**: Winston with daily-rotate-file, client-side log helper POSTs to `/api/log`
 - **App flow**: 4-step wizard — Brief → Review → Media → Render (requires authenticated user)
@@ -97,7 +104,9 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **Help & Legal**: `/help` page (~28 FAQ articles, search, accordions), `/privacy` (GDPR-compliant), `/terms` (15 sections). All public routes.
 - **Tooltips & banners**: `Tooltip.tsx` (reusable info icon with hover text), `InfoBanner.tsx` (info/tip/warning banners). Added throughout the app for beginner-friendly UX.
 - **SEO**: Dynamic favicon (`icon.tsx`), OG images (`opengraph-image.tsx`), `robots.ts`, `sitemap.ts`, `manifest.json`, per-page metadata via layout files.
-- **Deployment**: Railway with Docker, `output: 'standalone'` in next.config.js, Railway Volume at `/app/data` for persistent storage, `docker-entrypoint.sh` for startup (symlinks + migrate + serve)
+- **Background jobs**: BullMQ + Redis for async render and video generation. Routes enqueue jobs and return `{ jobId }` immediately. Client polls `/api/jobs/[id]` with exponential backoff (3s→15s). Workers run as separate Railway service (`WORKER_MODE=true`). Graceful degradation: falls back to synchronous when `REDIS_URL` not set.
+- **Redis**: ioredis singleton at `src/lib/redis.ts` — lazy connection from `REDIS_URL`. Used for BullMQ queues, rate limiting (sorted-set sliding window), caching (company info 10s TTL, notification counts 15s TTL). All Redis features degrade gracefully when not configured.
+- **Deployment**: Railway with Docker, `output: 'standalone'` in next.config.js, Railway Volume at `/app/data` for persistent storage, `docker-entrypoint.sh` for startup (symlinks + migrate + serve). Worker service uses same Docker image with `WORKER_MODE=true`.
 - **Watchdog QA**: `npm run watchdog` — standalone script that continuously tests all endpoints, checks health, stress-tests, and auto-remediates (restart server, create dirs, clean old files). Config in `scripts/watchdog.config.json`
 - **Security Agent**: `npm run security` — continuous security audit (blast radius, network exposure, browser control, disk hygiene, plugin hygiene, credentials, reverse proxy, session logs, shell injection, input validation, path traversal, secrets in git history). Config in `scripts/security.config.json`. `npm run security:once` for single scan with CI-friendly exit codes.
 - **Support ticketing**: Full ticket system. User pages at `/tickets` (list), `/tickets/new` (create), `/tickets/[id]` (detail with threaded messages). Admin routes at `/api/admin/tickets/*`. Auto-incrementing ticket numbers. Email notifications on create and reply. Category/priority/status filtering. Input sanitization via `src/lib/sanitize.ts`. Models: `SupportTicket`, `TicketMessage`.

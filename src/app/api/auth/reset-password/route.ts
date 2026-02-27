@@ -7,24 +7,13 @@ import { sendPasswordResetEmail } from '@/lib/email';
 /**
  * POST /api/auth/reset-password
  * Step 1: Request a password reset (body: { email })
- *   - Generates a token, stores it in memory, sends reset email via Resend
+ *   - Generates a token, stores it in the database, sends reset email via Resend
  *   - Always returns success to prevent email enumeration
  *
  * PUT /api/auth/reset-password
  * Step 2: Reset the password (body: { token, newPassword })
- *   - Validates token, updates password, deletes token
+ *   - Validates token, updates password, marks token as used
  */
-
-// In-memory token store (replace with DB table or Redis in production)
-const resetTokens = new Map<string, { email: string; expiresAt: number }>();
-
-// Clean expired tokens every 10 minutes
-setInterval(() => {
-  const now = Date.now();
-  resetTokens.forEach((value, key) => {
-    if (now > value.expiresAt) resetTokens.delete(key);
-  });
-}, 10 * 60_000);
 
 export async function POST(request: NextRequest) {
   try {
@@ -52,9 +41,26 @@ export async function POST(request: NextRequest) {
 
     if (user) {
       const token = crypto.randomBytes(32).toString('hex');
-      const expiresAt = Date.now() + 60 * 60 * 1000; // 1 hour
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
-      resetTokens.set(token, { email: email.toLowerCase(), expiresAt });
+      // Clean up any expired tokens for this email, then create new one
+      await prisma.passwordResetToken.deleteMany({
+        where: {
+          email: email.toLowerCase(),
+          OR: [
+            { expiresAt: { lt: new Date() } },
+            { usedAt: { not: null } },
+          ],
+        },
+      });
+
+      await prisma.passwordResetToken.create({
+        data: {
+          token,
+          email: email.toLowerCase(),
+          expiresAt,
+        },
+      });
 
       const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
       const resetUrl = `${baseUrl}/reset-password?token=${token}`;
@@ -106,19 +112,28 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 });
     }
 
-    const stored = resetTokens.get(token);
-    if (!stored || Date.now() > stored.expiresAt) {
+    // Find valid, unused, non-expired token
+    const stored = await prisma.passwordResetToken.findUnique({
+      where: { token },
+    });
+
+    if (!stored || stored.usedAt || stored.expiresAt < new Date()) {
       return NextResponse.json({ error: 'Invalid or expired reset token' }, { status: 400 });
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
 
-    await prisma.user.update({
-      where: { email: stored.email },
-      data: { passwordHash },
-    });
-
-    resetTokens.delete(token);
+    // Update password and mark token as used in a transaction
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { email: stored.email },
+        data: { passwordHash },
+      }),
+      prisma.passwordResetToken.update({
+        where: { id: stored.id },
+        data: { usedAt: new Date() },
+      }),
+    ]);
 
     return NextResponse.json({ success: true, message: 'Password has been reset. You can now sign in.' });
   } catch (error: any) {

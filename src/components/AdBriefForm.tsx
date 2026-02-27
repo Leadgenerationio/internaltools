@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { AdBrief } from '@/lib/types';
 import { AD_LANGUAGES } from '@/lib/types';
 import Tooltip from '@/components/Tooltip';
@@ -24,6 +24,11 @@ const EMPTY_BRIEF: AdBrief = {
 
 export default function AdBriefForm({ onGenerate, generating, initialBrief }: Props) {
   const [brief, setBrief] = useState<AdBrief>(initialBrief || EMPTY_BRIEF);
+
+  // Sync form state when initialBrief changes (e.g. project loaded from DB)
+  useEffect(() => {
+    if (initialBrief) setBrief(initialBrief);
+  }, [initialBrief]);
 
   const update = (field: keyof AdBrief, value: string) => {
     setBrief((prev) => ({ ...prev, [field]: value }));

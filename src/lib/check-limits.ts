@@ -2,20 +2,28 @@ import { prisma } from '@/lib/prisma';
 import { getPlanLimits } from '@/lib/plans';
 import { formatTokens } from '@/lib/token-pricing';
 import { NextResponse } from 'next/server';
+import { getCachedCompanyInfo, setCachedCompanyInfo } from '@/lib/cache';
 
 /**
  * Check if a company has enough tokens for an operation.
  * Returns null if allowed, or an error response if blocked.
+ * Uses Redis cache (10s TTL) to reduce DB load on hot path.
  */
 export async function checkTokenBalance(
   companyId: string,
   requiredTokens: number
 ): Promise<NextResponse | null> {
   try {
-    const company = await prisma.company.findUnique({
-      where: { id: companyId },
-      select: { tokenBalance: true, plan: true, monthlyTokenBudget: true },
-    });
+    // Try cache first (10s TTL), fall back to DB
+    const cached = await getCachedCompanyInfo(companyId);
+    const company = cached ?? await (async () => {
+      const db = await prisma.company.findUnique({
+        where: { id: companyId },
+        select: { tokenBalance: true, plan: true, monthlyTokenBudget: true },
+      });
+      if (db) setCachedCompanyInfo(companyId, db).catch(() => {});
+      return db;
+    })();
 
     if (!company) {
       return NextResponse.json({ error: 'Company not found' }, { status: 404 });

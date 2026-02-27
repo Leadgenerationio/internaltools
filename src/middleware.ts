@@ -5,7 +5,10 @@ import { getToken } from 'next-auth/jwt';
 // Pass explicitly to guarantee middleware can decode the JWT.
 const SECRET = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
 
-// ─── Rate Limiting ──────────────────────────────────────────────────────────
+// ─── Rate Limiting (in-memory for Edge middleware) ───────────────────────────
+// Edge runtime can't use ioredis (Node.js only). Middleware provides per-instance
+// rate limiting. Critical API routes additionally call the Redis-backed rate
+// limiter from src/lib/rate-limit.ts for cross-instance protection.
 
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 

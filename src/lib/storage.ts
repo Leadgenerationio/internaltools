@@ -60,15 +60,21 @@ export async function uploadFile(localPath: string, storagePath: string): Promis
   }
 
   const client = await getS3Client();
-  const { PutObjectCommand } = await import('@aws-sdk/client-s3');
-  const fileBuffer = fs.readFileSync(localPath);
+  const { Upload } = await import('@aws-sdk/lib-storage');
 
-  await client.send(new PutObjectCommand({
-    Bucket: S3_BUCKET,
-    Key: storagePath,
-    Body: fileBuffer,
-    ContentType: getContentType(storagePath),
-  }));
+  // Stream the file instead of reading it all into memory
+  const stream = fs.createReadStream(localPath);
+  const upload = new Upload({
+    client,
+    params: {
+      Bucket: S3_BUCKET!,
+      Key: storagePath,
+      Body: stream,
+      ContentType: getContentType(storagePath),
+    },
+  });
+
+  await upload.done();
 
   // Clean up local file after upload (only if within public directory)
   if (isPathSafe(localPath)) {

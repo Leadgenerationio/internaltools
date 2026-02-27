@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { writeFile, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
+import { mkdir } from 'fs/promises';
+import fs, { existsSync } from 'fs';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
@@ -60,10 +62,11 @@ export async function POST(request: NextRequest) {
 
       logger.info('Processing file', { name: file.name, size: file.size, filename });
 
-      const bytes = await file.arrayBuffer();
-      logger.debug('File read', { bytes: bytes.byteLength });
-      await writeFile(filepath, Buffer.from(bytes));
-      logger.debug('File written', { filepath });
+      // Stream file to disk instead of buffering in memory
+      const readable = Readable.fromWeb(file.stream() as any);
+      const writable = fs.createWriteStream(filepath);
+      await pipeline(readable, writable);
+      logger.debug('File streamed to disk', { filepath });
 
       let info;
       try {
