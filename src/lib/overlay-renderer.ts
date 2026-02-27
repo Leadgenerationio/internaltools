@@ -104,7 +104,8 @@ function wrapText(
 
 function buildFont(fontSize: number, fontWeight: string): string {
   const weight = fontWeight === 'extrabold' ? '800' : fontWeight === 'bold' ? '700' : '400';
-  return `${weight} ${fontSize}px Arial, Emoji, sans-serif`;
+  // DejaVu Sans is installed in Docker (fonts-dejavu-core); Arial is macOS/Windows only
+  return `${weight} ${fontSize}px "DejaVu Sans", Arial, Emoji, sans-serif`;
 }
 
 /**

@@ -1,7 +1,7 @@
 # --- Stage 1: Install dependencies and build ---
 FROM node:20-slim AS builder
 
-# Install FFmpeg + system libs needed by @napi-rs/canvas + emoji font
+# Install FFmpeg + system libs needed by @napi-rs/canvas + text & emoji fonts
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     build-essential \
@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     libgif-dev \
     librsvg2-dev \
     libfontconfig1-dev \
+    fonts-dejavu-core \
     fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/* \
     && fc-cache -fv
@@ -36,7 +37,7 @@ RUN npm run build
 # --- Stage 2: Production image ---
 FROM node:20-slim AS runner
 
-# Install FFmpeg + runtime libs needed by @napi-rs/canvas + emoji font
+# Install FFmpeg + runtime libs needed by @napi-rs/canvas + text & emoji fonts
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     zip \
@@ -47,6 +48,7 @@ RUN apt-get update && apt-get install -y \
     libgif7 \
     librsvg2-2 \
     libfontconfig1 \
+    fonts-dejavu-core \
     fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/* \
     && fc-cache -fv
