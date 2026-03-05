@@ -103,6 +103,12 @@ export const FUNNEL_LABELS: Record<FunnelStage, string> = {
   bofu: 'Bottom of Funnel',
 };
 
+export const FUNNEL_SHORT_LABELS: Record<FunnelStage, string> = {
+  tofu: 'TOF',
+  mofu: 'MOF',
+  bofu: 'BOF',
+};
+
 export const FUNNEL_DESCRIPTIONS: Record<FunnelStage, string> = {
   tofu: 'Awareness — hook attention, spark curiosity',
   mofu: 'Consideration — build trust, educate, show value',

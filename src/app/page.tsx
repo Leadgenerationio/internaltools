@@ -25,9 +25,30 @@ import type {
   TextStyle,
   MusicTrack,
 } from '@/lib/types';
-import { DEFAULT_TEXT_STYLE, FUNNEL_LABELS } from '@/lib/types';
+import { DEFAULT_TEXT_STYLE, FUNNEL_LABELS, FUNNEL_SHORT_LABELS } from '@/lib/types';
 
 type AppStep = 'brief' | 'review' | 'media' | 'render';
+
+/** Build a clean download filename like "TOF - 1 - Beach sunset.mp4" */
+function formatDownloadName(adLabel: string, originalName: string): string {
+  const stageMap: Record<string, string> = {
+    'Top of Funnel': 'TOF',
+    'Middle of Funnel': 'MOF',
+    'Bottom of Funnel': 'BOF',
+  };
+
+  let shortLabel = adLabel.replace(/[^a-zA-Z0-9 #-]/g, '');
+  for (const [full, short] of Object.entries(stageMap)) {
+    const match = adLabel.match(new RegExp(`^${full}\\s*#?(\\d+)$`));
+    if (match) {
+      shortLabel = `${short} - ${match[1]}`;
+      break;
+    }
+  }
+
+  const videoName = originalName.replace(/\.[^.]+$/, '');
+  return `${shortLabel} - ${videoName}.mp4`;
+}
 
 interface RenderResult {
   videoId: string;
@@ -598,7 +619,7 @@ function HomeContent() {
     try {
       const files = results.map((r) => ({
         url: r.outputUrl,
-        name: `${r.adLabel.replace(/[^a-zA-Z0-9]/g, '_')}_${r.originalName}`,
+        name: formatDownloadName(r.adLabel, r.originalName),
       }));
 
       const res = await fetch('/api/download-zip', {
@@ -612,7 +633,7 @@ function HomeContent() {
         for (const r of results) {
           const link = document.createElement('a');
           link.href = r.outputUrl;
-          link.download = `${r.adLabel.replace(/[^a-zA-Z0-9]/g, '_')}_${r.originalName}`;
+          link.download = formatDownloadName(r.adLabel, r.originalName);
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);
@@ -991,7 +1012,7 @@ function HomeContent() {
                       <GoogleDriveButton
                         files={results.map((r) => ({
                           url: r.outputUrl,
-                          name: `${r.adLabel.replace(/[^a-zA-Z0-9]/g, '_')}_${r.originalName}`,
+                          name: formatDownloadName(r.adLabel, r.originalName),
                         }))}
                         disabled={rendering}
                       />
@@ -1031,7 +1052,7 @@ function HomeContent() {
                         <p className="text-xs sm:text-sm text-gray-300 truncate">{r.originalName}</p>
                         <a
                           href={r.outputUrl}
-                          download
+                          download={formatDownloadName(r.adLabel, r.originalName)}
                           onClick={() => {
                             try { localStorage.setItem('onboarding_downloaded', 'true'); } catch {}
                           }}
