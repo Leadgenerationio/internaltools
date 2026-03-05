@@ -10,6 +10,7 @@ import { getAuthContext } from '@/lib/api-auth';
 import { checkTokenBalance } from '@/lib/check-limits';
 import { deductTokens, refundTokens } from '@/lib/token-balance';
 import { checkTokenAlerts } from '@/lib/spend-alerts';
+import { logger } from '@/lib/logger';
 import { calculateRenderTokens } from '@/lib/token-pricing';
 import { sendRenderCompleteEmail } from '@/lib/email';
 import { createNotification } from '@/lib/notifications';
@@ -71,8 +72,13 @@ function extractPublicPath(url: string): string {
 export const maxDuration = 300; // 5 min for batch renders
 
 export async function POST(request: NextRequest) {
+  logger.info('[Render] POST /api/render called');
+
   const authResult = await getAuthContext();
-  if (authResult.error) return authResult.error;
+  if (authResult.error) {
+    logger.warn('[Render] Auth failed');
+    return authResult.error;
+  }
 
   let tokenCost = 0;
   let tokensRefunded = 0;
@@ -150,6 +156,7 @@ export async function POST(request: NextRequest) {
 
     // Calculate total output count (this is the number of finished ad videos)
     const outputCount = renderItems.length;
+    logger.info(`[Render] ${outputCount} items to render, quality=${quality || 'final'}`);
     tokenCost = calculateRenderTokens(outputCount);
 
     // Check token balance before rendering
@@ -181,6 +188,7 @@ export async function POST(request: NextRequest) {
 
     // Try to enqueue as background job (returns immediately)
     const queue = getRenderQueue();
+    logger.info(`[Render] Queue available: ${!!queue}`);
     if (queue) {
       const jobData: RenderJobData = {
         companyId: authResult.auth.companyId,
@@ -197,6 +205,7 @@ export async function POST(request: NextRequest) {
         removeOnFail: { age: 3600 },
       });
 
+      logger.info(`[Render] Job queued: ${job.id} (${outputCount} items)`);
       return NextResponse.json({
         jobId: job.id,
         type: 'render' as const,
@@ -205,8 +214,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Fallback: synchronous render (no Redis available)
+    logger.info('[Render] No queue — falling back to synchronous render');
     // Dynamic import: only loads @napi-rs/canvas when actually rendering
     const { renderVideo } = await import('@/lib/ffmpeg-renderer');
+    logger.info('[Render] ffmpeg-renderer loaded successfully');
 
     // Clean outputs older than 30 min to free disk (preserves current session)
     cleanOldOutputs();
@@ -253,7 +264,7 @@ export async function POST(request: NextRequest) {
           try { fs.unlinkSync(outputPath); } catch { /* ignore */ }
         }
       } catch (err: any) {
-        console.error(`[Render] Item failed:`, err.message);
+        logger.error(`[Render] Item failed: ${err.message}`, { stack: err.stack });
         failed++;
       }
     }
@@ -308,7 +319,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ results, failed, tokensUsed: tokenCost });
   } catch (error: any) {
-    console.error('Render error:', error);
+    logger.error(`[Render] Fatal error: ${error.message}`, { stack: error.stack });
 
     // Refund remaining tokens on unexpected failure (queue.add() failure, mkdirSync, etc.)
     const remainingRefund = tokenCost - tokensRefunded;

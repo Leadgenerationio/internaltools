@@ -519,7 +519,16 @@ function HomeContent() {
         signal: abort.signal,
       });
 
-      const data = await res.json();
+      let data: any;
+      try {
+        data = await res.json();
+      } catch {
+        // Response body isn't JSON (e.g. 502 from Railway proxy)
+        setRenderProgress(`Render failed (${res.status}) — server did not respond. Check deployment logs.`);
+        setRendering(false);
+        renderAbortRef.current = null;
+        return;
+      }
 
       if (!res.ok) {
         setRenderProgress(data.error || `Render failed (${res.status})`);
