@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import type { TextOverlay, MusicTrack } from './types';
-import { renderOverlayToPng, getGapPx } from './overlay-renderer';
+import { renderOverlayToPng, getGapPx, prefetchEmojiImages } from './overlay-renderer';
 import type { OverlayRenderResult } from './overlay-renderer';
 const execFileAsync = promisify(execFile);
 
@@ -97,6 +97,10 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
 
   try {
     const sorted = [...overlays].sort((a, b) => a.startTime - b.startTime);
+
+    // Pre-fetch all emoji images in parallel before rendering overlays.
+    // This ensures Twemoji PNGs are cached and avoids sequential CDN hits.
+    await prefetchEmojiImages(sorted);
 
     // Render each overlay to PNG and collect actual dimensions
     const renderResults: OverlayRenderResult[] = [];

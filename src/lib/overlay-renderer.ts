@@ -115,7 +115,7 @@ function emojiToCodepoints(emoji: string, keepFE0F = false): string {
   return cps.join('-');
 }
 
-async function fetchEmojiImage(emoji: string): Promise<Awaited<ReturnType<typeof loadImage>> | null> {
+async function fetchEmojiImage(emoji: string, retries = 2): Promise<Awaited<ReturnType<typeof loadImage>> | null> {
   // Twemoji naming: some emoji include FE0F, some don't. Try both.
   const keys = [emojiToCodepoints(emoji, false), emojiToCodepoints(emoji, true)];
 
@@ -138,36 +138,75 @@ async function fetchEmojiImage(emoji: string): Promise<Awaited<ReturnType<typeof
       }
     } catch (e) {
       console.warn(`[overlay-renderer] Failed to load cached emoji ${key}:`, e);
-      // Remove corrupted cache file
       try { fs.unlinkSync(cachePath); } catch { /* ignore */ }
     }
 
-    // CDN fetch — 3s timeout to avoid slowing renders on poor connectivity
-    try {
-      const url = `${TWEMOJI_CDN}/${key}.png`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
-      if (!res.ok) {
-        emojiImageCache.set(key, null);
-        continue;
-      }
-      const buf = Buffer.from(await res.arrayBuffer());
-      // Try to cache to disk (non-critical — skip on failure)
+    // CDN fetch with retries
+    for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        fs.mkdirSync(cacheDir, { recursive: true });
-        fs.writeFileSync(cachePath, buf);
+        const url = `${TWEMOJI_CDN}/${key}.png`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+        if (!res.ok) {
+          emojiImageCache.set(key, null);
+          break; // 404 = emoji doesn't exist on CDN, no point retrying
+        }
+        const buf = Buffer.from(await res.arrayBuffer());
+        // Try to cache to disk (non-critical)
+        try {
+          fs.mkdirSync(cacheDir, { recursive: true });
+          fs.writeFileSync(cachePath, buf);
+        } catch { /* ignore disk cache failure */ }
+        const img = await loadImage(buf);
+        emojiImageCache.set(key, img);
+        console.log(`[overlay-renderer] Cached Twemoji: ${key}.png`);
+        return img;
       } catch (e) {
-        console.warn('[overlay-renderer] Failed to write emoji cache:', e);
+        if (attempt < retries) {
+          console.warn(`[overlay-renderer] Twemoji fetch attempt ${attempt + 1} failed for ${key}, retrying...`);
+          await new Promise(r => setTimeout(r, 500 * (attempt + 1))); // backoff
+        } else {
+          console.warn(`[overlay-renderer] Twemoji CDN fetch failed for ${key} after ${retries + 1} attempts:`, e);
+          emojiImageCache.set(key, null);
+        }
       }
-      const img = await loadImage(buf);
-      emojiImageCache.set(key, img);
-      console.log(`[overlay-renderer] Cached Twemoji: ${key}.png`);
-      return img;
-    } catch (e) {
-      console.warn(`[overlay-renderer] Twemoji CDN fetch failed for ${key}:`, e);
-      emojiImageCache.set(key, null);
     }
   }
   return null;
+}
+
+/**
+ * Pre-fetch all emoji images needed for a set of overlays.
+ * Call this BEFORE rendering to ensure all Twemoji PNGs are cached.
+ * Fetches unique emoji in parallel with retries.
+ */
+export async function prefetchEmojiImages(overlays: TextOverlay[]): Promise<void> {
+  const uniqueEmoji = new Map<string, string>(); // emoji char → raw text (for logging)
+
+  for (const overlay of overlays) {
+    const rawText = normalizeText(overlay.emoji ? `${overlay.emoji} ${overlay.text}` : overlay.text);
+    try {
+      const extracted = extractLeadingEmoji(rawText);
+      if (extracted && !uniqueEmoji.has(extracted.emoji)) {
+        uniqueEmoji.set(extracted.emoji, rawText.slice(0, 30));
+      }
+    } catch { /* ignore detection failures */ }
+  }
+
+  if (uniqueEmoji.size === 0) return;
+
+  console.log(`[overlay-renderer] Pre-fetching ${uniqueEmoji.size} unique emoji images...`);
+
+  // Fetch all unique emoji in parallel
+  const results = await Promise.allSettled(
+    Array.from(uniqueEmoji.entries()).map(async ([emoji, sample]) => {
+      const img = await fetchEmojiImage(emoji, 3); // extra retries for pre-fetch
+      return { emoji, sample, success: img !== null };
+    })
+  );
+
+  const succeeded = results.filter(r => r.status === 'fulfilled' && r.value.success).length;
+  const failed = results.length - succeeded;
+  console.log(`[overlay-renderer] Pre-fetch complete: ${succeeded}/${results.length} emoji loaded${failed > 0 ? ` (${failed} failed)` : ''}`);
 }
 
 // ── Text helpers ──
