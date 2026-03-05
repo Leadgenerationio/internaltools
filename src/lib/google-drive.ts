@@ -119,6 +119,7 @@ export async function uploadToDrive(
       body: fileStream,
     },
     fields: 'id, webViewLink',
+    supportsAllDrives: true,
   });
 
   if (!response.data.id) {
@@ -153,6 +154,7 @@ export async function createFolder(
   const response = await drive.files.create({
     requestBody: fileMetadata,
     fields: 'id, webViewLink',
+    supportsAllDrives: true,
   });
 
   if (!response.data.id) {
@@ -192,6 +194,8 @@ export async function listFolders(
     fields: 'files(id, name)',
     orderBy: 'name',
     pageSize: 100,
+    includeItemsFromAllDrives: true,
+    supportsAllDrives: true,
   });
 
   const folders = response.data.files || [];
@@ -205,6 +209,8 @@ export async function listFolders(
           q: `mimeType='application/vnd.google-apps.folder' and '${f.id}' in parents and trashed=false`,
           fields: 'files(id)',
           pageSize: 1,
+          includeItemsFromAllDrives: true,
+          supportsAllDrives: true,
         });
         hasChildren = (childCheck.data.files?.length || 0) > 0;
       } catch {
@@ -233,6 +239,7 @@ export async function getFolderInfo(
     const response = await drive.files.get({
       fileId: folderId,
       fields: 'id, name',
+      supportsAllDrives: true,
     });
     return {
       id: response.data.id || folderId,
