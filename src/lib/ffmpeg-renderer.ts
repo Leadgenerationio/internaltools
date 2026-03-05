@@ -119,30 +119,26 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
     const SAFE_BOTTOM = Math.round(OUTPUT_HEIGHT * 0.65); // bottom of last overlay must stay above this
     const safeZoneHeight = SAFE_BOTTOM - SAFE_TOP;
 
-    // Use ACTUAL rendered PNG heights (not recalculated) — guarantees correct positioning.
-    // Only compress the GAPS when overflowing, never the box heights.
+    // Use ACTUAL rendered PNG heights — guarantees correct Y positioning.
     const boxHeights = renderResults.map((r) => r.height);
     const totalBoxHeight = boxHeights.reduce((sum, h) => sum + h, 0);
     const baseFontSize = sorted[0]?.style.fontSize ?? 28;
-    const baseGap = sorted.length > 1 ? getGapPx(sorted.length, baseFontSize, OUTPUT_WIDTH) : 0;
-    const totalGapSpace = baseGap * Math.max(0, sorted.length - 1);
-    const totalNeeded = totalBoxHeight + totalGapSpace;
+    const gap = sorted.length > 1 ? getGapPx(sorted.length, baseFontSize, OUTPUT_WIDTH) : 0;
 
-    // Compress only gaps if total exceeds safe zone
-    let effectiveGap = baseGap;
-    if (totalNeeded > safeZoneHeight && sorted.length > 1) {
-      const availableForGaps = Math.max(0, safeZoneHeight - totalBoxHeight);
-      effectiveGap = Math.floor(availableForGaps / (sorted.length - 1));
-    }
+    // Match the preview: consistent gaps, no compression.
+    // The preview (CSS flexbox) keeps even spacing and lets boxes overflow
+    // the safe zone rather than cramming them together with zero gaps.
+    // Center the stack vertically within the safe zone for best appearance.
+    const totalHeight = totalBoxHeight + gap * Math.max(0, sorted.length - 1);
+    const startY = SAFE_TOP + Math.max(0, Math.floor((safeZoneHeight - totalHeight) / 2));
 
-    let currentY = SAFE_TOP;
+    let currentY = startY;
 
     sorted.forEach((overlay, index) => {
       const inputIndex = firstOverlayIndex + index;
       const yPos = Math.round(currentY);
 
-      // Advance by this box's actual PNG height + the (possibly compressed) gap
-      currentY += boxHeights[index] + effectiveGap;
+      currentY += boxHeights[index] + gap;
 
       const nextLabel = index === sorted.length - 1 ? '[outv]' : `[v${index}]`;
       // Round times to avoid float precision issues in FFmpeg filter strings
