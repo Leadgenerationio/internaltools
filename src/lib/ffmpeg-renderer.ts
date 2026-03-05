@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import type { TextOverlay, MusicTrack } from './types';
-import { renderOverlayToPng, getOverlayHeight } from './overlay-renderer';
+import { renderOverlayToPng, getBoxPngHeight, getGapPx } from './overlay-renderer';
 const execFileAsync = promisify(execFile);
 
 const ALLOWED_DIRS = [
@@ -115,12 +115,22 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
     const SAFE_BOTTOM = Math.round(OUTPUT_HEIGHT * 0.65); // bottom of last overlay must stay above this
     const safeZoneHeight = SAFE_BOTTOM - SAFE_TOP;
 
-    // Calculate total stacked height of all overlays (including gaps)
-    const overlayHeights = sorted.map((o) => getOverlayHeight(o, OUTPUT_WIDTH, sorted.length));
-    const totalHeight = overlayHeights.reduce((sum, h) => sum + h, 0);
+    // Calculate box heights (without gaps) and gap size separately.
+    // When overflowing the safe zone, only compress the GAPS — not the box heights —
+    // so boxes never overlap and spacing stays even.
+    const boxHeights = sorted.map((o) => getBoxPngHeight(o, OUTPUT_WIDTH));
+    const totalBoxHeight = boxHeights.reduce((sum, h) => sum + h, 0);
+    const baseFontSize = sorted[0]?.style.fontSize ?? 28;
+    const baseGap = sorted.length > 1 ? getGapPx(sorted.length, baseFontSize, OUTPUT_WIDTH) : 0;
+    const totalGapSpace = baseGap * Math.max(0, sorted.length - 1);
+    const totalNeeded = totalBoxHeight + totalGapSpace;
 
-    // If overlays overflow the safe zone, compress spacing proportionally to fit
-    const scale = totalHeight > safeZoneHeight ? safeZoneHeight / totalHeight : 1;
+    // Compress only gaps if total exceeds safe zone
+    let effectiveGap = baseGap;
+    if (totalNeeded > safeZoneHeight && sorted.length > 1) {
+      const availableForGaps = Math.max(0, safeZoneHeight - totalBoxHeight);
+      effectiveGap = Math.floor(availableForGaps / (sorted.length - 1));
+    }
 
     let currentY = SAFE_TOP;
 
@@ -128,8 +138,8 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
       const inputIndex = firstOverlayIndex + index;
       const yPos = Math.round(currentY);
 
-      // Advance by this overlay's height (compressed if needed)
-      currentY += overlayHeights[index] * scale;
+      // Advance by this box's actual PNG height + the (possibly compressed) gap
+      currentY += boxHeights[index] + effectiveGap;
 
       const nextLabel = index === sorted.length - 1 ? '[outv]' : `[v${index}]`;
       // Round times to avoid float precision issues in FFmpeg filter strings

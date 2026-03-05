@@ -1,8 +1,12 @@
 /**
  * Renders text overlays (including emoji) to PNG images using @napi-rs/canvas.
  * FFmpeg's drawtext doesn't support emoji, so we render to PNG and overlay instead.
+ *
+ * EMOJI STRATEGY: @napi-rs/canvas (Skia) cannot render color emoji from Apple's SBIX
+ * font format. Instead, we render text with monochrome glyphs, then overlay color emoji
+ * PNGs fetched from Twemoji CDN on top of the monochrome placeholders.
  */
-import { createCanvas, GlobalFonts } from '@napi-rs/canvas';
+import { createCanvas, GlobalFonts, loadImage } from '@napi-rs/canvas';
 import { execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
@@ -20,52 +24,33 @@ const EMOJI_FONT_PATHS = [
 
 // ── Preview-matching scale constants ──
 // These MUST stay in sync with VideoPreview.tsx CSS multipliers.
-// Preview renders at PREVIEW_WIDTH (320px); renderer outputs at videoWidth (1080px).
-// Render scale = videoWidth / PREVIEW_WIDTH so proportions match exactly.
 const PREVIEW_WIDTH = 320;
-const PREVIEW_FONT_SCALE = 0.5;   // fontSize * 0.5 in preview CSS
-const PREVIEW_GEOM_SCALE = 0.6;   // paddingX/Y/borderRadius * 0.6 in preview CSS
-const PREVIEW_LINE_HEIGHT = 1.5;  // Tailwind default line-height
-const PREVIEW_WRAPPER_PAD = 12;   // px-3 (0.75rem) side padding on overlay wrapper in preview CSS
+const PREVIEW_FONT_SCALE = 0.5;
+const PREVIEW_GEOM_SCALE = 0.6;
+const PREVIEW_LINE_HEIGHT = 1.5;
+const PREVIEW_WRAPPER_PAD = 12;
 
 /**
  * Dynamic gap between overlay boxes — MUST match VideoPreview.tsx logic exactly.
- * More overlays → tighter spacing so everything fits in the safe zone.
  */
 export function getGapEm(overlayCount: number): number {
   if (overlayCount >= 5) return 0.3;
   if (overlayCount >= 4) return 0.5;
   return 0.9;
 }
+
 let emojiFontRegistered = false;
 let emojiFontWarned = false;
-
-/** Map of font file paths → the native family name to register with */
-const EMOJI_FONT_FAMILIES: Record<string, string> = {
-  '/System/Library/Fonts/Apple Color Emoji.ttc': 'Apple Color Emoji',
-  'C:\\Windows\\Fonts\\seguiemj.ttf': 'Segoe UI Emoji',
-};
 
 function registerEmojiFont(): void {
   if (emojiFontRegistered) return;
 
-  // Try static paths first (fastest).
-  // Register under BOTH the native family name and the generic "Emoji" alias
-  // so the font string fallback chain works regardless of platform.
   for (const fontPath of EMOJI_FONT_PATHS) {
     if (fs.existsSync(fontPath)) {
       try {
-        const nativeName = EMOJI_FONT_FAMILIES[fontPath];
-        if (nativeName) {
-          GlobalFonts.registerFromPath(fontPath, nativeName);
-        }
         GlobalFonts.registerFromPath(fontPath, 'Emoji');
-        // Also register as Noto Color Emoji for Linux paths
-        if (fontPath.includes('Noto')) {
-          GlobalFonts.registerFromPath(fontPath, 'Noto Color Emoji');
-        }
         emojiFontRegistered = true;
-        console.log(`[overlay-renderer] Registered emoji font: ${fontPath}${nativeName ? ` (as "${nativeName}" + "Emoji")` : ''}`);
+        console.log(`[overlay-renderer] Registered emoji font: ${fontPath}`);
         return;
       } catch {
         // Try next font
@@ -73,7 +58,6 @@ function registerEmojiFont(): void {
     }
   }
 
-  // Fallback: discover emoji font via fc-list (works on any Linux with fontconfig)
   try {
     const fcOutput = execSync('fc-list :family="Noto Color Emoji" file', {
       encoding: 'utf-8',
@@ -83,7 +67,6 @@ function registerEmojiFont(): void {
     if (fcOutput) {
       const fontPath = fcOutput.split(':')[0].trim();
       if (fontPath && fs.existsSync(fontPath)) {
-        GlobalFonts.registerFromPath(fontPath, 'Noto Color Emoji');
         GlobalFonts.registerFromPath(fontPath, 'Emoji');
         emojiFontRegistered = true;
         console.log(`[overlay-renderer] Registered emoji font via fc-list: ${fontPath}`);
@@ -95,30 +78,99 @@ function registerEmojiFont(): void {
   }
 
   if (!emojiFontWarned) {
-    console.warn('[overlay-renderer] No emoji font found — emoji characters will render as boxes. Checked:', EMOJI_FONT_PATHS.join(', '));
+    console.warn('[overlay-renderer] No emoji font found — emoji will use Twemoji images only.');
     emojiFontWarned = true;
   }
 }
 
-/**
- * Normalize text before measuring/rendering — strips invisible chars that
- * cause phantom gaps between words or mismatched wrapping vs. CSS preview.
- *
- * IMPORTANT: Preserve U+200D (ZWJ) as many emoji sequences depend on it
- * (e.g. 👨‍👩‍👧 = 👨 + ZWJ + 👩 + ZWJ + 👧). Stripping ZWJ corrupts emojis.
- */
-function normalizeText(text: string): string {
-  return text
-    .replace(/\r/g, '')                        // Remove carriage returns (\r\n → \n)
-    .replace(/[\u200B\u200C\uFEFF]/g, '')      // Remove ZWS, ZWNJ, BOM — but KEEP ZWJ (U+200D)
-    .replace(/\u00A0/g, ' ')                    // Non-breaking space → regular space
-    .replace(/[ \t]+/g, ' ')                    // Collapse runs of horizontal whitespace
-    .split('\n').map(l => l.trim()).join('\n');  // Trim each line
-}
+// ── Twemoji color emoji image support ──
+
+const TWEMOJI_CDN = 'https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72';
+const emojiImageCache = new Map<string, Awaited<ReturnType<typeof loadImage>> | null>();
 
 /**
- * Shared text wrapping logic — used by both renderOverlayToPng and getOverlayHeight
+ * Extract leading emoji from text string.
+ * Uses Intl.Segmenter to correctly handle compound emoji (ZWJ, flags, skin tones).
  */
+function extractLeadingEmoji(text: string): { emoji: string; rest: string } | null {
+  const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
+  const first = segmenter.segment(text)[Symbol.iterator]().next();
+  if (!first.value) return null;
+  const candidate = first.value.segment;
+  if (/\p{Extended_Pictographic}/u.test(candidate)) {
+    return { emoji: candidate, rest: text.slice(candidate.length).trimStart() };
+  }
+  return null;
+}
+
+function emojiToCodepoints(emoji: string, keepFE0F = false): string {
+  const cps: string[] = [];
+  for (const char of emoji) {
+    const cp = char.codePointAt(0);
+    if (cp === undefined) continue;
+    if (cp === 0xfe0e) continue;
+    if (!keepFE0F && cp === 0xfe0f) continue;
+    cps.push(cp.toString(16));
+  }
+  return cps.join('-');
+}
+
+async function fetchEmojiImage(emoji: string): Promise<Awaited<ReturnType<typeof loadImage>> | null> {
+  // Twemoji naming: some emoji include FE0F, some don't. Try both.
+  const keys = [emojiToCodepoints(emoji, false), emojiToCodepoints(emoji, true)];
+
+  for (const key of keys) {
+    if (!key) continue;
+    if (emojiImageCache.has(key)) {
+      const cached = emojiImageCache.get(key);
+      if (cached) return cached;
+      continue;
+    }
+
+    // Disk cache
+    const cacheDir = path.join(process.cwd(), '.cache', 'twemoji');
+    const cachePath = path.join(cacheDir, `${key}.png`);
+    if (fs.existsSync(cachePath)) {
+      try {
+        const img = await loadImage(cachePath);
+        emojiImageCache.set(key, img);
+        return img;
+      } catch { /* re-fetch */ }
+    }
+
+    // CDN fetch
+    try {
+      const url = `${TWEMOJI_CDN}/${key}.png`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) {
+        emojiImageCache.set(key, null);
+        continue;
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      fs.mkdirSync(cacheDir, { recursive: true });
+      fs.writeFileSync(cachePath, buf);
+      const img = await loadImage(buf);
+      emojiImageCache.set(key, img);
+      console.log(`[overlay-renderer] Cached Twemoji: ${key}.png`);
+      return img;
+    } catch {
+      emojiImageCache.set(key, null);
+    }
+  }
+  return null;
+}
+
+// ── Text helpers ──
+
+function normalizeText(text: string): string {
+  return text
+    .replace(/\r/g, '')
+    .replace(/[\u200B\u200C\uFEFF]/g, '')      // Keep ZWJ (U+200D) for emoji sequences
+    .replace(/\u00A0/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .split('\n').map(l => l.trim()).join('\n');
+}
+
 function wrapText(
   ctx: ReturnType<ReturnType<typeof createCanvas>['getContext']>,
   text: string,
@@ -162,15 +214,11 @@ function wrapText(
 
 function buildFont(fontSize: number, fontWeight: string): string {
   const weight = fontWeight === 'extrabold' ? '800' : fontWeight === 'bold' ? '700' : '400';
-  // DejaVu Sans is installed in Docker (fonts-dejavu-core); Arial is macOS/Windows only.
-  // Emoji fonts MUST be listed explicitly by their platform family names so @napi-rs/canvas
-  // (Skia) falls through to them for emoji codepoints instead of rendering wrong glyphs.
-  return `${weight} ${fontSize}px "DejaVu Sans", Arial, "Apple Color Emoji", "Noto Color Emoji", "Segoe UI Emoji", Emoji, sans-serif`;
+  return `${weight} ${fontSize}px "DejaVu Sans", Arial, "Apple Color Emoji", "Noto Color Emoji", Emoji, sans-serif`;
 }
 
-/**
- * Render a single text overlay to PNG with proper emoji support
- */
+// ── Main render function ──
+
 export async function renderOverlayToPng(
   overlay: TextOverlay,
   videoWidth: number,
@@ -180,16 +228,20 @@ export async function renderOverlayToPng(
   registerEmojiFont();
 
   const { text, emoji, style } = overlay;
-  const displayText = normalizeText(emoji ? `${emoji} ${text}` : text);
+  const rawText = normalizeText(emoji ? `${emoji} ${text}` : text);
 
-  // Scale factor: maps preview CSS pixels (320px container) to render pixels (1080px output)
+  // Detect leading emoji in the text
+  const extracted = extractLeadingEmoji(rawText);
+  let emojiImg: Awaited<ReturnType<typeof loadImage>> | null = null;
+  if (extracted) {
+    emojiImg = await fetchEmojiImage(extracted.emoji);
+  }
+
   const scale = videoWidth / PREVIEW_WIDTH;
   const fontSize = Math.round(style.fontSize * PREVIEW_FONT_SCALE * scale);
   const padX = Math.round(style.paddingX * PREVIEW_GEOM_SCALE * scale);
   const padY = Math.round(style.paddingY * PREVIEW_GEOM_SCALE * scale);
   const borderRadius = Math.round(style.borderRadius * PREVIEW_GEOM_SCALE * scale);
-
-  // Account for the px-3 wrapper padding in VideoPreview.tsx (12px each side at preview scale)
   const wrapperPad = Math.round(PREVIEW_WRAPPER_PAD * scale);
   const maxBoxWidth = Math.round((videoWidth * style.maxWidth) / 100) - wrapperPad * 2;
   const lineHeight = fontSize * PREVIEW_LINE_HEIGHT;
@@ -197,31 +249,39 @@ export async function renderOverlayToPng(
 
   const font = buildFont(fontSize, style.fontWeight);
 
-  // Measure text to determine fit-content width (not always maxBoxWidth)
+  // Emoji image sizing
+  const emojiSize = Math.round(fontSize * 1.2);
+  const emojiGap = Math.round(fontSize * 0.25);
+  const emojiReserved = emojiImg ? emojiSize + emojiGap : 0;
+
+  // If we have a Twemoji image, wrap only the text (no emoji character).
+  // First line is narrower to make room for the emoji image.
+  const textToWrap = emojiImg ? extracted!.rest : rawText;
+
+  // Measure and wrap
   const measureCanvas = createCanvas(maxBoxWidth, 1);
   const measureCtx = measureCanvas.getContext('2d');
   measureCtx.font = font;
 
-  const lines = wrapText(measureCtx, displayText, textAreaWidth);
+  // Wrap with first-line indent for emoji
+  const firstLineMax = emojiImg ? textAreaWidth - emojiReserved : textAreaWidth;
+  const lines = wrapTextWithIndent(measureCtx, textToWrap, textAreaWidth, firstLineMax);
 
   // Find widest line for fit-content box sizing
   let maxLineWidth = 0;
-  for (const line of lines) {
-    const w = measureCtx.measureText(line).width;
+  for (let i = 0; i < lines.length; i++) {
+    let w = measureCtx.measureText(lines[i]).width;
+    if (i === 0 && emojiImg) w += emojiReserved;
     if (w > maxLineWidth) maxLineWidth = w;
   }
   const boxWidth = Math.min(Math.ceil(maxLineWidth) + padX * 2, maxBoxWidth);
   const boxHeight = Math.round(lines.length * lineHeight + padY * 2);
 
-  console.log(`[overlay] "${displayText.slice(0, 50)}${displayText.length > 50 ? '...' : ''}" → ${lines.length} lines, box ${boxWidth}×${boxHeight}, textArea ${textAreaWidth}px`);
-  if (lines.length > 1) {
-    lines.forEach((l, i) => console.log(`  line ${i}: "${l}"`));
-  }
+  console.log(`[overlay] "${rawText.slice(0, 50)}${rawText.length > 50 ? '...' : ''}" → ${lines.length} lines, box ${boxWidth}×${boxHeight}, emoji: ${emojiImg ? 'twemoji' : extracted ? 'monochrome' : 'none'}`);
 
   const canvas = createCanvas(boxWidth, boxHeight);
   const ctx = canvas.getContext('2d');
   ctx.font = font;
-  ctx.textAlign = style.textAlign;
   ctx.textBaseline = 'top';
 
   ctx.clearRect(0, 0, boxWidth, boxHeight);
@@ -232,18 +292,37 @@ export async function renderOverlayToPng(
   ctx.roundRect(0, 0, boxWidth, boxHeight, borderRadius);
   ctx.fill();
 
-  // Draw text — centered within the fit-content box
+  // Draw text
   ctx.fillStyle = style.textColor;
-  const textX =
-    style.textAlign === 'center'
-      ? boxWidth / 2
-      : style.textAlign === 'right'
-        ? boxWidth - padX
-        : padX;
 
-  lines.forEach((line, i) => {
-    ctx.fillText(line, textX, padY + i * lineHeight);
-  });
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const lineW = ctx.measureText(line).width;
+    const fullLineW = (i === 0 && emojiImg) ? lineW + emojiReserved : lineW;
+
+    // Calculate X based on alignment
+    let lineStartX: number;
+    if (style.textAlign === 'center') {
+      lineStartX = (boxWidth - fullLineW) / 2;
+    } else if (style.textAlign === 'right') {
+      lineStartX = boxWidth - padX - fullLineW;
+    } else {
+      lineStartX = padX;
+    }
+
+    const textStartX = (i === 0 && emojiImg) ? lineStartX + emojiReserved : lineStartX;
+    ctx.textAlign = 'left';
+    ctx.fillText(line, textStartX, padY + i * lineHeight);
+
+    // Draw color emoji image on first line
+    if (i === 0 && emojiImg) {
+      const emojiY = padY + (lineHeight - emojiSize) / 2;
+      ctx.drawImage(emojiImg, lineStartX, emojiY, emojiSize, emojiSize);
+    }
+  }
+
+  // If no Twemoji image was available but there IS an emoji in the text,
+  // it will render with the monochrome fallback glyph (better than nothing)
 
   const dir = path.dirname(outputPath);
   const publicDir = path.resolve(path.join(process.cwd(), 'public'));
@@ -261,10 +340,65 @@ export async function renderOverlayToPng(
 }
 
 /**
- * Get the height of a rendered overlay (for stacking) — uses shared wrap logic.
- * @param totalOverlays — total number of overlays in the set, used for dynamic gap sizing
+ * Wrap text with a different max width for the first line (to leave room for emoji).
  */
-export function getOverlayHeight(overlay: TextOverlay, videoWidth: number, totalOverlays: number): number {
+function wrapTextWithIndent(
+  ctx: ReturnType<ReturnType<typeof createCanvas>['getContext']>,
+  text: string,
+  maxWidth: number,
+  firstLineMaxWidth: number
+): string[] {
+  const paragraphs = text.split('\n');
+  const wrapped: string[] = [];
+  let isFirstLine = true;
+
+  for (const para of paragraphs) {
+    const words = para.split(/\s+/).filter(w => w.length > 0);
+    if (words.length === 0) {
+      wrapped.push('');
+      isFirstLine = false;
+      continue;
+    }
+    let line = '';
+    for (const word of words) {
+      const limit = isFirstLine && wrapped.length === 0 ? firstLineMaxWidth : maxWidth;
+      const test = line ? `${line} ${word}` : word;
+      const m = ctx.measureText(test);
+      if (m.width > limit && line) {
+        wrapped.push(line);
+        isFirstLine = false;
+        line = word;
+      } else if (m.width > limit && !line) {
+        let chunk = '';
+        for (const ch of word) {
+          const t = chunk + ch;
+          if (ctx.measureText(t).width > limit && chunk) {
+            wrapped.push(chunk);
+            isFirstLine = false;
+            chunk = ch;
+          } else {
+            chunk = t;
+          }
+        }
+        line = chunk;
+      } else {
+        line = test;
+      }
+    }
+    if (line) {
+      wrapped.push(line);
+      isFirstLine = false;
+    }
+  }
+  return wrapped.length ? wrapped : [''];
+}
+
+// ── Height calculations for FFmpeg stacking ──
+
+/**
+ * Get the PNG box height (without gap) for an overlay.
+ */
+export function getBoxPngHeight(overlay: TextOverlay, videoWidth: number): number {
   const { text, emoji, style } = overlay;
   const displayText = normalizeText(emoji ? `${emoji} ${text}` : text);
   const scale = videoWidth / PREVIEW_WIDTH;
@@ -282,8 +416,14 @@ export function getOverlayHeight(overlay: TextOverlay, videoWidth: number, total
   ctx.font = font;
 
   const lines = wrapText(ctx, displayText, textAreaWidth);
-  // Dynamic gap matches VideoPreview.tsx: fewer overlays → more space between boxes
-  const gapEm = getGapEm(totalOverlays);
-  const gap = Math.round(style.fontSize * PREVIEW_FONT_SCALE * gapEm * scale);
-  return lines.length * lineHeight + padY * 2 + gap;
+  return Math.round(lines.length * lineHeight + padY * 2);
+}
+
+/**
+ * Get the gap in pixels between overlays for a given overlay set.
+ */
+export function getGapPx(overlayCount: number, fontSize: number, videoWidth: number): number {
+  const scale = videoWidth / PREVIEW_WIDTH;
+  const gapEm = getGapEm(overlayCount);
+  return Math.round(fontSize * PREVIEW_FONT_SCALE * gapEm * scale);
 }
