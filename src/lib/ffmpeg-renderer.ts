@@ -4,7 +4,8 @@ import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import type { TextOverlay, MusicTrack } from './types';
-import { renderOverlayToPng, getBoxPngHeight, getGapPx } from './overlay-renderer';
+import { renderOverlayToPng, getGapPx } from './overlay-renderer';
+import type { OverlayRenderResult } from './overlay-renderer';
 const execFileAsync = promisify(execFile);
 
 const ALLOWED_DIRS = [
@@ -97,11 +98,14 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
   try {
     const sorted = [...overlays].sort((a, b) => a.startTime - b.startTime);
 
+    // Render each overlay to PNG and collect actual dimensions
+    const renderResults: OverlayRenderResult[] = [];
     for (let i = 0; i < sorted.length; i++) {
       const overlay = sorted[i];
       const pngPath = path.join(tempDir, `overlay_${i}.png`);
-      await renderOverlayToPng(overlay, OUTPUT_WIDTH, OUTPUT_HEIGHT, pngPath);
-      overlayPaths.push(pngPath);
+      const result = await renderOverlayToPng(overlay, OUTPUT_WIDTH, OUTPUT_HEIGHT, pngPath);
+      overlayPaths.push(result.path);
+      renderResults.push(result);
     }
 
     // Build overlay filter chain
@@ -115,10 +119,9 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
     const SAFE_BOTTOM = Math.round(OUTPUT_HEIGHT * 0.65); // bottom of last overlay must stay above this
     const safeZoneHeight = SAFE_BOTTOM - SAFE_TOP;
 
-    // Calculate box heights (without gaps) and gap size separately.
-    // When overflowing the safe zone, only compress the GAPS — not the box heights —
-    // so boxes never overlap and spacing stays even.
-    const boxHeights = sorted.map((o) => getBoxPngHeight(o, OUTPUT_WIDTH));
+    // Use ACTUAL rendered PNG heights (not recalculated) — guarantees correct positioning.
+    // Only compress the GAPS when overflowing, never the box heights.
+    const boxHeights = renderResults.map((r) => r.height);
     const totalBoxHeight = boxHeights.reduce((sum, h) => sum + h, 0);
     const baseFontSize = sorted[0]?.style.fontSize ?? 28;
     const baseGap = sorted.length > 1 ? getGapPx(sorted.length, baseFontSize, OUTPUT_WIDTH) : 0;

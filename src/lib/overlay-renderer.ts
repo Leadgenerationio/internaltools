@@ -171,60 +171,29 @@ function normalizeText(text: string): string {
     .split('\n').map(l => l.trim()).join('\n');
 }
 
-function wrapText(
-  ctx: ReturnType<ReturnType<typeof createCanvas>['getContext']>,
-  text: string,
-  maxWidth: number
-): string[] {
-  const paragraphs = text.split('\n');
-  const wrapped: string[] = [];
-  for (const para of paragraphs) {
-    const words = para.split(/\s+/).filter(w => w.length > 0);
-    if (words.length === 0) {
-      wrapped.push('');
-      continue;
-    }
-    let line = '';
-    for (const word of words) {
-      const test = line ? `${line} ${word}` : word;
-      const m = ctx.measureText(test);
-      if (m.width > maxWidth && line) {
-        wrapped.push(line);
-        line = word;
-      } else if (m.width > maxWidth && !line) {
-        let chunk = '';
-        for (const ch of word) {
-          const t = chunk + ch;
-          if (ctx.measureText(t).width > maxWidth && chunk) {
-            wrapped.push(chunk);
-            chunk = ch;
-          } else {
-            chunk = t;
-          }
-        }
-        line = chunk;
-      } else {
-        line = test;
-      }
-    }
-    if (line) wrapped.push(line);
-  }
-  return wrapped.length ? wrapped : [''];
-}
-
 function buildFont(fontSize: number, fontWeight: string): string {
   const weight = fontWeight === 'extrabold' ? '800' : fontWeight === 'bold' ? '700' : '400';
-  return `${weight} ${fontSize}px "DejaVu Sans", Arial, "Apple Color Emoji", "Noto Color Emoji", Emoji, sans-serif`;
+  // Font stack must match globals.css: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif
+  // macOS:  "Helvetica Neue" ≈ SF Pro (the system font via -apple-system)
+  // Windows: "Segoe UI" (matches CSS)
+  // Linux/Docker: "DejaVu Sans" (fonts-dejavu-core package)
+  return `${weight} ${fontSize}px "Helvetica Neue", "Segoe UI", "DejaVu Sans", Arial, sans-serif`;
 }
 
 // ── Main render function ──
+
+export interface OverlayRenderResult {
+  path: string;
+  width: number;
+  height: number;
+}
 
 export async function renderOverlayToPng(
   overlay: TextOverlay,
   videoWidth: number,
   videoHeight: number,
   outputPath: string
-): Promise<string> {
+): Promise<OverlayRenderResult> {
   registerEmojiFont();
 
   const { text, emoji, style } = overlay;
@@ -336,7 +305,7 @@ export async function renderOverlayToPng(
   const pngBuffer = canvas.toBuffer('image/png');
   fs.writeFileSync(outputPath, pngBuffer);
 
-  return outputPath;
+  return { path: outputPath, width: boxWidth, height: boxHeight };
 }
 
 /**
@@ -393,31 +362,7 @@ function wrapTextWithIndent(
   return wrapped.length ? wrapped : [''];
 }
 
-// ── Height calculations for FFmpeg stacking ──
-
-/**
- * Get the PNG box height (without gap) for an overlay.
- */
-export function getBoxPngHeight(overlay: TextOverlay, videoWidth: number): number {
-  const { text, emoji, style } = overlay;
-  const displayText = normalizeText(emoji ? `${emoji} ${text}` : text);
-  const scale = videoWidth / PREVIEW_WIDTH;
-  const fontSize = Math.round(style.fontSize * PREVIEW_FONT_SCALE * scale);
-  const padY = Math.round(style.paddingY * PREVIEW_GEOM_SCALE * scale);
-  const lineHeight = fontSize * PREVIEW_LINE_HEIGHT;
-  const wrapperPad = Math.round(PREVIEW_WRAPPER_PAD * scale);
-  const maxBoxWidth = Math.round((videoWidth * style.maxWidth) / 100) - wrapperPad * 2;
-  const padX = Math.round(style.paddingX * PREVIEW_GEOM_SCALE * scale);
-  const textAreaWidth = maxBoxWidth - padX * 2;
-
-  const font = buildFont(fontSize, style.fontWeight);
-  const canvas = createCanvas(1, 1);
-  const ctx = canvas.getContext('2d');
-  ctx.font = font;
-
-  const lines = wrapText(ctx, displayText, textAreaWidth);
-  return Math.round(lines.length * lineHeight + padY * 2);
-}
+// ── Gap calculation for FFmpeg stacking ──
 
 /**
  * Get the gap in pixels between overlays for a given overlay set.
