@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuthContext } from '@/lib/api-auth';
 
 const JAMENDO_CLIENT_ID = process.env.JAMENDO_CLIENT_ID;
-const JAMENDO_API = 'https://api.jamendo.com/v3';
+const JAMENDO_API = 'https://api.jamendo.com/v3.0';
 
 /**
  * GET /api/music-library?q=upbeat&genre=pop&page=1
