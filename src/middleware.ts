@@ -62,6 +62,17 @@ setInterval(() => {
 
 // ─── Security Headers ───────────────────────────────────────────────────────
 
+// Allow cloud storage domains in CSP when S3/CDN is configured
+const STORAGE_ORIGIN = process.env.CDN_URL || process.env.S3_PUBLIC_URL || '';
+let STORAGE_CSP = '';
+if (STORAGE_ORIGIN) {
+  try {
+    STORAGE_CSP = ` ${new URL(STORAGE_ORIGIN).origin}`;
+  } catch {
+    // Invalid URL — skip adding to CSP
+  }
+}
+
 const SECURITY_HEADERS: Record<string, string> = {
   'X-Frame-Options': 'DENY',
   'X-Content-Type-Options': 'nosniff',
@@ -72,10 +83,10 @@ const SECURITY_HEADERS: Record<string, string> = {
     "default-src 'self'",
     "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "media-src 'self' blob:",
+    `img-src 'self' data: blob:${STORAGE_CSP}`,
+    `media-src 'self' blob:${STORAGE_CSP}`,
     "font-src 'self'",
-    "connect-src 'self'",
+    `connect-src 'self'${STORAGE_CSP}`,
     "frame-ancestors 'none'",
   ].join('; '),
 };

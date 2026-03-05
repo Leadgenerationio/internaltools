@@ -23,7 +23,7 @@ export function getAuthUrl(userId: string, redirectUri: string): string {
     access_type: 'offline',
     prompt: 'consent', // Force consent to always get refresh_token
     scope: [
-      'https://www.googleapis.com/auth/drive.file', // Only files created by this app
+      'https://www.googleapis.com/auth/drive', // Full access to list and upload to any folder
       'https://www.googleapis.com/auth/userinfo.email', // To show connected email
     ],
     redirect_uri: redirectUri,

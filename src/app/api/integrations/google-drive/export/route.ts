@@ -8,6 +8,7 @@ import {
 } from '@/lib/google-drive';
 import path from 'path';
 import fs from 'fs';
+import { Readable } from 'stream';
 
 const PUBLIC_DIR = path.join(process.cwd(), 'public');
 
@@ -17,6 +18,24 @@ const MAX_CONCURRENT = 3;
 function isPathSafe(resolvedPath: string, allowedDir: string): boolean {
   const normalized = path.normalize(resolvedPath);
   return normalized.startsWith(path.normalize(allowedDir));
+}
+
+/** Check if a URL is an external (absolute) URL */
+function isExternalUrl(url: string): boolean {
+  return url.startsWith('http://') || url.startsWith('https://');
+}
+
+/** Validate an external URL is from our configured storage origin (prevents SSRF) */
+function isAllowedExternalUrl(url: string): boolean {
+  const allowedOrigin = process.env.CDN_URL || process.env.S3_PUBLIC_URL;
+  if (!allowedOrigin) return false;
+  try {
+    const allowed = new URL(allowedOrigin).origin;
+    const target = new URL(url).origin;
+    return target === allowed;
+  } catch {
+    return false;
+  }
 }
 
 /** Extract the public-relative file path from a URL (handles /api/files?path=xxx and /xxx) */
@@ -32,9 +51,9 @@ function extractPublicPath(url: string): string {
   return url.startsWith('/') ? url.slice(1) : url;
 }
 
-/** Get MIME type from file extension */
+/** Get MIME type from file extension or URL */
 function getMimeType(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase();
+  const ext = path.extname(filePath).toLowerCase().split('?')[0]; // Strip query params
   const types: Record<string, string> = {
     '.mp4': 'video/mp4',
     '.webm': 'video/webm',
@@ -43,6 +62,53 @@ function getMimeType(filePath: string): string {
     '.mkv': 'video/x-matroska',
   };
   return types[ext] || 'video/mp4';
+}
+
+/**
+ * Get a readable stream for a file — handles both local paths and external URLs.
+ * Returns { stream, mimeType } or throws with a descriptive error.
+ */
+async function getFileStream(
+  fileUrl: string
+): Promise<{ stream: NodeJS.ReadableStream; mimeType: string }> {
+  // External URL (S3, CDN, etc.) — fetch via HTTP
+  if (isExternalUrl(fileUrl)) {
+    if (!isAllowedExternalUrl(fileUrl)) {
+      throw new Error('File URL is not from an allowed storage origin');
+    }
+    const response = await fetch(fileUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch file from storage (${response.status})`);
+    }
+    if (!response.body) {
+      throw new Error('Empty response from storage');
+    }
+    const mimeType = response.headers.get('content-type') || getMimeType(fileUrl);
+    // Convert Web ReadableStream to Node.js Readable
+    const nodeStream = Readable.fromWeb(response.body as any);
+    return { stream: nodeStream, mimeType };
+  }
+
+  // Local file — resolve from /api/files?path=xxx or direct path
+  const publicPath = extractPublicPath(fileUrl);
+  if (!publicPath) {
+    throw new Error('Invalid file URL');
+  }
+
+  const fullPath = path.join(PUBLIC_DIR, publicPath);
+  if (!isPathSafe(fullPath, PUBLIC_DIR)) {
+    throw new Error('Access denied');
+  }
+
+  if (!fs.existsSync(fullPath)) {
+    throw new Error(
+      'File not found on server — it may have been cleaned up. Please re-render and try again.'
+    );
+  }
+
+  const stream = fs.createReadStream(fullPath);
+  const mimeType = getMimeType(fullPath);
+  return { stream, mimeType };
 }
 
 export const maxDuration = 300; // 5 minutes for batch uploads
@@ -167,23 +233,7 @@ export async function POST(request: NextRequest) {
 
     const batchResults = await Promise.allSettled(
       batch.map(async (file) => {
-        const publicPath = extractPublicPath(file.url);
-        if (!publicPath) {
-          throw new Error('Invalid file URL');
-        }
-
-        const fullPath = path.join(PUBLIC_DIR, publicPath);
-        if (!isPathSafe(fullPath, PUBLIC_DIR)) {
-          throw new Error('Access denied');
-        }
-
-        // Verify file exists
-        if (!fs.existsSync(fullPath)) {
-          throw new Error('File not found on server');
-        }
-
-        const fileStream = fs.createReadStream(fullPath);
-        const mimeType = getMimeType(fullPath);
+        const { stream, mimeType } = await getFileStream(file.url);
 
         // Clean up name for Drive (replace problem characters)
         const safeName = file.name.replace(/[<>:"/\\|?*]/g, '_');
@@ -191,7 +241,7 @@ export async function POST(request: NextRequest) {
         const result = await uploadToDrive(
           accessToken,
           safeName,
-          fileStream,
+          stream,
           mimeType,
           targetFolderId
         );

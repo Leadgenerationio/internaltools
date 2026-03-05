@@ -75,7 +75,8 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **Files**: uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/` — symlinked to Railway Volume (`/app/data`) via `docker-entrypoint.sh`
 - **File serving**: All file URLs use `/api/files?path=xxx` — Next.js standalone doesn't serve runtime files from `public/`. Always use `fileUrl()` from `src/lib/file-url.ts` to generate URLs. Files are streamed via `createReadStream()` with HTTP Range header support (not `readFile()`).
 - **Cloud storage**: Optional S3/R2 via `src/lib/storage.ts` — activated by `S3_BUCKET` env var, lazy-loads AWS SDK, streaming uploads via `@aws-sdk/lib-storage` (no full-file buffering)
-- **CDN file serving**: When `CDN_URL` or `S3_PUBLIC_URL` is set, `fileUrl()` returns direct CDN URLs instead of `/api/files`, offloading file serving from Node.js
+- **CDN file serving**: When `CDN_URL` or `S3_PUBLIC_URL` is set, `fileUrl()` returns direct CDN URLs instead of `/api/files`, offloading file serving from Node.js. CSP headers dynamically allow the CDN origin for media-src/img-src/connect-src.
+- **File lifecycle**: Startup cleanup deletes outputs >24h and uploads >1 day (docker-entrypoint.sh). Pre-render cleanup deletes outputs >4 hours (cleanOldOutputs). Google Drive export handles both local files and external S3/CDN URLs (fetches via HTTP with SSRF protection).
 - **Atomic token deduction**: `deductTokens()` uses raw SQL (`UPDATE ... WHERE balance >= amount RETURNING balance`) to prevent TOCTOU race conditions between concurrent requests
 - **Streaming uploads**: `/api/upload` streams files to disk via `Readable.fromWeb()` + `pipeline()` — never buffers 500MB files in memory
 - **Auth**: NextAuth v5 credentials provider — JWT sessions, `AUTH_SECRET` env var for signing, `secureCookie: true` in middleware for reverse proxy compatibility

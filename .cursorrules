@@ -19,7 +19,8 @@ After any new feature or major change, always update `ARCHITECTURE.md`, `CLAUDE.
 - **AI video generation**: kie.ai REST API — 6 models: Seedance 1.5, Kling 2.6, Veo 3.1 Fast, Sora 2, Sora 2 Pro, Veo 3.1 Quality. Two API patterns: Veo `/veo/` and Market `/jobs/`.
 - **File handling**: Uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/` (symlinked to Railway Volume via `docker-entrypoint.sh`)
 - **File serving**: All file URLs use `/api/files?path=xxx` (Next.js standalone doesn't serve runtime files from `public/`). Use `fileUrl()` from `src/lib/file-url.ts` to generate URLs. Files streamed with Range header support.
-- **Cloud storage**: Optional S3/R2 support via `src/lib/storage.ts` (activated by `S3_BUCKET` env var)
+- **Cloud storage**: Optional S3/R2 support via `src/lib/storage.ts` (activated by `S3_BUCKET` env var). CSP headers dynamically allow CDN origin. Google Drive export fetches from S3 URLs when local files unavailable.
+- **File lifecycle**: Startup cleanup: outputs >24h, uploads >1 day. Pre-render cleanup: outputs >4 hours. Google Drive export handles both local files and external CDN URLs.
 - **Redis**: Optional `ioredis` via `src/lib/redis.ts` (from `REDIS_URL`). Used for rate limiting + caching. Graceful fallback when unavailable.
 - **Caching**: `src/lib/cache.ts` — Redis-backed TTL cache for company balance (10s) and notification count (15s). Invalidated on writes.
 - **Rate limiting**: Dual-layer — in-memory in middleware (Edge), Redis sorted-set in `src/lib/rate-limit.ts` (Node.js API routes)

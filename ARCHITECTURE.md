@@ -868,7 +868,7 @@ OAuth2 integration allowing users to export rendered videos directly to Google D
 - **Dockerfile**: Multi-stage build — builder with native dependencies, runner with runtime libs + FFmpeg
 - **Output**: Next.js standalone mode (`output: 'standalone'` in next.config.js)
 - **Auto-deploy**: Git agent (`npm run git-agent`) watches for file changes and auto-pushes to GitHub, triggering Railway auto-deploy
-- **Persistent storage**: Railway Volume mounted at `/app/data` — `docker-entrypoint.sh` symlinks `public/uploads`, `public/outputs`, `public/music` to the volume so files survive deploys
+- **Persistent storage**: Railway Volume mounted at `/app/data` — `docker-entrypoint.sh` symlinks `public/uploads`, `public/outputs`, `public/music` to the volume so files survive deploys. Startup cleanup deletes outputs >24 hours and uploads >1 day (preserves recent renders for playback/export).
 - **File serving**: Next.js standalone does NOT serve runtime-generated files from `public/`. All file URLs use `/api/files?path=xxx` (served by `src/app/api/files/route.ts`)
 - **Startup**: `docker-entrypoint.sh` handles volume symlinks → Prisma migrate → server start
 

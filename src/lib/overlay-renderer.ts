@@ -3,14 +3,19 @@
  * FFmpeg's drawtext doesn't support emoji, so we render to PNG and overlay instead.
  */
 import { createCanvas, GlobalFonts } from '@napi-rs/canvas';
+import { execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import type { TextOverlay } from './types';
 
 const EMOJI_FONT_PATHS = [
-  '/System/Library/Fonts/Apple Color Emoji.ttc', // macOS
-  '/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf', // Linux
-  'C:\\Windows\\Fonts\\seguiemj.ttf', // Windows Segoe UI Emoji
+  '/System/Library/Fonts/Apple Color Emoji.ttc',                       // macOS
+  '/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf',                 // Debian 11 / Ubuntu 20.04+
+  '/usr/share/fonts/truetype/noto-color-emoji/NotoColorEmoji.ttf',     // Debian 12 Bookworm
+  '/usr/share/fonts/noto-color-emoji/NotoColorEmoji.ttf',              // Some distros
+  '/usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf',             // Fedora/RHEL
+  '/usr/local/share/fonts/NotoColorEmoji.ttf',                         // Manual install
+  'C:\\Windows\\Fonts\\seguiemj.ttf',                                  // Windows
 ];
 
 // ── Preview-matching scale constants ──
@@ -21,24 +26,74 @@ const PREVIEW_WIDTH = 320;
 const PREVIEW_FONT_SCALE = 0.5;   // fontSize * 0.5 in preview CSS
 const PREVIEW_GEOM_SCALE = 0.6;   // paddingX/Y/borderRadius * 0.6 in preview CSS
 const PREVIEW_LINE_HEIGHT = 1.5;  // Tailwind default line-height
-const PREVIEW_GAP_EM = 0.9;       // marginBottom: 0.9em in preview CSS
 const PREVIEW_WRAPPER_PAD = 12;   // px-3 (0.75rem) side padding on overlay wrapper in preview CSS
+
+/**
+ * Dynamic gap between overlay boxes — MUST match VideoPreview.tsx logic exactly.
+ * More overlays → tighter spacing so everything fits in the safe zone.
+ */
+export function getGapEm(overlayCount: number): number {
+  if (overlayCount >= 5) return 0.3;
+  if (overlayCount >= 4) return 0.5;
+  return 0.9;
+}
 let emojiFontRegistered = false;
 let emojiFontWarned = false;
 
+/** Map of font file paths → the native family name to register with */
+const EMOJI_FONT_FAMILIES: Record<string, string> = {
+  '/System/Library/Fonts/Apple Color Emoji.ttc': 'Apple Color Emoji',
+  'C:\\Windows\\Fonts\\seguiemj.ttf': 'Segoe UI Emoji',
+};
+
 function registerEmojiFont(): void {
   if (emojiFontRegistered) return;
+
+  // Try static paths first (fastest).
+  // Register under BOTH the native family name and the generic "Emoji" alias
+  // so the font string fallback chain works regardless of platform.
   for (const fontPath of EMOJI_FONT_PATHS) {
     if (fs.existsSync(fontPath)) {
       try {
+        const nativeName = EMOJI_FONT_FAMILIES[fontPath];
+        if (nativeName) {
+          GlobalFonts.registerFromPath(fontPath, nativeName);
+        }
         GlobalFonts.registerFromPath(fontPath, 'Emoji');
+        // Also register as Noto Color Emoji for Linux paths
+        if (fontPath.includes('Noto')) {
+          GlobalFonts.registerFromPath(fontPath, 'Noto Color Emoji');
+        }
         emojiFontRegistered = true;
+        console.log(`[overlay-renderer] Registered emoji font: ${fontPath}${nativeName ? ` (as "${nativeName}" + "Emoji")` : ''}`);
         return;
       } catch {
         // Try next font
       }
     }
   }
+
+  // Fallback: discover emoji font via fc-list (works on any Linux with fontconfig)
+  try {
+    const fcOutput = execSync('fc-list :family="Noto Color Emoji" file', {
+      encoding: 'utf-8',
+      timeout: 3000,
+      stdio: ['pipe', 'pipe', 'ignore'],
+    }).trim();
+    if (fcOutput) {
+      const fontPath = fcOutput.split(':')[0].trim();
+      if (fontPath && fs.existsSync(fontPath)) {
+        GlobalFonts.registerFromPath(fontPath, 'Noto Color Emoji');
+        GlobalFonts.registerFromPath(fontPath, 'Emoji');
+        emojiFontRegistered = true;
+        console.log(`[overlay-renderer] Registered emoji font via fc-list: ${fontPath}`);
+        return;
+      }
+    }
+  } catch {
+    // fc-list not available or failed
+  }
+
   if (!emojiFontWarned) {
     console.warn('[overlay-renderer] No emoji font found — emoji characters will render as boxes. Checked:', EMOJI_FONT_PATHS.join(', '));
     emojiFontWarned = true;
@@ -48,11 +103,14 @@ function registerEmojiFont(): void {
 /**
  * Normalize text before measuring/rendering — strips invisible chars that
  * cause phantom gaps between words or mismatched wrapping vs. CSS preview.
+ *
+ * IMPORTANT: Preserve U+200D (ZWJ) as many emoji sequences depend on it
+ * (e.g. 👨‍👩‍👧 = 👨 + ZWJ + 👩 + ZWJ + 👧). Stripping ZWJ corrupts emojis.
  */
 function normalizeText(text: string): string {
   return text
     .replace(/\r/g, '')                        // Remove carriage returns (\r\n → \n)
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')     // Remove zero-width chars (ZWS, ZWNJ, ZWJ, BOM)
+    .replace(/[\u200B\u200C\uFEFF]/g, '')      // Remove ZWS, ZWNJ, BOM — but KEEP ZWJ (U+200D)
     .replace(/\u00A0/g, ' ')                    // Non-breaking space → regular space
     .replace(/[ \t]+/g, ' ')                    // Collapse runs of horizontal whitespace
     .split('\n').map(l => l.trim()).join('\n');  // Trim each line
@@ -104,8 +162,10 @@ function wrapText(
 
 function buildFont(fontSize: number, fontWeight: string): string {
   const weight = fontWeight === 'extrabold' ? '800' : fontWeight === 'bold' ? '700' : '400';
-  // DejaVu Sans is installed in Docker (fonts-dejavu-core); Arial is macOS/Windows only
-  return `${weight} ${fontSize}px "DejaVu Sans", Arial, Emoji, sans-serif`;
+  // DejaVu Sans is installed in Docker (fonts-dejavu-core); Arial is macOS/Windows only.
+  // Emoji fonts MUST be listed explicitly by their platform family names so @napi-rs/canvas
+  // (Skia) falls through to them for emoji codepoints instead of rendering wrong glyphs.
+  return `${weight} ${fontSize}px "DejaVu Sans", Arial, "Apple Color Emoji", "Noto Color Emoji", "Segoe UI Emoji", Emoji, sans-serif`;
 }
 
 /**

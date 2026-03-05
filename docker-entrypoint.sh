@@ -6,19 +6,19 @@ if [ -n "$DATA_DIR" ]; then
   echo "Setting up persistent storage at $DATA_DIR..."
   mkdir -p "$DATA_DIR/uploads" "$DATA_DIR/outputs" "$DATA_DIR/music"
 
-  # ── Aggressive cleanup DIRECTLY on the volume (before symlinks) ──
-  echo "Cleaning volume at $DATA_DIR BEFORE symlinking..."
+  # ── Startup cleanup: remove old files only (preserve recent renders) ──
+  echo "Cleaning old files on volume at $DATA_DIR..."
   echo "Volume disk usage BEFORE cleanup:"
   du -sh "$DATA_DIR" 2>/dev/null || true
   df -h "$DATA_DIR" 2>/dev/null | tail -1 || true
 
-  # Delete ALL rendered outputs (can always re-render)
-  find "$DATA_DIR/outputs" -type f -delete 2>/dev/null || true
-  find "$DATA_DIR/outputs" -mindepth 1 -type d -delete 2>/dev/null || true
+  # Delete rendered outputs older than 24 hours (preserves recent renders for playback/export)
+  find "$DATA_DIR/outputs" -type f -mmin +1440 -delete 2>/dev/null || true
+  find "$DATA_DIR/outputs" -mindepth 1 -type d -empty -delete 2>/dev/null || true
   # Delete uploads older than 1 day
   find "$DATA_DIR/uploads" -type f -mtime +1 -delete 2>/dev/null || true
-  # Delete any stray files in the volume root (temp files, etc.)
-  find "$DATA_DIR" -maxdepth 1 -type f -delete 2>/dev/null || true
+  # Delete any stray temp files in the volume root older than 1 hour
+  find "$DATA_DIR" -maxdepth 1 -type f -mmin +60 -delete 2>/dev/null || true
 
   echo "Volume disk usage AFTER cleanup:"
   du -sh "$DATA_DIR" "$DATA_DIR/uploads" "$DATA_DIR/outputs" "$DATA_DIR/music" 2>/dev/null || true

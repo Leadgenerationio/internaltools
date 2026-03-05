@@ -38,8 +38,8 @@ function isPathSafe(resolvedPath: string, allowedDir: string): boolean {
   return path.normalize(resolvedPath).startsWith(path.normalize(allowedDir));
 }
 
-/** Clean output files older than 30 min */
-function cleanOldOutputs(maxAgeMs = 30 * 60 * 1000): void {
+/** Clean output files older than 4 hours — gives users time to play, download, and export */
+function cleanOldOutputs(maxAgeMs = 4 * 60 * 60 * 1000): void {
   if (!fs.existsSync(OUTPUT_DIR)) return;
   const cutoff = Date.now() - maxAgeMs;
   try {

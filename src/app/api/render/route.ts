@@ -21,8 +21,8 @@ const OUTPUT_DIR = path.join(process.cwd(), 'public', 'outputs');
 const PUBLIC_DIR = path.join(process.cwd(), 'public');
 
 /** Clean output files older than maxAgeMs to prevent disk-full errors.
- *  Keeps recent files from the current render session intact. */
-function cleanOldOutputs(maxAgeMs = 30 * 60 * 1000): void {
+ *  Default 4 hours — gives users time to play, download, and export renders. */
+function cleanOldOutputs(maxAgeMs = 4 * 60 * 60 * 1000): void {
   if (!fs.existsSync(OUTPUT_DIR)) return;
   const cutoff = Date.now() - maxAgeMs;
   let deleted = 0;
