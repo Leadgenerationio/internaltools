@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
-import { renderVideo } from '@/lib/ffmpeg-renderer';
+// renderVideo is dynamically imported only in the synchronous fallback path.
+// This prevents the web server from loading @napi-rs/canvas (native module)
+// when Redis is available and jobs are queued to the worker instead.
 import { uploadFile, isCloudStorage } from '@/lib/storage';
 import { getAuthContext } from '@/lib/api-auth';
 import { checkTokenBalance } from '@/lib/check-limits';
@@ -203,6 +205,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Fallback: synchronous render (no Redis available)
+    // Dynamic import: only loads @napi-rs/canvas when actually rendering
+    const { renderVideo } = await import('@/lib/ffmpeg-renderer');
+
     // Clean outputs older than 30 min to free disk (preserves current session)
     cleanOldOutputs();
 
