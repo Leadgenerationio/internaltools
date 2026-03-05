@@ -1,16 +1,23 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getAuthContext } from '@/lib/api-auth';
 import { prisma } from '@/lib/prisma';
-import { refreshAccessToken, listFolders } from '@/lib/google-drive';
+import { refreshAccessToken, listFolders, getFolderInfo } from '@/lib/google-drive';
 
 /**
  * GET /api/integrations/google-drive/folders
  * Lists the user's Google Drive folders for the folder picker.
+ * Query params:
+ *   - parentId: browse into a specific folder
+ *   - search: search folders by name
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   const authResult = await getAuthContext();
   if (authResult.error) return authResult.error;
   const { userId } = authResult.auth;
+
+  const { searchParams } = new URL(request.url);
+  const parentId = searchParams.get('parentId') || undefined;
+  const search = searchParams.get('search') || undefined;
 
   try {
     const user = await prisma.user.findUnique({
@@ -31,9 +38,15 @@ export async function GET() {
     // Get a fresh access token
     const accessToken = await refreshAccessToken(user.googleDriveRefreshToken);
 
-    const folders = await listFolders(accessToken);
+    const folders = await listFolders(accessToken, { parentId, search });
 
-    return NextResponse.json({ folders });
+    // If browsing a subfolder, also return its info for breadcrumbs
+    let currentFolder = null;
+    if (parentId) {
+      currentFolder = await getFolderInfo(accessToken, parentId);
+    }
+
+    return NextResponse.json({ folders, currentFolder });
   } catch (err: any) {
     // Handle revoked access
     if (err.message?.includes('invalid_grant') || err.code === 401) {

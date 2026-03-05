@@ -169,23 +169,77 @@ export async function createFolder(
 
 /**
  * List user's Google Drive folders for the folder picker.
- * Only lists folders the app has access to, plus root-level folders.
+ * Supports browsing by parent folder and searching by name.
  */
 export async function listFolders(
-  accessToken: string
-): Promise<Array<{ id: string; name: string }>> {
+  accessToken: string,
+  options?: { parentId?: string; search?: string }
+): Promise<Array<{ id: string; name: string; hasChildren: boolean }>> {
   const drive = getDriveClient(accessToken);
 
+  const conditions = ["mimeType='application/vnd.google-apps.folder'", 'trashed=false'];
+
+  if (options?.search) {
+    conditions.push(`name contains '${options.search.replace(/'/g, "\\'")}'`);
+  } else if (options?.parentId) {
+    conditions.push(`'${options.parentId}' in parents`);
+  } else {
+    conditions.push("'root' in parents");
+  }
+
   const response = await drive.files.list({
-    q: "mimeType='application/vnd.google-apps.folder' and trashed=false",
+    q: conditions.join(' and '),
     fields: 'files(id, name)',
     orderBy: 'name',
     pageSize: 100,
   });
 
-  return (response.data.files || []).map((f) => ({
-    id: f.id || '',
-    name: f.name || 'Untitled',
-  }));
+  const folders = response.data.files || [];
+
+  // Check which folders have subfolders (batch check)
+  const results = await Promise.all(
+    folders.map(async (f) => {
+      let hasChildren = false;
+      try {
+        const childCheck = await drive.files.list({
+          q: `mimeType='application/vnd.google-apps.folder' and '${f.id}' in parents and trashed=false`,
+          fields: 'files(id)',
+          pageSize: 1,
+        });
+        hasChildren = (childCheck.data.files?.length || 0) > 0;
+      } catch {
+        // ignore — just show as leaf
+      }
+      return {
+        id: f.id || '',
+        name: f.name || 'Untitled',
+        hasChildren,
+      };
+    })
+  );
+
+  return results;
+}
+
+/**
+ * Get a folder's name and parent info by ID.
+ */
+export async function getFolderInfo(
+  accessToken: string,
+  folderId: string
+): Promise<{ id: string; name: string } | null> {
+  const drive = getDriveClient(accessToken);
+  try {
+    const response = await drive.files.get({
+      fileId: folderId,
+      fields: 'id, name',
+    });
+    return {
+      id: response.data.id || folderId,
+      name: response.data.name || 'Untitled',
+    };
+  } catch {
+    return null;
+  }
 }
 
