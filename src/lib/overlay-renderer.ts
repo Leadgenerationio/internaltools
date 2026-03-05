@@ -130,30 +130,40 @@ async function fetchEmojiImage(emoji: string): Promise<Awaited<ReturnType<typeof
     // Disk cache
     const cacheDir = path.join(process.cwd(), '.cache', 'twemoji');
     const cachePath = path.join(cacheDir, `${key}.png`);
-    if (fs.existsSync(cachePath)) {
-      try {
+    try {
+      if (fs.existsSync(cachePath)) {
         const img = await loadImage(cachePath);
         emojiImageCache.set(key, img);
         return img;
-      } catch { /* re-fetch */ }
+      }
+    } catch (e) {
+      console.warn(`[overlay-renderer] Failed to load cached emoji ${key}:`, e);
+      // Remove corrupted cache file
+      try { fs.unlinkSync(cachePath); } catch { /* ignore */ }
     }
 
-    // CDN fetch
+    // CDN fetch — 3s timeout to avoid slowing renders on poor connectivity
     try {
       const url = `${TWEMOJI_CDN}/${key}.png`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
       if (!res.ok) {
         emojiImageCache.set(key, null);
         continue;
       }
       const buf = Buffer.from(await res.arrayBuffer());
-      fs.mkdirSync(cacheDir, { recursive: true });
-      fs.writeFileSync(cachePath, buf);
+      // Try to cache to disk (non-critical — skip on failure)
+      try {
+        fs.mkdirSync(cacheDir, { recursive: true });
+        fs.writeFileSync(cachePath, buf);
+      } catch (e) {
+        console.warn('[overlay-renderer] Failed to write emoji cache:', e);
+      }
       const img = await loadImage(buf);
       emojiImageCache.set(key, img);
       console.log(`[overlay-renderer] Cached Twemoji: ${key}.png`);
       return img;
-    } catch {
+    } catch (e) {
+      console.warn(`[overlay-renderer] Twemoji CDN fetch failed for ${key}:`, e);
       emojiImageCache.set(key, null);
     }
   }
@@ -199,11 +209,20 @@ export async function renderOverlayToPng(
   const { text, emoji, style } = overlay;
   const rawText = normalizeText(emoji ? `${emoji} ${text}` : text);
 
-  // Detect leading emoji in the text
-  const extracted = extractLeadingEmoji(rawText);
+  // Detect leading emoji and try to fetch color Twemoji image.
+  // Wrapped in try/catch so any failure falls back to text-only rendering.
   let emojiImg: Awaited<ReturnType<typeof loadImage>> | null = null;
-  if (extracted) {
-    emojiImg = await fetchEmojiImage(extracted.emoji);
+  let textAfterEmoji: string | null = null;
+  try {
+    const extracted = extractLeadingEmoji(rawText);
+    if (extracted) {
+      textAfterEmoji = extracted.rest;
+      emojiImg = await fetchEmojiImage(extracted.emoji);
+    }
+  } catch (e) {
+    console.warn('[overlay-renderer] Emoji handling failed, falling back to text-only:', e);
+    emojiImg = null;
+    textAfterEmoji = null;
   }
 
   const scale = videoWidth / PREVIEW_WIDTH;
@@ -223,9 +242,10 @@ export async function renderOverlayToPng(
   const emojiGap = Math.round(fontSize * 0.25);
   const emojiReserved = emojiImg ? emojiSize + emojiGap : 0;
 
-  // If we have a Twemoji image, wrap only the text (no emoji character).
+  // If we have a Twemoji image, wrap only the remaining text (no emoji character).
   // First line is narrower to make room for the emoji image.
-  const textToWrap = emojiImg ? extracted!.rest : rawText;
+  // If emoji fetch failed, fall back to full rawText (emoji renders as monochrome glyph).
+  const textToWrap = (emojiImg && textAfterEmoji !== null) ? textAfterEmoji : rawText;
 
   // Measure and wrap
   const measureCanvas = createCanvas(maxBoxWidth, 1);
@@ -246,7 +266,7 @@ export async function renderOverlayToPng(
   const boxWidth = Math.min(Math.ceil(maxLineWidth) + padX * 2, maxBoxWidth);
   const boxHeight = Math.round(lines.length * lineHeight + padY * 2);
 
-  console.log(`[overlay] "${rawText.slice(0, 50)}${rawText.length > 50 ? '...' : ''}" → ${lines.length} lines, box ${boxWidth}×${boxHeight}, emoji: ${emojiImg ? 'twemoji' : extracted ? 'monochrome' : 'none'}`);
+  console.log(`[overlay] "${rawText.slice(0, 50)}${rawText.length > 50 ? '...' : ''}" → ${lines.length} lines, box ${boxWidth}×${boxHeight}, emoji: ${emojiImg ? 'twemoji' : textAfterEmoji !== null ? 'monochrome' : 'none'}`);
 
   const canvas = createCanvas(boxWidth, boxHeight);
   const ctx = canvas.getContext('2d');
@@ -285,8 +305,12 @@ export async function renderOverlayToPng(
 
     // Draw color emoji image on first line
     if (i === 0 && emojiImg) {
-      const emojiY = padY + (lineHeight - emojiSize) / 2;
-      ctx.drawImage(emojiImg, lineStartX, emojiY, emojiSize, emojiSize);
+      try {
+        const emojiY = padY + (lineHeight - emojiSize) / 2;
+        ctx.drawImage(emojiImg, lineStartX, emojiY, emojiSize, emojiSize);
+      } catch (e) {
+        console.warn('[overlay-renderer] Failed to draw emoji image:', e);
+      }
     }
   }
 

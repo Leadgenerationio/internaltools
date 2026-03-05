@@ -103,9 +103,14 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
     for (let i = 0; i < sorted.length; i++) {
       const overlay = sorted[i];
       const pngPath = path.join(tempDir, `overlay_${i}.png`);
-      const result = await renderOverlayToPng(overlay, OUTPUT_WIDTH, OUTPUT_HEIGHT, pngPath);
-      overlayPaths.push(result.path);
-      renderResults.push(result);
+      try {
+        const result = await renderOverlayToPng(overlay, OUTPUT_WIDTH, OUTPUT_HEIGHT, pngPath);
+        overlayPaths.push(result.path);
+        renderResults.push(result);
+      } catch (err: any) {
+        console.error(`[ffmpeg-renderer] Overlay ${i} render failed:`, err.message, err.stack);
+        throw new Error(`Overlay render failed for "${overlay.text.slice(0, 40)}": ${err.message}`);
+      }
     }
 
     // Build overlay filter chain
