@@ -116,7 +116,7 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
     const safeZoneHeight = SAFE_BOTTOM - SAFE_TOP;
 
     // Calculate total stacked height of all overlays (including gaps)
-    const overlayHeights = sorted.map((o) => getOverlayHeight(o, OUTPUT_WIDTH));
+    const overlayHeights = sorted.map((o) => getOverlayHeight(o, OUTPUT_WIDTH, sorted.length));
     const totalHeight = overlayHeights.reduce((sum, h) => sum + h, 0);
 
     // If overlays overflow the safe zone, compress spacing proportionally to fit

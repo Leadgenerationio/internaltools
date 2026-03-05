@@ -261,9 +261,10 @@ export async function renderOverlayToPng(
 }
 
 /**
- * Get the height of a rendered overlay (for stacking) — uses shared wrap logic
+ * Get the height of a rendered overlay (for stacking) — uses shared wrap logic.
+ * @param totalOverlays — total number of overlays in the set, used for dynamic gap sizing
  */
-export function getOverlayHeight(overlay: TextOverlay, videoWidth: number): number {
+export function getOverlayHeight(overlay: TextOverlay, videoWidth: number, totalOverlays: number): number {
   const { text, emoji, style } = overlay;
   const displayText = normalizeText(emoji ? `${emoji} ${text}` : text);
   const scale = videoWidth / PREVIEW_WIDTH;
@@ -281,7 +282,8 @@ export function getOverlayHeight(overlay: TextOverlay, videoWidth: number): numb
   ctx.font = font;
 
   const lines = wrapText(ctx, displayText, textAreaWidth);
-  // Gap matches preview's marginBottom: 0.9em (em = fontSize in preview CSS)
-  const gap = Math.round(style.fontSize * PREVIEW_FONT_SCALE * PREVIEW_GAP_EM * scale);
+  // Dynamic gap matches VideoPreview.tsx: fewer overlays → more space between boxes
+  const gapEm = getGapEm(totalOverlays);
+  const gap = Math.round(style.fontSize * PREVIEW_FONT_SCALE * gapEm * scale);
   return lines.length * lineHeight + padY * 2 + gap;
 }
