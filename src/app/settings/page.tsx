@@ -46,6 +46,7 @@ export default function SettingsPage() {
   const [templates, setTemplates] = useState<TemplateItem[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [deletingTemplate, setDeletingTemplate] = useState<string | null>(null);
+  const [usingTemplate, setUsingTemplate] = useState<string | null>(null);
   const [templateMessage, setTemplateMessage] = useState('');
 
   // Password change
@@ -186,6 +187,29 @@ export default function SettingsPage() {
       }
     } catch {
       alert('Something went wrong');
+    }
+  };
+
+  const handleUseTemplate = async (templateId: string) => {
+    setUsingTemplate(templateId);
+    setTemplateMessage('');
+    try {
+      const res = await fetch(`/api/templates/${templateId}/use`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setTemplateMessage(data.error || 'Failed to create project from template');
+        return;
+      }
+      const data = await res.json();
+      router.push(`/?projectId=${data.project.id}`);
+    } catch {
+      setTemplateMessage('Failed to create project from template');
+    } finally {
+      setUsingTemplate(null);
     }
   };
 
@@ -633,7 +657,14 @@ export default function SettingsPage() {
                       Used {template.useCount} time{template.useCount !== 1 ? 's' : ''}
                     </p>
                   </div>
-                  <div className="flex-shrink-0">
+                  <div className="flex-shrink-0 flex items-center gap-2">
+                    <button
+                      onClick={() => handleUseTemplate(template.id)}
+                      disabled={usingTemplate === template.id}
+                      className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-blue-950/30 transition-colors disabled:opacity-50"
+                    >
+                      {usingTemplate === template.id ? 'Creating...' : 'Use'}
+                    </button>
                     {!template.isSystem ? (
                       <button
                         onClick={() => handleDeleteTemplate(template.id)}
