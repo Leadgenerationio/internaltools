@@ -237,10 +237,7 @@ export default function ProjectsPage() {
       <header className="border-b border-gray-800 px-6 py-4">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Link href="/" className="text-gray-400 hover:text-white text-sm">
-              &larr; Back
-            </Link>
-            <h1 className="text-xl font-bold text-white">Projects</h1>
+            <h1 className="text-xl font-bold text-white">Ad Maker</h1>
           </div>
           <div className="flex items-center gap-3">
             <button

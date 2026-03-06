@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { v4 as uuidv4 } from 'uuid';
 import AdBriefForm from '@/components/AdBriefForm';
 import FunnelReview from '@/components/FunnelReview';
@@ -91,6 +92,13 @@ function HomeContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const projectIdParam = searchParams.get('projectId');
+
+  // Redirect to projects page if no projectId
+  useEffect(() => {
+    if (!projectIdParam) {
+      router.replace('/projects');
+    }
+  }, [projectIdParam, router]);
 
   // Step management
   const [step, setStep] = useState<AppStep>('brief');
@@ -683,6 +691,15 @@ function HomeContent() {
 
   // === Step navigation ===
 
+  // Show nothing while redirecting to projects page
+  if (!projectIdParam) {
+    return (
+      <main className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <p className="text-gray-400">Loading...</p>
+      </main>
+    );
+  }
+
   const steps: { key: AppStep; label: string; enabled: boolean }[] = [
     { key: 'brief', label: '1. Brief', enabled: !isAsyncBusy },
     { key: 'review', label: '2. Review', enabled: ads.length > 0 && !isAsyncBusy },
@@ -695,7 +712,7 @@ function HomeContent() {
       {/* Header */}
       <header className="border-b border-gray-800 px-3 sm:px-6 py-3 sm:py-4">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 sm:gap-4">
-          <h1 className="text-lg sm:text-xl font-bold text-white shrink-0">Ad Maker</h1>
+          <Link href="/projects" className="text-lg sm:text-xl font-bold text-white shrink-0 hover:text-blue-400 transition-colors">Ad Maker</Link>
 
           {/* Step nav — scrollable on mobile */}
           <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide flex-1 justify-center min-w-0">
