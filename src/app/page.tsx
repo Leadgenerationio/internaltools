@@ -93,12 +93,15 @@ function HomeContent() {
   const router = useRouter();
   const projectIdParam = searchParams.get('projectId');
 
-  // Redirect to projects page if no projectId
+  // Track whether a project has been loaded into the editor
+  const [projectLoaded, setProjectLoaded] = useState(false);
+
+  // Redirect to projects page if no projectId and no project loaded
   useEffect(() => {
-    if (!projectIdParam) {
+    if (!projectIdParam && !projectLoaded) {
       router.replace('/projects');
     }
-  }, [projectIdParam, router]);
+  }, [projectIdParam, projectLoaded, router]);
 
   // Step management
   const [step, setStep] = useState<AppStep>('brief');
@@ -243,6 +246,7 @@ function HomeContent() {
 
         // Track project ID for auto-save
         setActiveProjectId(projectIdParam);
+        setProjectLoaded(true);
 
         // Clean the URL so a refresh doesn't re-fetch
         router.replace('/', { scroll: false });
@@ -692,7 +696,7 @@ function HomeContent() {
   // === Step navigation ===
 
   // Show nothing while redirecting to projects page
-  if (!projectIdParam) {
+  if (!projectIdParam && !projectLoaded) {
     return (
       <main className="min-h-screen bg-gray-950 flex items-center justify-center">
         <p className="text-gray-400">Loading...</p>
