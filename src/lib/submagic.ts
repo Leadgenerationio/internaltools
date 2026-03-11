@@ -36,8 +36,9 @@ export async function listTemplates(): Promise<string[]> {
   const res = await fetch(`${BASE_URL}/templates`, { headers: headers() });
   if (!res.ok) throw new Error(`Submagic templates failed (${res.status})`);
   const data = await res.json();
-  if (Array.isArray(data)) {
-    return data.map((t: any) => t.name || t);
+  const templates = Array.isArray(data) ? data : data.templates;
+  if (Array.isArray(templates)) {
+    return templates.map((t: any) => (typeof t === 'string' ? t : t.name || String(t)));
   }
   return [];
 }
