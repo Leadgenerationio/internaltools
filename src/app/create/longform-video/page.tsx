@@ -8,11 +8,12 @@ import UserMenu from '@/components/UserMenu';
 import type { LongformScript, LongformBrief, VoiceoverConfig, CaptionConfig, LongformResultItem } from '@/lib/longform-types';
 import { DEFAULT_VOICE_CONFIG, DEFAULT_CAPTION_CONFIG } from '@/lib/longform-types';
 
-type WizardStep = 'brief' | 'scripts' | 'configure' | 'generate' | 'results';
+type WizardStep = 'script' | 'scripts' | 'configure' | 'generate' | 'results';
+type ScriptMode = 'paste' | 'generate';
 
 const STEPS: { id: WizardStep; label: string }[] = [
-  { id: 'brief', label: 'Brief' },
-  { id: 'scripts', label: 'Scripts' },
+  { id: 'script', label: 'Script' },
+  { id: 'scripts', label: 'Review' },
   { id: 'configure', label: 'Configure' },
   { id: 'generate', label: 'Generate' },
   { id: 'results', label: 'Results' },
@@ -37,9 +38,20 @@ export default function LongformVideoPage() {
   }, [status, router]);
 
   // Wizard state
-  const [step, setStep] = useState<WizardStep>('brief');
+  const [step, setStep] = useState<WizardStep>('script');
+  const [scriptMode, setScriptMode] = useState<ScriptMode>('paste');
 
-  // Brief
+  // Paste mode
+  const [pastedScript, setPastedScript] = useState('');
+  const [hookMode, setHookMode] = useState<'none' | 'write' | 'ai'>('none');
+  const [customHook, setCustomHook] = useState('');
+  const [aiHooks, setAiHooks] = useState<string[]>([]);
+  const [selectedHookIndex, setSelectedHookIndex] = useState<number | null>(null);
+  const [generatingHooks, setGeneratingHooks] = useState(false);
+  const [hookError, setHookError] = useState<string | null>(null);
+  const [pastedCta, setPastedCta] = useState('');
+
+  // AI Generate mode
   const [brief, setBrief] = useState<LongformBrief>({
     productService: '',
     targetAudience: '',
@@ -77,7 +89,59 @@ export default function LongformVideoPage() {
   const [failedCount, setFailedCount] = useState(0);
   const [tokensUsed, setTokensUsed] = useState(0);
 
-  // ── Brief Step ─────────────────────────────────────────────────────────────
+  // ── Paste mode handlers ──────────────────────────────────────────────────
+
+  const handleGenerateHooks = useCallback(async () => {
+    if (!pastedScript.trim() || generatingHooks) return;
+    setGeneratingHooks(true);
+    setHookError(null);
+    setAiHooks([]);
+    setSelectedHookIndex(null);
+
+    try {
+      const res = await fetch('/api/longform/generate-hooks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scriptBody: pastedScript.trim(), count: 5 }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: 'Failed to generate hooks' }));
+        throw new Error(data.error || `Failed (${res.status})`);
+      }
+
+      const data = await res.json();
+      setAiHooks(data.hooks || []);
+      if (data.hooks?.length > 0) setSelectedHookIndex(0);
+    } catch (err: any) {
+      setHookError(err.message);
+    } finally {
+      setGeneratingHooks(false);
+    }
+  }, [pastedScript, generatingHooks]);
+
+  const handlePastedContinue = useCallback(() => {
+    let hook = '';
+    if (hookMode === 'write') {
+      hook = customHook.trim();
+    } else if (hookMode === 'ai' && selectedHookIndex !== null && aiHooks[selectedHookIndex]) {
+      hook = aiHooks[selectedHookIndex];
+    }
+
+    const script: LongformScript = {
+      variant: 'custom',
+      hook,
+      body: pastedScript.trim(),
+      cta: pastedCta.trim(),
+      suggestedBroll: [],
+    };
+
+    setScripts([script]);
+    setSelectedScripts(new Set([0]));
+    setStep('configure');
+  }, [pastedScript, hookMode, customHook, aiHooks, selectedHookIndex, pastedCta]);
+
+  // ── AI Generate mode handlers ─────────────────────────────────────────────
 
   const handleGenerateScripts = useCallback(async () => {
     if (!brief.productService.trim()) return;
@@ -249,130 +313,280 @@ export default function LongformVideoPage() {
       </header>
 
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
-        {/* ── Brief Step ─────────────────────────────────────────────── */}
-        {step === 'brief' && (
+        {/* ── Script Step ────────────────────────────────────────────── */}
+        {step === 'script' && (
           <div className="space-y-6">
             <div>
-              <h2 className="text-2xl font-bold text-white mb-1">Longform Video Brief</h2>
-              <p className="text-gray-400 text-sm">Describe your product and audience. AI will generate multiple script variants.</p>
+              <h2 className="text-2xl font-bold text-white mb-1">Your Script</h2>
+              <p className="text-gray-400 text-sm">Paste your own script or generate one with AI.</p>
             </div>
 
-            <div className="grid gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">Product / Service *</label>
-                <input
-                  type="text"
-                  value={brief.productService}
-                  onChange={(e) => setBrief({ ...brief, productService: e.target.value })}
-                  placeholder="e.g. Free solar panel installation for UK homeowners"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
+            {/* Mode tabs */}
+            <div className="flex gap-1 bg-gray-900 rounded-lg p-1 w-fit">
+              <button
+                onClick={() => setScriptMode('paste')}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  scriptMode === 'paste'
+                    ? 'bg-gray-700 text-white'
+                    : 'text-gray-400 hover:text-gray-300'
+                }`}
+              >
+                Paste Script
+              </button>
+              <button
+                onClick={() => setScriptMode('generate')}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  scriptMode === 'generate'
+                    ? 'bg-gray-700 text-white'
+                    : 'text-gray-400 hover:text-gray-300'
+                }`}
+              >
+                AI Generate
+              </button>
+            </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">Target Audience</label>
-                <input
-                  type="text"
-                  value={brief.targetAudience}
-                  onChange={(e) => setBrief({ ...brief, targetAudience: e.target.value })}
-                  placeholder="e.g. Homeowners in the UK, aged 30-65"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">Offer</label>
-                <input
-                  type="text"
-                  value={brief.offer}
-                  onChange={(e) => setBrief({ ...brief, offer: e.target.value })}
-                  placeholder="e.g. Government-backed scheme covers full cost"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">Key Benefits</label>
-                <textarea
-                  value={brief.keyBenefits}
-                  onChange={(e) => setBrief({ ...brief, keyBenefits: e.target.value })}
-                  placeholder="e.g. Free installation, reduce bills by 70%, government-funded"
-                  rows={3}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
+            {/* ── Paste Mode ─────────────────────────────────────────── */}
+            {scriptMode === 'paste' && (
+              <div className="space-y-5">
                 <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-1">CTA</label>
-                  <input
-                    type="text"
-                    value={brief.cta}
-                    onChange={(e) => setBrief({ ...brief, cta: e.target.value })}
-                    placeholder="e.g. Enter your postcode to check eligibility"
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  <label className="block text-sm font-medium text-gray-300 mb-1">Script *</label>
+                  <textarea
+                    value={pastedScript}
+                    onChange={(e) => setPastedScript(e.target.value)}
+                    placeholder="Paste your full ad script here..."
+                    rows={8}
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm leading-relaxed"
                   />
+                  <p className="text-xs text-gray-500 mt-1">{pastedScript.trim().split(/\s+/).filter(Boolean).length} words</p>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-1">Tone</label>
-                  <input
-                    type="text"
-                    value={brief.tone}
-                    onChange={(e) => setBrief({ ...brief, tone: e.target.value })}
-                    placeholder="e.g. Friendly, trustworthy, slightly urgent"
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                </div>
-              </div>
+                {/* Hook section */}
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
+                  <div>
+                    <h3 className="text-white font-semibold text-sm">Hook (optional)</h3>
+                    <p className="text-xs text-gray-500">A 2-5 second attention-grabbing opener before the main script.</p>
+                  </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-1">Language</label>
-                  <select
-                    value={brief.language}
-                    onChange={(e) => setBrief({ ...brief, language: e.target.value })}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    <option value="English">English</option>
-                    <option value="Spanish">Spanish</option>
-                    <option value="French">French</option>
-                    <option value="German">German</option>
-                    <option value="Italian">Italian</option>
-                    <option value="Portuguese">Portuguese</option>
-                    <option value="Dutch">Dutch</option>
-                    <option value="Polish">Polish</option>
-                    <option value="Arabic">Arabic</option>
-                    <option value="Hindi">Hindi</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-1">Script Variants</label>
-                  <select
-                    value={brief.numVariants}
-                    onChange={(e) => setBrief({ ...brief, numVariants: Number(e.target.value) })}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  >
-                    {[1, 2, 3, 4].map((n) => (
-                      <option key={n} value={n}>{n} variant{n !== 1 ? 's' : ''}</option>
+                  <div className="flex gap-2">
+                    {(['none', 'write', 'ai'] as const).map((mode) => (
+                      <button
+                        key={mode}
+                        onClick={() => setHookMode(mode)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                          hookMode === mode
+                            ? 'bg-blue-500/20 border border-blue-500 text-blue-400'
+                            : 'bg-gray-800 border border-gray-700 text-gray-400 hover:border-gray-600'
+                        }`}
+                      >
+                        {mode === 'none' ? 'No Hook' : mode === 'write' ? 'Write My Own' : 'AI Generate'}
+                      </button>
                     ))}
-                  </select>
-                </div>
-              </div>
-            </div>
+                  </div>
 
-            {scriptError && (
-              <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-4 py-3 rounded-lg">{scriptError}</div>
+                  {hookMode === 'write' && (
+                    <textarea
+                      value={customHook}
+                      onChange={(e) => setCustomHook(e.target.value)}
+                      placeholder="e.g. Stop scrolling if you own a home in the UK..."
+                      rows={2}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                    />
+                  )}
+
+                  {hookMode === 'ai' && (
+                    <div className="space-y-3">
+                      {aiHooks.length === 0 && !generatingHooks && (
+                        <button
+                          onClick={handleGenerateHooks}
+                          disabled={!pastedScript.trim() || generatingHooks}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+                        >
+                          Generate Hook Ideas
+                        </button>
+                      )}
+
+                      {generatingHooks && (
+                        <div className="flex items-center gap-2 text-gray-400 text-sm">
+                          <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                          Generating hooks...
+                        </div>
+                      )}
+
+                      {hookError && (
+                        <div className="text-red-400 text-sm">{hookError}</div>
+                      )}
+
+                      {aiHooks.length > 0 && (
+                        <div className="space-y-2">
+                          {aiHooks.map((hook, i) => (
+                            <button
+                              key={i}
+                              onClick={() => setSelectedHookIndex(i)}
+                              className={`w-full text-left px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                                selectedHookIndex === i
+                                  ? 'bg-blue-500/20 border border-blue-500 text-white'
+                                  : 'bg-gray-800 border border-gray-700 text-gray-300 hover:border-gray-600'
+                              }`}
+                            >
+                              {hook}
+                            </button>
+                          ))}
+                          <button
+                            onClick={handleGenerateHooks}
+                            disabled={generatingHooks}
+                            className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                          >
+                            Regenerate hooks
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Optional CTA */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1">CTA (optional)</label>
+                  <input
+                    type="text"
+                    value={pastedCta}
+                    onChange={(e) => setPastedCta(e.target.value)}
+                    placeholder="e.g. Click the link below to get started"
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                  />
+                </div>
+
+                <button
+                  onClick={handlePastedContinue}
+                  disabled={!pastedScript.trim()}
+                  className="w-full sm:w-auto px-8 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+                >
+                  Continue to Configure
+                </button>
+              </div>
             )}
 
-            <button
-              onClick={handleGenerateScripts}
-              disabled={!brief.productService.trim() || generatingScripts}
-              className="w-full sm:w-auto px-8 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
-            >
-              {generatingScripts ? 'Generating Scripts...' : 'Generate Scripts'}
-            </button>
+            {/* ── AI Generate Mode ───────────────────────────────────── */}
+            {scriptMode === 'generate' && (
+              <div className="space-y-4">
+                <div className="grid gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-1">Product / Service *</label>
+                    <input
+                      type="text"
+                      value={brief.productService}
+                      onChange={(e) => setBrief({ ...brief, productService: e.target.value })}
+                      placeholder="e.g. Free solar panel installation for UK homeowners"
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-1">Target Audience</label>
+                    <input
+                      type="text"
+                      value={brief.targetAudience}
+                      onChange={(e) => setBrief({ ...brief, targetAudience: e.target.value })}
+                      placeholder="e.g. Homeowners in the UK, aged 30-65"
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-1">Offer</label>
+                    <input
+                      type="text"
+                      value={brief.offer}
+                      onChange={(e) => setBrief({ ...brief, offer: e.target.value })}
+                      placeholder="e.g. Government-backed scheme covers full cost"
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-1">Key Benefits</label>
+                    <textarea
+                      value={brief.keyBenefits}
+                      onChange={(e) => setBrief({ ...brief, keyBenefits: e.target.value })}
+                      placeholder="e.g. Free installation, reduce bills by 70%, government-funded"
+                      rows={3}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-1">CTA</label>
+                      <input
+                        type="text"
+                        value={brief.cta}
+                        onChange={(e) => setBrief({ ...brief, cta: e.target.value })}
+                        placeholder="e.g. Enter your postcode to check eligibility"
+                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-1">Tone</label>
+                      <input
+                        type="text"
+                        value={brief.tone}
+                        onChange={(e) => setBrief({ ...brief, tone: e.target.value })}
+                        placeholder="e.g. Friendly, trustworthy, slightly urgent"
+                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-1">Language</label>
+                      <select
+                        value={brief.language}
+                        onChange={(e) => setBrief({ ...brief, language: e.target.value })}
+                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        <option value="English">English</option>
+                        <option value="Spanish">Spanish</option>
+                        <option value="French">French</option>
+                        <option value="German">German</option>
+                        <option value="Italian">Italian</option>
+                        <option value="Portuguese">Portuguese</option>
+                        <option value="Dutch">Dutch</option>
+                        <option value="Polish">Polish</option>
+                        <option value="Arabic">Arabic</option>
+                        <option value="Hindi">Hindi</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-300 mb-1">Script Variants</label>
+                      <select
+                        value={brief.numVariants}
+                        onChange={(e) => setBrief({ ...brief, numVariants: Number(e.target.value) })}
+                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        {[1, 2, 3, 4].map((n) => (
+                          <option key={n} value={n}>{n} variant{n !== 1 ? 's' : ''}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {scriptError && (
+                  <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-4 py-3 rounded-lg">{scriptError}</div>
+                )}
+
+                <button
+                  onClick={handleGenerateScripts}
+                  disabled={!brief.productService.trim() || generatingScripts}
+                  className="w-full sm:w-auto px-8 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+                >
+                  {generatingScripts ? 'Generating Scripts...' : 'Generate Scripts'}
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -455,7 +669,7 @@ export default function LongformVideoPage() {
             </div>
 
             <div className="flex gap-3">
-              <button onClick={() => setStep('brief')} className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
+              <button onClick={() => setStep('script')} className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
                 Back
               </button>
               <button
@@ -608,7 +822,7 @@ export default function LongformVideoPage() {
             </div>
 
             <div className="flex gap-3">
-              <button onClick={() => setStep('scripts')} className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
+              <button onClick={() => setStep(scriptMode === 'paste' ? 'script' : 'scripts')} className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
                 Back
               </button>
               <button
@@ -710,12 +924,18 @@ export default function LongformVideoPage() {
             <div className="flex gap-3">
               <button
                 onClick={() => {
-                  setStep('brief');
+                  setStep('script');
                   setScripts([]);
                   setSelectedScripts(new Set());
                   setResults([]);
                   setJobId(null);
                   setProgress(0);
+                  setPastedScript('');
+                  setHookMode('none');
+                  setCustomHook('');
+                  setAiHooks([]);
+                  setSelectedHookIndex(null);
+                  setPastedCta('');
                 }}
                 className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors"
               >

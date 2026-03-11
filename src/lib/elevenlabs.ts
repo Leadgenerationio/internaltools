@@ -92,12 +92,12 @@ export async function generateScriptVoiceover(
 
   const variant = script.variant.replace(/[^a-zA-Z0-9_-]/g, '_');
 
-  // Generate each segment
+  // Generate each non-empty segment
   const segments: { key: string; text: string; filename: string }[] = [
-    { key: 'hook', text: script.hook, filename: `${variant}_hook.mp3` },
+    { key: 'hook', text: script.hook || '', filename: `${variant}_hook.mp3` },
     { key: 'body', text: script.body, filename: `${variant}_body.mp3` },
-    { key: 'cta', text: script.cta, filename: `${variant}_cta.mp3` },
-  ];
+    { key: 'cta', text: script.cta || '', filename: `${variant}_cta.mp3` },
+  ].filter((s) => s.text.trim().length > 0);
 
   const paths: Record<string, string> = {};
 
@@ -109,7 +109,7 @@ export async function generateScriptVoiceover(
   }
 
   // Generate full continuous take (sounds more natural than concatenating segments)
-  const fullText = `${script.hook}. ${script.body}. ${script.cta}`;
+  const fullText = [script.hook, script.body, script.cta].filter(Boolean).join('. ');
   const fullAudio = await generateSpeech(fullText, config);
   const fullPath = path.join(outputDir, `${variant}_full.mp3`);
   await fs.writeFile(fullPath, fullAudio);

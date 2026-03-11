@@ -50,10 +50,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Maximum 4 variants per job' }, { status: 400 });
   }
 
-  // Validate scripts have required fields
+  // Validate scripts have required fields (hook and cta are optional for pasted scripts)
   for (const s of scripts) {
-    if (!s.hook || !s.body || !s.cta) {
-      return NextResponse.json({ error: `Script "${s.variant}" is missing hook, body, or cta` }, { status: 400 });
+    if (!s.body) {
+      return NextResponse.json({ error: `Script "${s.variant}" is missing a body` }, { status: 400 });
     }
   }
 
