@@ -948,30 +948,33 @@ export default function LongformVideoPage() {
               </div>
             </div>
 
-            {generateError && (
-              <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-4 py-3 rounded-lg">
-                {generateError}
-              </div>
-            )}
+            <div className="space-y-3">
+              {generateError && (
+                <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-4 py-3 rounded-lg flex items-start gap-2">
+                  <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
+                  <span>{generateError}</span>
+                </div>
+              )}
 
-            <div className="flex gap-3">
-              <button onClick={() => setStep(scriptMode === 'paste' ? 'script' : 'scripts')} className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
-                Back
+              <div className="flex gap-3">
+                <button onClick={() => setStep(scriptMode === 'paste' ? 'script' : 'scripts')} className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
+                  Back
+                </button>
+                <button
+                  onClick={handleGenerate}
+                  disabled={generating || selectedCount === 0}
+                  className="px-8 py-2.5 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+                >
+                  {generating ? (
+                    <span className="flex items-center gap-2">
+                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Starting...
+                    </span>
+                  ) : (
+                    `Generate ${selectedCount} Video${selectedCount !== 1 ? 's' : ''} (${totalTokenCost} tokens)`
+                  )}
               </button>
-              <button
-                onClick={handleGenerate}
-                disabled={generating || selectedCount === 0}
-                className="px-8 py-2.5 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
-              >
-                {generating ? (
-                  <span className="flex items-center gap-2">
-                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Starting...
-                  </span>
-                ) : (
-                  `Generate ${selectedCount} Video${selectedCount !== 1 ? 's' : ''} (${totalTokenCost} tokens)`
-                )}
-              </button>
+              </div>
             </div>
           </div>
         )}

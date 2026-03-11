@@ -86,9 +86,9 @@ const SECURITY_HEADERS: Record<string, string> = {
     "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
     "style-src 'self' 'unsafe-inline'",
     `img-src 'self' data: blob:${STORAGE_CSP}`,
-    `media-src 'self' blob:${STORAGE_CSP}`,
+    `media-src 'self' blob: https://storage.googleapis.com https://*.elevenlabs.io${STORAGE_CSP}`,
     "font-src 'self'",
-    `connect-src 'self'${STORAGE_CSP}`,
+    `connect-src 'self' https://*.elevenlabs.io${STORAGE_CSP}`,
     "frame-ancestors 'none'",
   ].join('; '),
 };

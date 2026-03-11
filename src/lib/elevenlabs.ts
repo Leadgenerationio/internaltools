@@ -36,6 +36,33 @@ export async function listVoices(): Promise<ElevenLabsVoice[]> {
   return data.voices || [];
 }
 
+/**
+ * Fetch popular shared/community voices from ElevenLabs voice library.
+ */
+export async function listSharedVoices(pageSize = 50): Promise<ElevenLabsVoice[]> {
+  const params = new URLSearchParams({
+    page_size: String(pageSize),
+    sort: 'usage_character_count_7d',
+    use_cases: 'social_media,narration,characters',
+  });
+  const res = await fetch(`${BASE_URL}/shared-voices?${params}`, {
+    headers: { 'xi-api-key': getApiKey() },
+  });
+  if (!res.ok) return []; // non-critical — just return empty
+  const data = await res.json();
+  return (data.voices || []).map((v: any) => ({
+    voice_id: v.voice_id,
+    name: v.name,
+    category: 'shared',
+    labels: {
+      accent: v.accent || '',
+      gender: v.gender || '',
+      age: v.age || '',
+    },
+    preview_url: v.preview_url || '',
+  }));
+}
+
 // ─── TTS generation ─────────────────────────────────────────────────────────
 
 /**

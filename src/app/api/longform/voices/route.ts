@@ -7,7 +7,7 @@
 
 import { NextResponse } from 'next/server';
 import { getAuthContext } from '@/lib/api-auth';
-import { listVoices } from '@/lib/elevenlabs';
+import { listVoices, listSharedVoices } from '@/lib/elevenlabs';
 import { getRedis } from '@/lib/redis';
 
 const CACHE_KEY = 'cache:elevenlabs:voices';
@@ -33,16 +33,28 @@ export async function GET() {
   }
 
   try {
-    const voices = await listVoices();
-    const simplified = voices.map((v) => ({
+    // Fetch user voices and popular shared voices in parallel
+    const [userVoices, sharedVoices] = await Promise.all([
+      listVoices(),
+      listSharedVoices(100),
+    ]);
+
+    const simplify = (v: any) => ({
       id: v.voice_id,
       name: v.name,
-      category: v.category,
+      category: v.category || 'shared',
       previewUrl: v.preview_url,
       accent: v.labels?.accent || '',
       gender: v.labels?.gender || '',
       age: v.labels?.age || '',
-    }));
+    });
+
+    // User voices first, then shared (deduplicated)
+    const userIds = new Set(userVoices.map((v) => v.voice_id));
+    const simplified = [
+      ...userVoices.map(simplify),
+      ...sharedVoices.filter((v) => !userIds.has(v.voice_id)).map(simplify),
+    ];
 
     // Cache the result
     if (redis) {
