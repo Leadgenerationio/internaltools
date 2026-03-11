@@ -63,6 +63,7 @@ export default function LongformVideoPage() {
   const [skipBroll, setSkipBroll] = useState(false);
   const [voices, setVoices] = useState<Voice[]>([]);
   const [loadingVoices, setLoadingVoices] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
 
   // Generate
   const [jobId, setJobId] = useState<string | null>(null);
@@ -111,13 +112,19 @@ export default function LongformVideoPage() {
   const loadVoices = useCallback(async () => {
     if (voices.length > 0 || loadingVoices) return;
     setLoadingVoices(true);
+    setVoiceError(null);
     try {
       const res = await fetch('/api/longform/voices');
       if (res.ok) {
         const data = await res.json();
         setVoices(data.voices || []);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setVoiceError(data.error || `Failed to load voices (${res.status})`);
       }
-    } catch { /* ignore */ } finally {
+    } catch {
+      setVoiceError('Network error — could not reach voice API');
+    } finally {
       setLoadingVoices(false);
     }
   }, [voices.length, loadingVoices]);
@@ -479,6 +486,16 @@ export default function LongformVideoPage() {
                   <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
                   Loading voices...
                 </div>
+              ) : voiceError ? (
+                <div className="space-y-2">
+                  <p className="text-red-400 text-sm">{voiceError}</p>
+                  <button
+                    onClick={() => { setVoices([]); setVoiceError(null); loadVoices(); }}
+                    className="px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 hover:border-gray-500 transition-colors"
+                  >
+                    Retry
+                  </button>
+                </div>
               ) : voices.length > 0 ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-60 overflow-y-auto">
                   {voices.slice(0, 20).map((v) => (
@@ -497,7 +514,7 @@ export default function LongformVideoPage() {
                   ))}
                 </div>
               ) : (
-                <p className="text-gray-500 text-sm">ElevenLabs not configured. Voice selection unavailable.</p>
+                <p className="text-gray-500 text-sm">No voices available. ElevenLabs may not be configured.</p>
               )}
 
               {/* Voice settings */}
