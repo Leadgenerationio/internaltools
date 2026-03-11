@@ -11,6 +11,7 @@ import { getVideoInfo } from '@/lib/get-video-info';
 import { logger } from '@/lib/logger';
 import { getAuthContext } from '@/lib/api-auth';
 import { fileUrl } from '@/lib/file-url';
+import { saveToMediaLibrary } from '@/lib/save-to-media-library';
 
 const execFileAsync = promisify(execFile);
 
@@ -23,6 +24,7 @@ const ALLOWED_EXTENSIONS = new Set(['.mp4', '.mov', '.avi', '.webm', '.mkv', '.m
 export async function POST(request: NextRequest) {
   const authResult = await getAuthContext();
   if (authResult.error) return authResult.error;
+  const { companyId } = authResult.auth;
 
   logger.info('Upload API called', { contentType: request.headers.get('content-type') });
   try {
@@ -110,15 +112,33 @@ export async function POST(request: NextRequest) {
         logger.warn('Thumbnail generation failed', { file: file.name, error: e.message });
       }
 
+      const storagePath = `uploads/${filename}`;
+      const thumbUrl = existsSync(thumbPath) ? fileUrl(`uploads/${thumbFilename}`) : '';
+
+      // Save to media library (fire-and-forget)
+      const storageFileId = await saveToMediaLibrary({
+        companyId,
+        storagePath,
+        publicUrl: fileUrl(storagePath),
+        sizeBytes: file.size,
+        mimeType: file.type || 'video/mp4',
+        originalName: file.name,
+        duration: info.duration,
+        width: info.width,
+        height: info.height,
+        thumbnailUrl: thumbUrl || undefined,
+      }).catch(() => null);
+
       uploaded.push({
         id,
         filename,
         originalName: file.name,
-        path: fileUrl(`uploads/${filename}`),
+        path: fileUrl(storagePath),
         duration: info.duration,
         width: info.width,
         height: info.height,
-        thumbnail: existsSync(thumbPath) ? fileUrl(`uploads/${thumbFilename}`) : '',
+        thumbnail: thumbUrl,
+        ...(storageFileId && { storageFileId }),
       });
     }
 

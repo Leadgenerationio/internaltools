@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthContext } from '@/lib/api-auth';
-import { getRenderQueue, getVideoGenQueue } from '@/lib/queue';
+import { getRenderQueue, getVideoGenQueue, getLongformQueue } from '@/lib/queue';
 import type { JobType, JobStatus } from '@/lib/job-types';
 
 export async function GET(
@@ -20,11 +20,13 @@ export async function GET(
   const jobId = params.id;
   const type = request.nextUrl.searchParams.get('type') as JobType;
 
-  if (!type || !['render', 'video-gen'].includes(type)) {
+  if (!type || !['render', 'video-gen', 'longform'].includes(type)) {
     return NextResponse.json({ error: 'Invalid or missing job type parameter' }, { status: 400 });
   }
 
-  const queue = type === 'render' ? getRenderQueue() : getVideoGenQueue();
+  const queue = type === 'render' ? getRenderQueue()
+    : type === 'longform' ? getLongformQueue()
+    : getVideoGenQueue();
   if (!queue) {
     return NextResponse.json({ error: 'Job queue not available' }, { status: 503 });
   }

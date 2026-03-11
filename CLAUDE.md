@@ -70,7 +70,8 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **Video processing**: FFmpeg via shell exec, @napi-rs/canvas for emoji-supporting overlay PNGs
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) — generates TOFU/MOFU/BOFU funnel ad text
 - **AI video generation**: kie.ai REST API — 6 models across 2 API patterns: Veo (veo3_fast, veo3) via `/veo/` endpoints, Market (seedance-1.5, kling-2.6, sora-2, sora-2-pro) via `/jobs/` endpoints. Per-model token pricing (3-25 tokens).
-- **Token billing**: Users pay in tokens (1 token = 1 finished video, 3-25 tokens = 1 AI video depending on model). Ad copy generation is FREE. See `src/lib/token-pricing.ts`, `src/lib/token-balance.ts`.
+- **Longform video ads**: Multi-step pipeline: Brief → Script Gen (Claude) → Voiceover (ElevenLabs TTS) → B-Roll (kie.ai) → Stitch (FFmpeg) → Caption (Submagic). 5-step wizard at `/create/longform-video`. BullMQ worker (concurrency: 1). Token pricing: 35 tokens/variant with b-roll, 10 tokens/variant without, script generation FREE. Env vars: `ELEVENLABS_API_KEY`, `SUBMAGIC_API_KEY`.
+- **Token billing**: Users pay in tokens (1 token = 1 finished video, 3-25 tokens = 1 AI video depending on model, 10-35 tokens per longform video variant). Ad copy and script generation are FREE. See `src/lib/token-pricing.ts`, `src/lib/token-balance.ts`.
 - **Internal cost tracking**: Per-call API cost logging (in cents) via `src/lib/track-usage.ts` — admin-only, hidden from users
 - **Files**: uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/` — symlinked to Railway Volume (`/app/data`) via `docker-entrypoint.sh`
 - **File serving**: All file URLs use `/api/files?path=xxx` — Next.js standalone doesn't serve runtime files from `public/`. Always use `fileUrl()` from `src/lib/file-url.ts` to generate URLs. Files are streamed via `createReadStream()` with HTTP Range header support (not `readFile()`).
@@ -86,7 +87,9 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **DB connection pool**: Explicit `pg.Pool` in `src/lib/prisma.ts` with `max: 20` (configurable via `DB_POOL_SIZE`), `connectionTimeoutMillis: 5000`.
 - **State management**: React useState, no external store
 - **Logging**: Winston with daily-rotate-file, client-side log helper POSTs to `/api/log`
-- **App flow**: 4-step wizard — Brief → Review → Media → Render (requires authenticated user)
+- **Home page**: `/` is the ad creation model hub — grid of ad format cards (Video Text Overlay and Longform Video are live, others coming soon). Requires auth, redirects to `/welcome` if unauthenticated.
+- **App flow (Video Text Overlay)**: `/create/video-overlay` — 4-step wizard: Brief → Review → Media → Render (requires authenticated user, redirects to `/` if no projectId)
+- **App flow (Longform Video)**: `/create/longform-video` — 5-step wizard: Brief → Script Gen (Claude) → Voiceover (ElevenLabs) → B-Roll (kie.ai) → Stitch & Caption (FFmpeg + Submagic). Background job via BullMQ longform queue.
 - **Overlay rendering**: Canvas PNG approach (not FFmpeg drawtext) for emoji support
 - **Video trimming**: Users can trim videos via range sliders in VideoPreview; FFmpeg uses `-ss`/`-t` flags
 - **Render quality**: Draft (ultrafast/crf28) vs Final (fast/crf23) selectable before render
@@ -105,7 +108,7 @@ When implementing a feature, don't stop at the minimum. Always also implement th
 - **Help & Legal**: `/help` page (~28 FAQ articles, search, accordions), `/privacy` (GDPR-compliant), `/terms` (15 sections). All public routes.
 - **Tooltips & banners**: `Tooltip.tsx` (reusable info icon with hover text), `InfoBanner.tsx` (info/tip/warning banners). Added throughout the app for beginner-friendly UX.
 - **SEO**: Dynamic favicon (`icon.tsx`), OG images (`opengraph-image.tsx`), `robots.ts`, `sitemap.ts`, `manifest.json`, per-page metadata via layout files.
-- **Background jobs**: BullMQ + Redis for async render and video generation. Routes enqueue jobs and return `{ jobId }` immediately. Client polls `/api/jobs/[id]` with exponential backoff (3s→15s). Workers run as separate Railway service (`WORKER_MODE=true`). Graceful degradation: falls back to synchronous when `REDIS_URL` not set.
+- **Background jobs**: BullMQ + Redis for async render, video generation, and longform pipeline. Routes enqueue jobs and return `{ jobId }` immediately. Client polls `/api/jobs/[id]` with exponential backoff (3s→15s, longform max 20min). Workers run as separate Railway service (`WORKER_MODE=true`). Graceful degradation: falls back to synchronous when `REDIS_URL` not set.
 - **Redis**: ioredis singleton at `src/lib/redis.ts` — lazy connection from `REDIS_URL`. Used for BullMQ queues, rate limiting (sorted-set sliding window), caching (company info 10s TTL, notification counts 15s TTL). All Redis features degrade gracefully when not configured.
 - **Deployment**: Railway with Docker, `output: 'standalone'` in next.config.js, Railway Volume at `/app/data` for persistent storage, `docker-entrypoint.sh` for startup (symlinks + migrate + serve). Worker service uses same Docker image with `WORKER_MODE=true`.
 - **Watchdog QA**: `npm run watchdog` — standalone script that continuously tests all endpoints, checks health, stress-tests, and auto-remediates (restart server, create dirs, clean old files). Config in `scripts/watchdog.config.json`. Requires `WATCHDOG_EMAIL`/`WATCHDOG_PASSWORD` env vars for authenticated API tests.

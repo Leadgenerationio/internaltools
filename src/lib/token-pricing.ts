@@ -19,6 +19,12 @@ export const TOKEN_COSTS = {
   RENDER_VIDEO: 1,
   /** Default fallback for AI video — used when model lookup fails */
   GENERATE_VIDEO: 5,
+  /** Longform video ad (voiceover + b-roll + stitch + caption) per variant */
+  LONGFORM_VIDEO: 35,
+  /** Longform video without b-roll (voiceover + stitch + caption) */
+  LONGFORM_VIDEO_NO_BROLL: 10,
+  /** Longform script generation — included free, costs 0 tokens */
+  LONGFORM_SCRIPTS: 0,
 } as const;
 
 export type TokenOperation = keyof typeof TOKEN_COSTS;
@@ -41,6 +47,15 @@ export function calculateVeoTokens(videoCount: number, modelId?: string): number
     if (model) return videoCount * model.tokenCost;
   }
   return videoCount * TOKEN_COSTS.GENERATE_VIDEO;
+}
+
+/**
+ * Calculate total token cost for longform video generation.
+ * Each variant costs LONGFORM_VIDEO (with b-roll) or LONGFORM_VIDEO_NO_BROLL (without).
+ */
+export function calculateLongformTokens(variantCount: number, skipBroll: boolean): number {
+  const perVariant = skipBroll ? TOKEN_COSTS.LONGFORM_VIDEO_NO_BROLL : TOKEN_COSTS.LONGFORM_VIDEO;
+  return variantCount * perVariant;
 }
 
 /**

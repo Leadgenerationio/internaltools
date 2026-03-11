@@ -16,6 +16,7 @@ import { VIDEO_MODELS } from '@/lib/types';
 import type { VideoModel } from '@/lib/types';
 import { getVideoGenQueue } from '@/lib/queue';
 import type { VideoGenJobData } from '@/lib/job-types';
+import { saveToMediaLibrary } from '@/lib/save-to-media-library';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 
@@ -414,15 +415,31 @@ export async function POST(request: NextRequest) {
             logger.warn('Thumbnail generation failed for generated video', { error: String(e) });
           }
 
+          // Save to media library (fire-and-forget)
+          const storagePath = `uploads/${filename}`;
+          const storageFileId = await saveToMediaLibrary({
+            companyId,
+            storagePath,
+            publicUrl: fileUrl(storagePath),
+            sizeBytes: buffer.length,
+            mimeType: 'video/mp4',
+            originalName: `AI Generated ${i + 1}`,
+            duration: info.duration,
+            width: info.width,
+            height: info.height,
+            thumbnailUrl: fileUrl(`uploads/${thumbFilename}`),
+          }).catch(() => null);
+
           return {
             id,
             filename,
             originalName: `AI Generated ${i + 1}`,
-            path: fileUrl(`uploads/${filename}`),
+            path: fileUrl(storagePath),
             duration: info.duration,
             width: info.width,
             height: info.height,
             thumbnail: fileUrl(`uploads/${thumbFilename}`),
+            ...(storageFileId && { storageFileId }),
           };
         } catch (err: any) {
           lastError = err;

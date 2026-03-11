@@ -222,11 +222,20 @@ model StorageFile {
   mimeType    String?
   createdAt   DateTime @default(now())
 
+  // Media library metadata
+  originalName String?
+  duration     Float?
+  width        Int?
+  height       Int?
+  thumbnailUrl String?
+
   projectVideos   ProjectVideo[]
   projectMusic    ProjectMusic[]
   renderedOutputs RenderedOutput[]
 
+  @@unique([companyId, storagePath])
   @@index([companyId])
+  @@index([companyId, mimeType])
 }
 
 // ─── API Cost Tracking ──────────────────────────────────────

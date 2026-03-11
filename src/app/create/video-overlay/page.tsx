@@ -1,0 +1,1134 @@
+'use client';
+
+import { useState, useRef, useEffect, useCallback, Suspense } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { v4 as uuidv4 } from 'uuid';
+import AdBriefForm from '@/components/AdBriefForm';
+import FunnelReview from '@/components/FunnelReview';
+import VideoSourceTabs from '@/components/VideoSourceTabs';
+import MusicSelector from '@/components/MusicSelector';
+import VideoPreview from '@/components/VideoPreview';
+import StyleConfigurator from '@/components/StyleConfigurator';
+import LogViewer from '@/components/LogViewer';
+import UserMenu from '@/components/UserMenu';
+import Tooltip from '@/components/Tooltip';
+import InfoBanner from '@/components/InfoBanner';
+import OnboardingChecklist from '@/components/OnboardingChecklist';
+import SaveAsTemplateModal from '@/components/SaveAsTemplateModal';
+import GoogleDriveButton from '@/components/GoogleDriveButton';
+import type {
+  AdBrief,
+  GeneratedAd,
+  FunnelStage,
+  UploadedVideo,
+  TextOverlay,
+  TextStyle,
+  MusicTrack,
+} from '@/lib/types';
+import { DEFAULT_TEXT_STYLE, FUNNEL_LABELS } from '@/lib/types';
+
+type AppStep = 'brief' | 'review' | 'media' | 'render';
+
+/** Build a clean download filename like "TOF - 1 - Beach sunset.mp4" */
+function formatDownloadName(adLabel: string, originalName: string): string {
+  const stageMap: Record<string, string> = {
+    'Top of Funnel': 'TOF',
+    'Middle of Funnel': 'MOF',
+    'Bottom of Funnel': 'BOF',
+  };
+
+  let shortLabel = adLabel.replace(/[^a-zA-Z0-9 #-]/g, '');
+  for (const [full, short] of Object.entries(stageMap)) {
+    const match = adLabel.match(new RegExp(`^${full}\\s*#?(\\d+)$`));
+    if (match) {
+      shortLabel = `${short} - ${match[1]}`;
+      break;
+    }
+  }
+
+  const videoName = originalName.replace(/\.[^.]+$/, '');
+  return `${shortLabel} - ${videoName}.mp4`;
+}
+
+interface RenderResult {
+  videoId: string;
+  originalName: string;
+  outputUrl: string;
+  adLabel: string;
+}
+
+function adsToOverlays(
+  ad: GeneratedAd,
+  videoDuration: number,
+  overlayStyle: TextStyle,
+  staggerSeconds: number
+): TextOverlay[] {
+  const count = ad.textBoxes.length;
+  // Clamp stagger so all boxes fit within the video duration
+  const maxStagger = (videoDuration - 1) / Math.max(count, 1);
+  const stagger = Math.min(staggerSeconds, maxStagger);
+
+  return ad.textBoxes.map((box, i) => ({
+    id: box.id,
+    text: box.text,
+    startTime: i * stagger,
+    endTime: videoDuration,
+    position: 'center' as const,
+    yOffset: 0,
+    style: { ...overlayStyle },
+  }));
+}
+
+export default function Home() {
+  return (
+    <Suspense>
+      <HomeContent />
+    </Suspense>
+  );
+}
+
+function HomeContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const projectIdParam = searchParams.get('projectId');
+
+  // Track whether a project has been loaded into the editor
+  const [projectLoaded, setProjectLoaded] = useState(false);
+
+  // Redirect to projects page if no projectId and no project loaded
+  useEffect(() => {
+    if (!projectIdParam && !projectLoaded) {
+      router.replace('/');
+    }
+  }, [projectIdParam, projectLoaded, router]);
+
+  // Step management
+  const [step, setStep] = useState<AppStep>('brief');
+
+  // Brief
+  const [brief, setBrief] = useState<AdBrief | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+
+  // Generated ads
+  const [ads, setAds] = useState<GeneratedAd[]>([]);
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
+
+  // Media
+  const [videos, setVideos] = useState<UploadedVideo[]>([]);
+  const [music, setMusic] = useState<MusicTrack | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [videoGenerating, setVideoGenerating] = useState(false);
+
+  // Overlay style
+  const [overlayStyle, setOverlayStyle] = useState<TextStyle>({ ...DEFAULT_TEXT_STYLE });
+  const [staggerSeconds, setStaggerSeconds] = useState(2);
+
+  // Render quality
+  const [renderQuality, setRenderQuality] = useState<'draft' | 'final'>('final');
+
+  // Render
+  const [rendering, setRendering] = useState(false);
+  const [renderProgress, setRenderProgress] = useState('');
+  const [renderCurrent, setRenderCurrent] = useState(0);
+  const [renderTotal, setRenderTotal] = useState(0);
+  const [results, setResults] = useState<RenderResult[]>([]);
+  const [downloadingZip, setDownloadingZip] = useState(false);
+  const resultsRef = useRef<HTMLDivElement>(null);
+
+  // AbortControllers for cancellable operations
+  const generateAbortRef = useRef<AbortController | null>(null);
+  const renderAbortRef = useRef<AbortController | null>(null);
+
+  // Preview state
+  const [previewAdId, setPreviewAdId] = useState<string | null>(null);
+  const [previewVideoIndex, setPreviewVideoIndex] = useState(0);
+
+  // Save as template modal
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+
+  // Track active project ID for auto-save (persisted across URL clear)
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+
+  // Persist state to localStorage so user doesn't lose progress between refreshes
+  const [isRestored, setIsRestored] = useState(false);
+
+  // Load project from DB when projectId is in the URL (e.g. opening from projects page or using a template)
+  useEffect(() => {
+    if (!projectIdParam) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await fetch(`/api/projects/${projectIdParam}`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const p = data.project;
+        if (!p || cancelled) return;
+
+        // Populate brief (add defaults for fields that may be missing from older templates)
+        if (p.brief) {
+          setBrief({
+            productService: '',
+            targetAudience: '',
+            sellingPoints: '',
+            adExamples: '',
+            toneStyle: '',
+            additionalContext: '',
+            addEmojis: true,
+            language: 'English',
+            ...p.brief as Partial<AdBrief>,
+          });
+        }
+
+        // Populate overlay style
+        if (p.overlayStyle) setOverlayStyle(p.overlayStyle as TextStyle);
+        if (typeof p.staggerSeconds === 'number') setStaggerSeconds(p.staggerSeconds);
+        if (p.renderQuality) setRenderQuality(p.renderQuality);
+
+        // Populate ads (if saved)
+        if (p.ads?.length) {
+          const loadedAds: GeneratedAd[] = p.ads.map((ad: any) => ({
+            id: ad.id,
+            funnelStage: ad.funnelStage as FunnelStage,
+            variationLabel: ad.variationLabel,
+            textBoxes: ad.textBoxes || [],
+            approved: ad.approved,
+          }));
+          setAds(loadedAds);
+          // If there are approved ads, move to review step
+          if (loadedAds.some((a) => a.approved)) {
+            setStep('review');
+          }
+        }
+
+        // Populate videos (if any)
+        if (p.videos?.length) {
+          setVideos(
+            p.videos.map((v: any) => ({
+              id: v.id,
+              filename: v.originalName,
+              originalName: v.originalName,
+              path: v.file?.publicUrl || '',
+              duration: v.duration,
+              width: v.width,
+              height: v.height,
+              thumbnail: v.thumbnailUrl || '',
+              trimStart: v.trimStart ?? undefined,
+              trimEnd: v.trimEnd ?? undefined,
+            }))
+          );
+        }
+
+        // Populate music (if any)
+        if (p.music) {
+          setMusic({
+            id: p.music.id,
+            name: p.music.name,
+            file: p.music.file?.publicUrl || '',
+            volume: p.music.volume,
+            startTime: p.music.startTime,
+            fadeIn: p.music.fadeIn,
+            fadeOut: p.music.fadeOut,
+          });
+        }
+
+        // Determine the right step based on loaded data
+        if (p.renders?.length) {
+          setStep('render');
+        } else if (p.videos?.length) {
+          setStep('media');
+        } else if (p.ads?.length && p.ads.some((a: any) => a.approved)) {
+          setStep('review');
+        }
+
+        // Track project ID for auto-save
+        setActiveProjectId(projectIdParam);
+        setProjectLoaded(true);
+
+        // Clean the URL so a refresh doesn't re-fetch
+        router.replace('/', { scroll: false });
+      } catch {
+        // Failed to load project — fall through to localStorage
+      } finally {
+        if (!cancelled) setIsRestored(true);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [projectIdParam, router]);
+
+  // Restore from localStorage when no projectId in URL
+  useEffect(() => {
+    if (projectIdParam) return; // Skip — project loading handles this
+
+    // Migrate old direct file URLs (/uploads/xxx) to API-served URLs (/api/files?path=xxx)
+    function migrateUrl(url: string | undefined): string | undefined {
+      if (!url) return url;
+      if (url.startsWith('/api/files')) return url; // already migrated
+      // Match /uploads/xxx, /outputs/xxx, /music/xxx
+      const match = url.match(/^\/(uploads|outputs|music)\//);
+      if (match) return `/api/files?path=${encodeURIComponent(url.slice(1))}`;
+      return url;
+    }
+
+    try {
+      const stored = localStorage.getItem('adMaker_state');
+      if (stored) {
+        const s = JSON.parse(stored);
+        if (s.brief) setBrief(s.brief);
+        if (s.ads?.length) setAds(s.ads);
+        if (s.step) setStep(s.step);
+        if (s.overlayStyle) setOverlayStyle(s.overlayStyle);
+        if (typeof s.staggerSeconds === 'number') setStaggerSeconds(s.staggerSeconds);
+        if (s.renderQuality) setRenderQuality(s.renderQuality);
+        if (s.videos?.length) {
+          setVideos(s.videos.map((v: any) => ({
+            ...v,
+            path: migrateUrl(v.path) ?? v.path,
+            thumbnail: migrateUrl(v.thumbnail) ?? v.thumbnail,
+          })));
+        }
+        if (s.music) {
+          setMusic({ ...s.music, file: migrateUrl(s.music.file) ?? s.music.file });
+        }
+      }
+    } catch { /* ignore corrupt data */ }
+    setIsRestored(true);
+  }, [projectIdParam]);
+
+  useEffect(() => {
+    if (!isRestored) return;
+    try {
+      localStorage.setItem('adMaker_state', JSON.stringify({
+        brief, ads, step, overlayStyle, staggerSeconds, renderQuality, videos, music,
+      }));
+    } catch { /* storage full or unavailable */ }
+  }, [isRestored, brief, ads, step, overlayStyle, staggerSeconds, renderQuality, videos, music]);
+
+  // Auto-save to server when working on a saved project (debounced 30s)
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedRef = useRef<string>('');
+
+  useEffect(() => {
+    if (!isRestored || !activeProjectId || !brief) return;
+
+    const payload = JSON.stringify({ brief, overlayStyle, staggerSeconds, renderQuality });
+
+    // Skip if nothing changed since last save
+    if (payload === lastSavedRef.current) return;
+
+    // Clear any pending save
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/projects/${activeProjectId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload,
+        });
+        if (res.ok) {
+          lastSavedRef.current = payload;
+        }
+      } catch {
+        // Silent fail — localStorage is the primary backup
+      }
+    }, 30_000);
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [isRestored, activeProjectId, brief, overlayStyle, staggerSeconds, renderQuality]);
+
+  // Auto-dismiss success/done messages after 8 seconds
+  useEffect(() => {
+    if (!rendering && renderProgress && !renderProgress.startsWith('Error') && !renderProgress.includes('failed')) {
+      const timer = setTimeout(() => setRenderProgress(''), 8000);
+      return () => clearTimeout(timer);
+    }
+  }, [rendering, renderProgress]);
+
+  // Cleanup AbortControllers on unmount
+  useEffect(() => {
+    return () => {
+      generateAbortRef.current?.abort();
+      renderAbortRef.current?.abort();
+    };
+  }, []);
+
+  const handleCancelGenerate = useCallback(() => {
+    generateAbortRef.current?.abort();
+    generateAbortRef.current = null;
+    setGenerating(false);
+    setGenerateError('Generation cancelled.');
+  }, []);
+
+  const handleCancelRender = useCallback(() => {
+    renderAbortRef.current?.abort();
+    renderAbortRef.current = null;
+    setRendering(false);
+    setRenderProgress('Render cancelled. Videos completed before cancellation are available below.');
+  }, []);
+
+  const handleResetAll = () => {
+    localStorage.removeItem('adMaker_state');
+    setBrief(null);
+    setAds([]);
+    setStep('brief');
+    setOverlayStyle({ ...DEFAULT_TEXT_STYLE });
+    setStaggerSeconds(2);
+    setVideos([]);
+    setMusic(null);
+    setResults([]);
+    setRenderProgress('');
+    setRenderCurrent(0);
+    setRenderTotal(0);
+    setPreviewAdId(null);
+    setActiveProjectId(null);
+  };
+
+  const approvedAds = ads.filter((a) => a.approved);
+  const safeVideoIndex = Math.min(previewVideoIndex, Math.max(videos.length - 1, 0));
+  const previewVideo = videos[safeVideoIndex] || null;
+  const videoDuration = previewVideo
+    ? (previewVideo.trimEnd ?? previewVideo.duration) - (previewVideo.trimStart ?? 0)
+    : 15;
+
+  // Preview overlays for the selected ad
+  const previewAd = ads.find((a) => a.id === previewAdId) || approvedAds[0] || null;
+  const previewOverlays = previewAd
+    ? adsToOverlays(previewAd, videoDuration, overlayStyle, staggerSeconds)
+    : [];
+
+  // === Handlers ===
+
+  const handleGenerate = async (newBrief: AdBrief) => {
+    setBrief(newBrief);
+    setGenerating(true);
+    setGenerateError(null);
+
+    const abort = new AbortController();
+    generateAbortRef.current = abort;
+
+    try {
+      const res = await fetch('/api/generate-ads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brief: newBrief }),
+        signal: abort.signal,
+      });
+
+      const data = await res.json();
+
+      if (data.error) {
+        setGenerateError(data.error);
+        return;
+      }
+
+      const generated: GeneratedAd[] = data.ads.map(
+        (ad: { funnelStage: FunnelStage; textBoxes: string[] }) => ({
+          id: uuidv4(),
+          funnelStage: ad.funnelStage,
+          variationLabel: '',
+          textBoxes: ad.textBoxes.map((text: string) => ({
+            id: uuidv4(),
+            text,
+          })),
+          approved: false,
+        })
+      );
+
+      // Label per stage
+      const stageCounts: Record<string, number> = {};
+      for (const ad of generated) {
+        stageCounts[ad.funnelStage] = (stageCounts[ad.funnelStage] || 0) + 1;
+        ad.variationLabel = `${FUNNEL_LABELS[ad.funnelStage]} #${stageCounts[ad.funnelStage]}`;
+      }
+
+      setAds(generated);
+      setStep('review');
+    } catch (err: any) {
+      if (err.name === 'AbortError') return; // Handled by cancel button
+      setGenerateError(err.message || 'Generation failed');
+    } finally {
+      generateAbortRef.current = null;
+      setGenerating(false);
+    }
+  };
+
+  const handleRegenerateAd = async (adId: string) => {
+    if (!brief) return;
+    const ad = ads.find((a) => a.id === adId);
+    if (!ad) return;
+
+    setRegeneratingId(adId);
+
+    try {
+      const res = await fetch('/api/generate-ads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brief, regenerateStage: ad.funnelStage }),
+      });
+
+      const data = await res.json();
+      if (data.error || !data.ads?.[0]) return;
+
+      const newAd = data.ads[0];
+      setAds((prev) =>
+        prev.map((a) =>
+          a.id === adId
+            ? {
+                ...a,
+                textBoxes: newAd.textBoxes.map((text: string) => ({
+                  id: uuidv4(),
+                  text,
+                })),
+                approved: false,
+              }
+            : a
+        )
+      );
+    } catch (err) {
+      console.error('Regenerate failed:', err);
+    } finally {
+      setRegeneratingId(null);
+    }
+  };
+
+  const handleRender = async () => {
+    if (approvedAds.length === 0 || videos.length === 0) return;
+
+    const abort = new AbortController();
+    renderAbortRef.current = abort;
+
+    setRendering(true);
+    setResults([]);
+    const totalCount = approvedAds.length * videos.length;
+    setRenderTotal(totalCount);
+    setRenderCurrent(0);
+    setRenderProgress(`Starting render of ${totalCount} video${totalCount > 1 ? 's' : ''}...`);
+
+    // Build all render items (ad x video combos) upfront
+    const items = approvedAds.flatMap((ad) =>
+      videos.map((vid) => {
+        const trimmedDuration = (vid.trimEnd ?? vid.duration) - (vid.trimStart ?? 0);
+        return {
+          video: vid,
+          overlays: adsToOverlays(ad, trimmedDuration, overlayStyle, staggerSeconds),
+          adLabel: ad.variationLabel,
+        };
+      })
+    );
+
+    try {
+      const res = await fetch('/api/render', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items, music, quality: renderQuality }),
+        signal: abort.signal,
+      });
+
+      let data: any;
+      try {
+        data = await res.json();
+      } catch {
+        // Response body isn't JSON (e.g. 502 from Railway proxy)
+        setRenderProgress(`Render failed (${res.status}) — server did not respond. Check deployment logs.`);
+        setRendering(false);
+        renderAbortRef.current = null;
+        return;
+      }
+
+      if (!res.ok) {
+        setRenderProgress(data.error || `Render failed (${res.status})`);
+        setRendering(false);
+        renderAbortRef.current = null;
+        return;
+      }
+
+      // Background job path — poll for results
+      if (data.jobId) {
+        setRenderProgress(`Render queued — waiting to start...`);
+
+        const { pollJob } = await import('@/lib/poll-job');
+        const result = await pollJob(data.jobId, 'render', {
+          signal: abort.signal,
+          onProgress: (progress, state) => {
+            const completed = Math.round((progress / 100) * totalCount);
+            setRenderCurrent(completed);
+            if (state === 'waiting') {
+              setRenderProgress(`Queued — waiting to start...`);
+            } else {
+              setRenderProgress(`Rendering... ${progress}% (${completed} of ${totalCount})`);
+            }
+          },
+        });
+
+        if (result.state === 'failed') {
+          setRenderProgress(result.error || 'Render failed');
+          setRendering(false);
+          renderAbortRef.current = null;
+          return;
+        }
+
+        const jobResult = result.result;
+        const allResults: RenderResult[] = (jobResult?.results || []).map((r: any) => ({
+          videoId: r.videoId,
+          originalName: r.originalName,
+          adLabel: r.adLabel,
+          outputUrl: r.outputUrl,
+        }));
+
+        setResults(allResults);
+        setRenderCurrent(totalCount);
+        const failCount = jobResult?.failed || 0;
+        setRenderProgress(
+          failCount === 0
+            ? `Done! ${allResults.length} video${allResults.length !== 1 ? 's' : ''} rendered.`
+            : `Done with ${allResults.length} of ${totalCount} videos (${failCount} failed).`
+        );
+        setRendering(false);
+        renderAbortRef.current = null;
+        if (allResults.length > 0) {
+          resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        return;
+      }
+
+      // Synchronous path (no Redis) — results returned directly
+      const allResults: RenderResult[] = (data.results || []).map((r: any) => ({
+        videoId: r.videoId,
+        originalName: r.originalName,
+        adLabel: r.adLabel || '',
+        outputUrl: r.outputUrl,
+      }));
+
+      setResults(allResults);
+      setRenderCurrent(totalCount);
+      const failCount = data.failed || 0;
+      setRenderProgress(
+        failCount === 0
+          ? `Done! ${allResults.length} video${allResults.length !== 1 ? 's' : ''} rendered.`
+          : `Done with ${allResults.length} of ${totalCount} videos (${failCount} failed).`
+      );
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        setRenderProgress('Render cancelled.');
+      } else {
+        setRenderProgress(`Render error: ${err.message}`);
+      }
+    } finally {
+      renderAbortRef.current = null;
+      setRendering(false);
+    }
+
+    if (results.length > 0) {
+      resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  const handleDownloadAll = async () => {
+    if (results.length === 0) return;
+
+    // Track download for onboarding checklist
+    try { localStorage.setItem('onboarding_downloaded', 'true'); } catch {}
+
+    setDownloadingZip(true);
+    try {
+      const files = results.map((r) => ({
+        url: r.outputUrl,
+        name: formatDownloadName(r.adLabel, r.originalName),
+      }));
+
+      const res = await fetch('/api/download-zip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files }),
+      });
+
+      if (!res.ok) {
+        // Fallback to individual downloads
+        for (const r of results) {
+          const link = document.createElement('a');
+          link.href = r.outputUrl;
+          link.download = formatDownloadName(r.adLabel, r.originalName);
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'ad-videos.zip';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch {
+      // Fallback to individual downloads
+      for (const r of results) {
+        const link = document.createElement('a');
+        link.href = r.outputUrl;
+        link.download = `${r.adLabel.replace(/[^a-zA-Z0-9]/g, '_')}_${r.originalName}`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } finally {
+      setDownloadingZip(false);
+    }
+  };
+
+  const handleUpdateVideo = useCallback((index: number, updates: Partial<UploadedVideo>) => {
+    setVideos((prev) => prev.map((v, i) => i === index ? { ...v, ...updates } : v));
+  }, []);
+
+  const canRender = approvedAds.length > 0 && videos.length > 0;
+  const isAsyncBusy = generating || rendering || uploading || videoGenerating;
+
+  // === Step navigation ===
+
+  // Show nothing while redirecting to projects page
+  if (!projectIdParam && !projectLoaded) {
+    return (
+      <main className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <p className="text-gray-400">Loading...</p>
+      </main>
+    );
+  }
+
+  const steps: { key: AppStep; label: string; enabled: boolean }[] = [
+    { key: 'brief', label: '1. Brief', enabled: !isAsyncBusy },
+    { key: 'review', label: '2. Review', enabled: ads.length > 0 && !isAsyncBusy },
+    { key: 'media', label: '3. Video & Music', enabled: approvedAds.length > 0 && !isAsyncBusy },
+    { key: 'render', label: '4. Render', enabled: canRender && !isAsyncBusy },
+  ];
+
+  return (
+    <main className="min-h-screen bg-gray-950">
+      {/* Header */}
+      <header className="border-b border-gray-800 px-3 sm:px-6 py-3 sm:py-4">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 sm:gap-4">
+          <Link href="/" className="text-lg sm:text-xl font-bold text-white shrink-0 hover:text-blue-400 transition-colors">Ad Maker</Link>
+
+          {/* Step nav — scrollable on mobile */}
+          <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide flex-1 justify-center min-w-0">
+            {steps.map((s) => (
+              <button
+                key={s.key}
+                onClick={() => s.enabled && setStep(s.key)}
+                disabled={!s.enabled}
+                className={`px-2 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all whitespace-nowrap ${
+                  step === s.key
+                    ? 'bg-blue-600 text-white'
+                    : s.enabled
+                    ? 'text-gray-400 hover:text-white hover:bg-gray-800'
+                    : 'text-gray-600 cursor-not-allowed'
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+            <button
+              onClick={handleResetAll}
+              className="ml-1 px-2 py-1.5 rounded-lg text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-950/30 transition-all whitespace-nowrap"
+              title="Clear all saved data and start fresh"
+            >
+              Reset
+            </button>
+          </div>
+          <UserMenu />
+        </div>
+      </header>
+
+      {/* Main content */}
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-6">
+        {/* Step 1: Brief */}
+        {step === 'brief' && (
+          <div className="max-w-2xl mx-auto">
+            <OnboardingChecklist onNavigate={setStep} />
+            <AdBriefForm onGenerate={handleGenerate} generating={generating} initialBrief={brief} />
+            {/* Save as Template button — only show when brief has content */}
+            {brief && brief.productService && (
+              <div className="mt-4 flex justify-center">
+                <button
+                  onClick={() => setShowSaveTemplate(true)}
+                  className="px-4 py-2 text-sm font-medium text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg transition-colors"
+                >
+                  Save Brief as Template
+                </button>
+              </div>
+            )}
+            {generating && (
+              <div className="mt-4 flex justify-center">
+                <button
+                  onClick={handleCancelGenerate}
+                  className="px-4 py-2 text-sm font-medium text-red-400 hover:text-red-300 bg-red-950/30 hover:bg-red-950/50 border border-red-800 rounded-lg transition-colors"
+                >
+                  Cancel Generation
+                </button>
+              </div>
+            )}
+            {generateError && (
+              <div className="mt-4 p-4 rounded-xl bg-red-950/50 border border-red-800">
+                <p className="text-sm text-red-300">{generateError}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Step 2: Review */}
+        {step === 'review' && (
+          <div className="space-y-6">
+            <InfoBanner variant="info" dismissible>
+              AI generated 10 ad variations across 3 funnel stages. Review each one, edit the text, then approve the ones you want to use.
+            </InfoBanner>
+            <FunnelReview
+              ads={ads}
+              onUpdateAds={setAds}
+              onRegenerateAd={handleRegenerateAd}
+              regeneratingId={regeneratingId}
+            />
+
+            <div className="flex items-center justify-between pt-4 border-t border-gray-800">
+              <button
+                onClick={() => setStep('brief')}
+                className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors"
+              >
+                Back to Brief
+              </button>
+              <button
+                onClick={() => approvedAds.length > 0 && setStep('media')}
+                disabled={approvedAds.length === 0}
+                className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all ${
+                  approvedAds.length > 0
+                    ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                    : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                }`}
+              >
+                Continue with {approvedAds.length} Ad{approvedAds.length !== 1 ? 's' : ''}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3: Media upload + style */}
+        {step === 'media' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 space-y-6">
+              <InfoBanner variant="info" dismissible>
+                Upload your background videos or generate AI videos. Each approved ad will be rendered onto every video you add.
+              </InfoBanner>
+              <VideoSourceTabs
+                videos={videos}
+                onUpload={setVideos}
+                uploading={uploading}
+                setUploading={setUploading}
+                generating={videoGenerating}
+                setGenerating={setVideoGenerating}
+              />
+
+              <MusicSelector music={music} onChange={setMusic} />
+
+              {/* Style controls */}
+              <StyleConfigurator
+                style={overlayStyle}
+                onChange={setOverlayStyle}
+                staggerSeconds={staggerSeconds}
+                onStaggerChange={setStaggerSeconds}
+              />
+
+              {/* Approved ads summary */}
+              <div className="p-4 bg-gray-800 rounded-xl border border-gray-700">
+                <h3 className="text-sm font-semibold text-gray-300 mb-3">
+                  Approved Ads ({approvedAds.length})
+                </h3>
+                <div className="space-y-2">
+                  {approvedAds.map((ad) => (
+                    <div
+                      key={ad.id}
+                      onClick={() => setPreviewAdId(ad.id)}
+                      className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                        previewAdId === ad.id || (!previewAdId && previewAd?.id === ad.id)
+                          ? 'border-blue-500 bg-blue-500/10'
+                          : 'border-gray-600 hover:border-gray-500'
+                      }`}
+                    >
+                      <p className="text-sm text-white font-medium">{ad.variationLabel}</p>
+                      <p className="text-xs text-gray-400 mt-1 truncate">
+                        {ad.textBoxes.map((b) => b.text).join(' / ')}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Music duration warning */}
+              {music && videos.length > 0 && music.fadeOut > videoDuration && (
+                <div className="p-3 rounded-lg bg-yellow-950/30 border border-yellow-700/50">
+                  <p className="text-xs text-yellow-400">
+                    Music fade out ({music.fadeOut}s) is longer than your video ({videoDuration.toFixed(1)}s) — it will be clamped.
+                  </p>
+                </div>
+              )}
+
+              {/* Render quality */}
+              <div className="p-4 bg-gray-800 rounded-xl border border-gray-700">
+                <h3 className="text-sm font-semibold text-gray-300 mb-2 flex items-center">
+                  Render Quality
+                  <Tooltip text="Draft = fast preview (lower quality). Final = production quality (slower but sharper)." />
+                </h3>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setRenderQuality('draft')}
+                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                      renderQuality === 'draft'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-900 text-gray-400 hover:text-gray-300 border border-gray-600'
+                    }`}
+                  >
+                    <span className="block">Draft</span>
+                    <span className="block text-xs opacity-60 mt-0.5">Fast preview, lower quality</span>
+                  </button>
+                  <button
+                    onClick={() => setRenderQuality('final')}
+                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                      renderQuality === 'final'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-900 text-gray-400 hover:text-gray-300 border border-gray-600'
+                    }`}
+                  >
+                    <span className="block">Final</span>
+                    <span className="block text-xs opacity-60 mt-0.5">High quality, ready to upload</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-4 border-t border-gray-800">
+                <button
+                  onClick={() => setStep('review')}
+                  className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors"
+                >
+                  Back to Review
+                </button>
+                <button
+                  onClick={() => {
+                    if (canRender) {
+                      setStep('render');
+                      handleRender();
+                    }
+                  }}
+                  disabled={!canRender || rendering}
+                  className={`px-6 py-2.5 rounded-xl font-semibold text-sm transition-all ${
+                    canRender && !rendering
+                      ? 'bg-green-600 hover:bg-green-500 text-white shadow-lg shadow-green-600/20'
+                      : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  {rendering ? (
+                    <span className="flex items-center gap-2">
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Rendering...
+                    </span>
+                  ) : (
+                    `Render ${approvedAds.length * Math.max(videos.length, 1)} Video${
+                      approvedAds.length * Math.max(videos.length, 1) !== 1 ? 's' : ''
+                    }`
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Preview panel */}
+            <div className="lg:col-span-1">
+              <div className="sticky top-6">
+                <VideoPreview
+                  video={previewVideo}
+                  videos={videos}
+                  activeIndex={safeVideoIndex}
+                  onVideoChange={setPreviewVideoIndex}
+                  onUpdateVideo={handleUpdateVideo}
+                  overlays={previewOverlays}
+                  music={music}
+                />
+                {previewAd && (
+                  <p className="text-xs text-gray-500 text-center mt-2">
+                    Previewing: {previewAd.variationLabel}
+                    {previewVideo && videos.length > 1 ? ` on ${previewVideo.originalName}` : ''}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Step 4: Render results */}
+        {step === 'render' && (
+          <div className="space-y-6">
+            <InfoBanner variant="tip" dismissible>
+              Each video costs 1 token to render. You have {approvedAds.length} ad{approvedAds.length !== 1 ? 's' : ''} x {videos.length} video{videos.length !== 1 ? 's' : ''} = {approvedAds.length * videos.length} token{approvedAds.length * videos.length !== 1 ? 's' : ''} total.
+            </InfoBanner>
+            {/* Progress bar */}
+            {rendering && renderTotal > 0 && (
+              <div className="space-y-2">
+                <div className="w-full bg-gray-800 rounded-full h-2.5 overflow-hidden">
+                  <div
+                    className="bg-blue-500 h-2.5 rounded-full transition-all duration-500"
+                    style={{ width: `${Math.round((renderCurrent / renderTotal) * 100)}%` }}
+                  />
+                </div>
+                <p className="text-xs text-gray-500 text-center">
+                  {renderCurrent} / {renderTotal} videos
+                </p>
+              </div>
+            )}
+
+            {renderProgress && (
+              <div
+                className={`p-4 rounded-xl border ${
+                  renderProgress.startsWith('Error') || renderProgress.includes('failed')
+                    ? 'bg-red-950/50 border-red-800'
+                    : rendering
+                    ? 'bg-blue-950/30 border-blue-800'
+                    : renderProgress.includes('Cancelled')
+                    ? 'bg-yellow-950/30 border-yellow-800'
+                    : 'bg-green-950/30 border-green-800'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <p
+                    className={`text-sm ${
+                      renderProgress.startsWith('Error') || renderProgress.includes('failed')
+                        ? 'text-red-300'
+                        : rendering
+                        ? 'text-blue-300'
+                        : renderProgress.includes('Cancelled')
+                        ? 'text-yellow-300'
+                        : 'text-green-300'
+                    }`}
+                  >
+                    {rendering && (
+                      <span className="inline-block w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mr-2 align-middle" />
+                    )}
+                    {renderProgress}
+                  </p>
+                  {rendering && (
+                    <button
+                      onClick={handleCancelRender}
+                      className="shrink-0 px-3 py-1.5 text-xs font-medium text-red-400 hover:text-red-300 bg-red-950/50 hover:bg-red-950/70 border border-red-800 rounded-lg transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {results.length > 0 && (
+              <div ref={resultsRef} className="space-y-4 scroll-mt-8">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <h3 className="text-lg font-semibold text-white">
+                    Rendered Videos ({results.length})
+                  </h3>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {!rendering && results.length > 0 && (
+                      <GoogleDriveButton
+                        files={results.map((r) => ({
+                          url: r.outputUrl,
+                          name: formatDownloadName(r.adLabel, r.originalName),
+                        }))}
+                        disabled={rendering}
+                      />
+                    )}
+                    {results.length > 1 && (
+                      <button
+                        onClick={handleDownloadAll}
+                        disabled={downloadingZip}
+                        className="px-4 py-2 bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-400 text-white text-sm font-medium rounded-lg transition-colors"
+                      >
+                        {downloadingZip ? (
+                          <span className="flex items-center gap-2">
+                            <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            Creating ZIP...
+                          </span>
+                        ) : (
+                          `Download All as ZIP (${results.length})`
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+                  {results.map((r, i) => (
+                    <div
+                      key={i}
+                      className="bg-gray-800 rounded-xl p-2 sm:p-4 border border-gray-700 hover:border-gray-600 transition-colors"
+                    >
+                      <video
+                        src={r.outputUrl}
+                        className="w-full rounded-lg mb-2 sm:mb-3 aspect-[9/16] object-cover bg-black"
+                        controls
+                        playsInline
+                      />
+                      <div className="space-y-1.5 sm:space-y-2">
+                        <p className="text-[10px] sm:text-xs text-blue-400 font-medium truncate">{r.adLabel}</p>
+                        <p className="text-xs sm:text-sm text-gray-300 truncate">{r.originalName}</p>
+                        <a
+                          href={r.outputUrl}
+                          download={formatDownloadName(r.adLabel, r.originalName)}
+                          onClick={() => {
+                            try { localStorage.setItem('onboarding_downloaded', 'true'); } catch {}
+                          }}
+                          className="block text-center px-2 sm:px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-xs sm:text-sm font-medium rounded-lg transition-colors"
+                        >
+                          Download
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center gap-3 pt-4 border-t border-gray-800">
+              <button
+                onClick={() => setStep('media')}
+                disabled={rendering}
+                className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+              >
+                Back to Media
+              </button>
+              <button
+                onClick={handleResetAll}
+                disabled={rendering}
+                className="px-4 py-2 text-sm text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50"
+              >
+                Start New Brief
+              </button>
+            </div>
+          </div>
+        )}
+
+        <LogViewer />
+      </div>
+
+      {/* Save as Template Modal */}
+      {brief && (
+        <SaveAsTemplateModal
+          open={showSaveTemplate}
+          onClose={() => setShowSaveTemplate(false)}
+          brief={brief}
+          overlayStyle={overlayStyle}
+          staggerSeconds={staggerSeconds}
+        />
+      )}
+    </main>
+  );
+}

@@ -135,7 +135,7 @@ export default function ProjectsPage() {
       }
       const data = await res.json();
       // Navigate to the wizard with the new project ID
-      router.push(`/?projectId=${data.project.id}`);
+      router.push(`/create/video-overlay?projectId=${data.project.id}`);
     } catch (err: any) {
       setError(err.message || 'Failed to create project');
       setCreating(false);
@@ -157,7 +157,7 @@ export default function ProjectsPage() {
       }
       const data = await res.json();
       setShowTemplateModal(false);
-      router.push(`/?projectId=${data.project.id}`);
+      router.push(`/create/video-overlay?projectId=${data.project.id}`);
     } catch (err: any) {
       setError(err.message || 'Failed to create project from template');
       setCreating(false);
@@ -237,7 +237,7 @@ export default function ProjectsPage() {
       <header className="border-b border-gray-800 px-6 py-4">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <h1 className="text-xl font-bold text-white">Ad Maker</h1>
+            <Link href="/" className="text-xl font-bold text-white hover:text-blue-400 transition-colors">Ad Maker</Link>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -320,7 +320,7 @@ export default function ProjectsPage() {
                   className="bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-600 transition-colors overflow-hidden group"
                 >
                   <Link
-                    href={`/?projectId=${project.id}`}
+                    href={`/create/video-overlay?projectId=${project.id}`}
                     className="block p-5"
                   >
                     <h3 className="text-white font-semibold text-base group-hover:text-blue-400 transition-colors">

@@ -21,10 +21,25 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 │  │ (super   │  │ (grid)   │  │ /new     │                            │
 │  │  admin)  │  └──────────┘  │ /[id]    │                            │
 │  └──────────┘                └──────────┘                            │
-│                                                                         │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
-│  │ 1. Brief │→│ 2. Review │→│ 3. Media  │→│ 4. Render │              │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘              │
+│  ┌─────────────────────────────────────────────────┐                 │
+│  │ / (Home Hub) — Ad creation model picker         │                 │
+│  │ ┌────────────────┐ ┌────────┐ ┌────────┐       │                 │
+│  │ │ Video Overlay   │ │Longform│ │ Image  │ ...   │                 │
+│  │ │ (available)     │ │ Video  │ │ (soon) │       │                 │
+│  │ └───────┬────────┘ └───┬────┘ └────────┘       │                 │
+│  └─────────┼──────────────┼────────────────────────┘                 │
+│            ▼              ▼                                           │
+│  ┌── /create/video-overlay ──────────────────┐                      │
+│  │ ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │     │
+│  │ │ 1. Brief │→│ 2. Review │→│ 3. Media  │→│ 4. Render │    │     │
+│  │ └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘    │     │
+│  └──────┼──────────────┼──────────────┼──────────────┼─────────┘     │
+│  ┌── /create/longform-video ─────────────────────────────────┐      │
+│  │ ┌──────┐ ┌────────┐ ┌──────────┐ ┌───────┐ ┌──────────┐ │      │
+│  │ │Brief │→│Scripts │→│Voiceover │→│B-Roll │→│Stitch +  │ │      │
+│  │ │      │ │(Claude)│ │(11Labs)  │ │(kie)  │ │Caption   │ │      │
+│  │ └──────┘ └────────┘ └──────────┘ └───────┘ └──────────┘ │      │
+│  └───────────────────────────────────────────────────────────┘      │
 │       │              │              │              │                    │
 └───────┼──────────────┼──────────────┼──────────────┼────────────────────┘
         │              │              │              │
@@ -33,7 +48,9 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
   (Claude API)       (regenerate)    /api/upload-music  (FFmpeg)
   (Cost tracking)                    /api/generate-video (Cost tracking)
                                      (kie.ai)
-                                     (Cost tracking)
+  /api/longform/*                    (Cost tracking)
+  (Scripts, Voices,
+   Generate pipeline)
         │
         ▼
   PostgreSQL (Prisma)
@@ -66,8 +83,10 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 | Video processing | FFmpeg (shell exec) | Compositing, scaling, audio mixing |
 | Overlay rendering | @napi-rs/canvas | Text-to-PNG with emoji support |
 | AI copy generation | Anthropic SDK (Claude Sonnet) | TOFU/MOFU/BOFU ad scripts |
-| AI video generation | kie.ai REST API (Seedance, Kling, Veo, Sora) | Optional AI background videos |
-| Background jobs | BullMQ + Redis (ioredis) | Async render + video gen, survives page refresh |
+| AI video generation | kie.ai REST API (Seedance, Kling, Veo, Sora) | Optional AI background videos + longform b-roll |
+| Voiceover | ElevenLabs TTS API | Text-to-speech for longform video scripts |
+| Captioning | Submagic API | Auto-captions for longform video output |
+| Background jobs | BullMQ + Redis (ioredis) | Async render + video gen + longform pipeline, survives page refresh |
 | Token billing | Prisma transactions | Atomic token deduction/credit, append-only ledger, budget alerts |
 | Payments | Stripe (Checkout + Customer Portal) | Subscriptions, one-time token top-ups, webhook handling |
 | Email | Resend SDK | Transactional emails (11 templates — welcome, reset, budget alerts, receipts, team invite, render complete/failed, subscription renewal, ticket created/reply) |
@@ -98,6 +117,8 @@ Users are billed in tokens, not raw API costs. This abstracts away internal cost
   - Ad copy generation = **FREE** (0 tokens) — users can create and regenerate unlimited ad scripts
   - 1 finished ad video = **1 token** (using own uploaded background video)
   - 1 AI-generated video (kie.ai) = **3-25 tokens** depending on model (Seedance: 3, Sora 2: 3, Veo Fast: 5, Sora Pro: 5, Kling: 7, Veo Quality: 25)
+  - 1 longform video variant with b-roll = **35 tokens**, without b-roll = **10 tokens**
+  - Longform script generation = **FREE** (0 tokens)
 - **Plan tiers**: FREE (40 tokens/mo), STARTER (500 tokens/mo, £29), PRO (2,500 tokens/mo, £99), ENTERPRISE (custom)
 - **Top-ups**: Paid plans can purchase additional token packages (Small/Medium/Large at plan-specific per-token rates)
 - **Pre-deduction pattern**: Tokens are deducted atomically BEFORE expensive API calls using raw SQL (`UPDATE ... WHERE balance >= amount RETURNING balance`) to prevent TOCTOU race conditions. If the operation fails, tokens are automatically refunded.
@@ -171,9 +192,14 @@ Each ad has 4-5 editable text boxes. User can:
 ```
 src/
 ├── app/
-│   ├── page.tsx                      # Main 4-step flow controller (requires auth)
+│   ├── page.tsx                      # Home hub: ad creation model picker (requires auth)
 │   ├── layout.tsx                    # Root layout + metadata
 │   ├── globals.css                   # Tailwind + custom styles
+│   ├── create/
+│   │   ├── video-overlay/
+│   │   │   └── page.tsx              # Video text overlay editor: 4-step wizard (Brief→Review→Media→Render)
+│   │   └── longform-video/
+│   │       └── page.tsx              # Longform video editor: 5-step wizard (Brief→Scripts→Voiceover→B-Roll→Stitch)
 │   ├── welcome/
 │   │   └── page.tsx                  # Public landing page (hero, features, pricing)
 │   ├── login/
@@ -263,6 +289,10 @@ src/
 │       ├── projects/[id]/ads/
 │       │   └── route.ts             # Save ads to project (POST — replace all)
 │       ├── jobs/[id]/route.ts         # Background job status polling (state, progress, result)
+│       ├── longform/
+│       │   ├── generate-scripts/route.ts # Claude API → longform video scripts (FREE)
+│       │   ├── voices/route.ts          # ElevenLabs voice listing (cached)
+│       │   └── generate/route.ts        # Longform pipeline trigger → enqueues BullMQ longform job
 │       ├── generate-ads/route.ts     # Claude API → ad copy (+ cost tracking)
 │       ├── generate-video/route.ts   # kie.ai → AI videos — enqueues BullMQ job or falls back to sync
 │       ├── render/route.ts           # FFmpeg batch render — enqueues BullMQ job or falls back to sync
@@ -318,14 +348,19 @@ src/
 │   ├── redis.ts                      # ioredis singleton (lazy, graceful fallback)
 │   ├── rate-limit.ts                 # Redis sorted-set sliding window rate limiter
 │   ├── cache.ts                      # Redis-backed TTL cache (company info, unread counts)
-│   ├── queue.ts                      # BullMQ queue setup (renderQueue, videoGenQueue)
-│   ├── job-types.ts                  # Type-safe job payloads for background jobs
+│   ├── queue.ts                      # BullMQ queue setup (renderQueue, videoGenQueue, longformQueue)
+│   ├── job-types.ts                  # Type-safe job payloads (RenderJobData, VideoGenJobData, LongformJobData, JobStatus)
 │   ├── email-queue.ts                # BullMQ email queue with fallback to direct send
-│   └── poll-job.ts                   # Client-side job polling with exponential backoff
+│   ├── poll-job.ts                   # Client-side job polling with exponential backoff (max 20min for longform)
+│   ├── longform-types.ts             # Types for the longform video pipeline
+│   ├── elevenlabs.ts                 # ElevenLabs TTS client (text-to-speech)
+│   ├── submagic.ts                   # Submagic captioning client (auto-captions)
+│   └── longform-stitcher.ts          # FFmpeg video assembly for longform output
 ├── workers/
 │   ├── index.ts                      # Worker entry point (starts all BullMQ workers)
 │   ├── render-worker.ts              # Render job processor (FFmpeg, uploads, notifications)
 │   ├── video-gen-worker.ts           # Video gen job processor (kie.ai, download, thumbnail)
+│   ├── longform-worker.ts            # Longform pipeline processor (voiceover→b-roll→stitch→caption, concurrency: 1)
 │   └── email-worker.ts              # Email job processor (3 retries, exponential backoff)
 ├── prisma/
 │   ├── schema.prisma                 # Data models: Company, User, Session, ApiUsage, SupportTicket, TicketMessage, AdminAuditLog, Notification, ProjectTemplate, PasswordResetToken, ProcessedWebhookEvent, SpendAlertLog
@@ -371,23 +406,25 @@ Redis (BullMQ queue)
   ▼
 Worker Service (separate Railway instance, WORKER_MODE=true)
   ├── render-worker (concurrency: 2) — FFmpeg render, upload, email, notification
-  └── video-gen-worker (concurrency: 2) — kie.ai submit, poll, download, thumbnail
+  ├── video-gen-worker (concurrency: 2) — kie.ai submit, poll, download, thumbnail
+  └── longform-worker (concurrency: 1) — voiceover, b-roll, stitch, caption pipeline
   │
   ▼
-Client polls /api/jobs/[id]?type=render|video-gen
-  │ Exponential backoff: 3s → 5s → 10s → 15s
+Client polls /api/jobs/[id]?type=render|video-gen|longform
+  │ Exponential backoff: 3s → 5s → 10s → 15s (longform max 20min)
   ▼
 Job completed → results shown
 ```
 
 ### Key files
-- `src/lib/queue.ts` — Queue factory (renderQueue, videoGenQueue)
-- `src/lib/job-types.ts` — Type-safe job payloads (RenderJobData, VideoGenJobData, JobStatus)
-- `src/lib/poll-job.ts` — Client-side polling utility with exponential backoff
+- `src/lib/queue.ts` — Queue factory (renderQueue, videoGenQueue, longformQueue)
+- `src/lib/job-types.ts` — Type-safe job payloads (RenderJobData, VideoGenJobData, LongformJobData, JobStatus)
+- `src/lib/poll-job.ts` — Client-side polling utility with exponential backoff (max 20min for longform)
 - `src/workers/index.ts` — Worker entry point
 - `src/workers/render-worker.ts` — Render job processor
 - `src/workers/video-gen-worker.ts` — Video gen job processor
-- `src/app/api/jobs/[id]/route.ts` — Job status polling endpoint
+- `src/workers/longform-worker.ts` — Longform pipeline processor (voiceover→b-roll→stitch→caption)
+- `src/app/api/jobs/[id]/route.ts` — Job status polling endpoint (supports render, video-gen, longform queues)
 
 ### Graceful degradation
 When `REDIS_URL` is not configured, all operations fall back to synchronous in-route processing (the pre-Phase 3 behavior). No code changes needed to run without Redis.
@@ -465,6 +502,9 @@ When `REDIS_URL` is not configured, all operations fall back to synchronous in-r
 | `/api/projects/[id]` | DELETE | Delete project (cascades, OWNER/ADMIN/creator only) | default | required |
 | `/api/projects/[id]/ads` | POST | Save ads to project (replace all) | default | required |
 | `/api/jobs/[id]` | GET | Poll background job status (state, progress, result) | default | required (company-scoped) |
+| `/api/longform/generate-scripts` | POST | Generate longform video scripts via Claude (FREE, 0 tokens) | 60s | required |
+| `/api/longform/voices` | GET | List ElevenLabs voices (cached) | default | required |
+| `/api/longform/generate` | POST | Trigger longform pipeline (10-35 tokens/variant) — enqueues BullMQ longform job | default | required + token deduction |
 | `/api/generate-ads` | POST | Generate ad copy via Claude (FREE, 0 tokens) | 60s | required |
 | `/api/generate-video` | POST | Generate video via kie.ai (3-25 tokens/video by model) — enqueues BullMQ job if Redis available | 300s | required + token deduction |
 | `/api/upload` | POST | Upload video files (max 500MB each, streams to disk) | 60s | required |
@@ -487,6 +527,8 @@ NEXTAUTH_URL=http://localhost:3000  # Required — Base URL for NextAuth callbac
 # API Keys
 ANTHROPIC_API_KEY=sk-ant-...     # Required for ad copy generation
 KIE_API_KEY=...                  # Optional for kie.ai video generation (Seedance, Kling, Veo, Sora)
+ELEVENLABS_API_KEY=...           # Optional for ElevenLabs TTS (longform video voiceover)
+SUBMAGIC_API_KEY=...             # Optional for Submagic captioning (longform video captions)
 
 # Super Admin
 SUPER_ADMIN_EMAILS=admin@example.com  # Comma-separated list of super admin emails

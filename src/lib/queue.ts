@@ -8,10 +8,11 @@
 
 import { Queue } from 'bullmq';
 import { createRedisConnection } from '@/lib/redis';
-import type { RenderJobData, VideoGenJobData } from '@/lib/job-types';
+import type { RenderJobData, VideoGenJobData, LongformJobData } from '@/lib/job-types';
 
 let renderQueue: Queue<RenderJobData> | null = null;
 let videoGenQueue: Queue<VideoGenJobData> | null = null;
+let longformQueue: Queue<LongformJobData> | null = null;
 
 /**
  * Get the render queue. Returns null if Redis unavailable.
@@ -39,6 +40,20 @@ export function getVideoGenQueue(): Queue<VideoGenJobData> | null {
 
   videoGenQueue = new Queue<VideoGenJobData>('video-gen', { connection: connection as any });
   return videoGenQueue;
+}
+
+/**
+ * Get the longform video queue. Returns null if Redis unavailable.
+ * Each queue gets its own dedicated Redis connection (BullMQ requirement).
+ */
+export function getLongformQueue(): Queue<LongformJobData> | null {
+  if (longformQueue) return longformQueue;
+
+  const connection = createRedisConnection();
+  if (!connection) return null;
+
+  longformQueue = new Queue<LongformJobData>('longform', { connection: connection as any });
+  return longformQueue;
 }
 
 /**

@@ -22,6 +22,7 @@ import { calculateVeoTokens } from '@/lib/token-pricing';
 import { fileUrl } from '@/lib/file-url';
 import { VIDEO_MODELS } from '@/lib/types';
 import type { VideoModel } from '@/lib/types';
+import { saveToMediaLibrary } from '@/lib/save-to-media-library';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import type { VideoGenJobData, VideoGenJobResult, VideoGenResultItem } from '@/lib/job-types';
@@ -209,6 +210,7 @@ async function generateSingleVideo(
   includeSound: boolean,
   apiType: 'veo' | 'market',
   index: number,
+  companyId: string,
 ): Promise<VideoGenResultItem> {
   let lastError: Error | null = null;
 
@@ -272,15 +274,31 @@ async function generateSingleVideo(
         ]);
       } catch { /* ignore */ }
 
+      // Save to media library (fire-and-forget)
+      const storagePath = `uploads/${filename}`;
+      const storageFileId = await saveToMediaLibrary({
+        companyId,
+        storagePath,
+        publicUrl: fileUrl(storagePath),
+        sizeBytes: buffer.length,
+        mimeType: 'video/mp4',
+        originalName: `AI Generated ${index + 1}`,
+        duration: info.duration,
+        width: info.width,
+        height: info.height,
+        thumbnailUrl: fileUrl(`uploads/${thumbFilename}`),
+      }).catch(() => null);
+
       return {
         id,
         filename,
         originalName: `AI Generated ${index + 1}`,
-        path: fileUrl(`uploads/${filename}`),
+        path: fileUrl(storagePath),
         duration: info.duration,
         width: info.width,
         height: info.height,
         thumbnail: fileUrl(`uploads/${thumbFilename}`),
+        ...(storageFileId && { storageFileId }),
       };
     } catch (err: any) {
       lastError = err;
@@ -320,7 +338,7 @@ async function processVideoGenJob(job: Job<VideoGenJobData>): Promise<VideoGenJo
 
     const promises = Array.from({ length: count }, async (_, i) => {
       try {
-        const video = await generateSingleVideo(apiKey, prompt, validModel, aspectRatio, includeSound, apiType, i);
+        const video = await generateSingleVideo(apiKey, prompt, validModel, aspectRatio, includeSound, apiType, i, companyId);
         videos.push(video);
       } catch (err: any) {
         failures.push(err.message || 'Unknown error');

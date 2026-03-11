@@ -17,7 +17,7 @@ export interface PollJobResult {
 }
 
 const POLL_INTERVALS = [3000, 5000, 10000, 15000]; // exponential backoff
-const DEFAULT_MAX_POLL_MS = 10 * 60 * 1000; // 10 minutes max
+const DEFAULT_MAX_POLL_MS = 20 * 60 * 1000; // 20 minutes max
 
 /**
  * Poll a background job until it completes or fails.
@@ -25,7 +25,7 @@ const DEFAULT_MAX_POLL_MS = 10 * 60 * 1000; // 10 minutes max
  */
 export async function pollJob(
   jobId: string,
-  type: 'render' | 'video-gen',
+  type: 'render' | 'video-gen' | 'longform',
   options: {
     onProgress?: (progress: number, state: JobState) => void;
     signal?: AbortSignal;

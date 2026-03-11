@@ -205,7 +205,7 @@ export default function SettingsPage() {
         return;
       }
       const data = await res.json();
-      router.push(`/?projectId=${data.project.id}`);
+      router.push(`/create/video-overlay?projectId=${data.project.id}`);
     } catch {
       setTemplateMessage('Failed to create project from template');
     } finally {

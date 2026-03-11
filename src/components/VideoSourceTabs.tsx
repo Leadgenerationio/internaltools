@@ -3,10 +3,11 @@
 import { useState } from 'react';
 import VideoUploader from '@/components/VideoUploader';
 import VideoGenerator from '@/components/VideoGenerator';
+import MediaLibrary from '@/components/MediaLibrary';
 import type { UploadedVideo } from '@/lib/types';
 import Tooltip from '@/components/Tooltip';
 
-type Tab = 'upload' | 'generate';
+type Tab = 'upload' | 'generate' | 'library';
 
 interface Props {
   videos: UploadedVideo[];
@@ -30,6 +31,7 @@ export default function VideoSourceTabs({
   const tabs: { id: Tab; label: string }[] = [
     { id: 'upload', label: 'Upload' },
     { id: 'generate', label: 'AI Generate' },
+    { id: 'library', label: 'Library' },
   ];
 
   return (
@@ -60,19 +62,26 @@ export default function VideoSourceTabs({
       </div>
 
       {/* Tab content */}
-      {activeTab === 'upload' ? (
+      {activeTab === 'upload' && (
         <VideoUploader
           videos={videos}
           onUpload={onUpload}
           uploading={uploading}
           setUploading={setUploading}
         />
-      ) : (
+      )}
+      {activeTab === 'generate' && (
         <VideoGenerator
           videos={videos}
           onUpload={onUpload}
           generating={generating}
           setGenerating={setGenerating}
+        />
+      )}
+      {activeTab === 'library' && (
+        <MediaLibrary
+          videos={videos}
+          onUpload={onUpload}
         />
       )}
 

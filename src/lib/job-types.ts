@@ -3,6 +3,7 @@
  */
 
 import type { TextOverlay, MusicTrack, UploadedVideo } from '@/lib/types';
+import type { LongformScript, VoiceoverConfig, CaptionConfig, LongformResultItem } from '@/lib/longform-types';
 
 // ─── Render Job ──────────────────────────────────────────────────────────────
 
@@ -78,18 +79,52 @@ export interface VideoGenResultItem {
   width: number;
   height: number;
   thumbnail: string;
+  storageFileId?: string;
+}
+
+// ─── Longform Video Job ─────────────────────────────────────────────────────
+
+export interface LongformJobData {
+  /** Auth context */
+  companyId: string;
+  userId: string;
+
+  /** Selected scripts to produce */
+  scripts: LongformScript[];
+
+  /** Voice configuration */
+  voiceConfig: VoiceoverConfig;
+
+  /** Caption configuration */
+  captionConfig: CaptionConfig;
+
+  /** Skip AI b-roll generation */
+  skipBroll: boolean;
+
+  /** Optional pre-filmed hook clip path */
+  hookClipPath?: string;
+
+  /** Token cost already deducted */
+  tokenCost: number;
+}
+
+export interface LongformJobResult {
+  videos: LongformResultItem[];
+  failed: number;
+  tokensUsed: number;
+  warning?: string;
 }
 
 // ─── Job Status (returned by /api/jobs/[id]) ─────────────────────────────────
 
-export type JobType = 'render' | 'video-gen';
+export type JobType = 'render' | 'video-gen' | 'longform';
 
 export interface JobStatus {
   id: string;
   type: JobType;
   state: 'waiting' | 'active' | 'completed' | 'failed';
   progress: number; // 0-100
-  result?: RenderJobResult | VideoGenJobResult;
+  result?: RenderJobResult | VideoGenJobResult | LongformJobResult;
   error?: string;
   createdAt: number; // timestamp ms
 }
