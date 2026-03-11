@@ -79,6 +79,8 @@ export default function LongformVideoPage() {
   const [voiceSearch, setVoiceSearch] = useState('');
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [captionTemplates, setCaptionTemplates] = useState<string[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
 
   // Generate
   const [jobId, setJobId] = useState<string | null>(null);
@@ -196,9 +198,26 @@ export default function LongformVideoPage() {
     }
   }, [voices.length, loadingVoices]);
 
+  const loadCaptionTemplates = useCallback(async () => {
+    if (captionTemplates.length > 0 || loadingTemplates) return;
+    setLoadingTemplates(true);
+    try {
+      const res = await fetch('/api/longform/caption-templates');
+      if (res.ok) {
+        const data = await res.json();
+        setCaptionTemplates(data.templates || []);
+      }
+    } catch { /* ignore */ } finally {
+      setLoadingTemplates(false);
+    }
+  }, [captionTemplates.length, loadingTemplates]);
+
   useEffect(() => {
-    if (step === 'configure') loadVoices();
-  }, [step, loadVoices]);
+    if (step === 'configure') {
+      loadVoices();
+      loadCaptionTemplates();
+    }
+  }, [step, loadVoices, loadCaptionTemplates]);
 
   const handlePlayPreview = useCallback((voice: Voice) => {
     if (!voice.previewUrl) return;
@@ -872,19 +891,46 @@ export default function LongformVideoPage() {
               </label>
 
               {captionConfig.enabled && (
-                <div className="pl-8">
-                  <label className="block text-xs text-gray-400 mb-1">Caption Template</label>
-                  <select
-                    value={captionConfig.template}
-                    onChange={(e) => setCaptionConfig({ ...captionConfig, template: e.target.value })}
-                    className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:ring-1 focus:ring-blue-500"
-                  >
-                    <option value="Hormozi 2">Hormozi 2 (Bold)</option>
-                    <option value="Beast">Beast</option>
-                    <option value="Sara">Sara</option>
-                    <option value="Ali">Ali</option>
-                    <option value="Kaizen">Kaizen</option>
-                  </select>
+                <div className="pl-8 space-y-2">
+                  <label className="block text-xs text-gray-400">Caption Style</label>
+                  {loadingTemplates ? (
+                    <div className="flex items-center gap-2 text-gray-400 text-xs">
+                      <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                      Loading styles...
+                    </div>
+                  ) : captionTemplates.length > 0 ? (
+                    <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto">
+                      {captionTemplates.map((t) => (
+                        <button
+                          key={t}
+                          onClick={() => setCaptionConfig({ ...captionConfig, template: t })}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                            captionConfig.template === t
+                              ? 'bg-blue-500/20 border border-blue-500 text-blue-400'
+                              : 'bg-gray-800 border border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-300'
+                          }`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {['Hormozi 2', 'Beast', 'Sara', 'Ali', 'Kaizen', 'Matt', 'Jess', 'Jack', 'Nick', 'Laura', 'Hormozi 1', 'Hormozi 3', 'Hormozi 4', 'Hormozi 5', 'Dan', 'Devin', 'Maya', 'Karl', 'Iman', 'Noah'].map((t) => (
+                        <button
+                          key={t}
+                          onClick={() => setCaptionConfig({ ...captionConfig, template: t })}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                            captionConfig.template === t
+                              ? 'bg-blue-500/20 border border-blue-500 text-blue-400'
+                              : 'bg-gray-800 border border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-300'
+                          }`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
