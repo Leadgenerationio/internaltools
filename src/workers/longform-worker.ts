@@ -242,10 +242,18 @@ async function processLongformJob(job: Job<LongformJobData>): Promise<LongformJo
         const duration = await getMediaDuration(finalVideoPath).catch(() => 30);
 
         // If running as a separate worker service, upload to web app's volume
-        const appUrl = process.env.RAILWAY_SERVICE_INTERNALTOOLS_URL || process.env.APP_INTERNAL_URL;
-        if (appUrl && process.env.AUTH_SECRET) {
+        const appUrl = process.env.APP_INTERNAL_URL || process.env.RAILWAY_SERVICE_INTERNALTOOLS_URL;
+        const isWorkerMode = process.env.WORKER_MODE === 'true';
+
+        if (isWorkerMode && appUrl && process.env.AUTH_SECRET) {
           const baseUrl = appUrl.startsWith('http') ? appUrl : `http://${appUrl}`;
           const uploadUrl = `${baseUrl}/api/internal/upload-output`;
+          logger.info(`[Longform] Uploading ${outputFilename} to ${uploadUrl}`);
+
+          const { createReadStream, statSync } = await import('fs');
+          const stat = statSync(finalVideoPath);
+          logger.info(`[Longform] File size: ${(stat.size / 1024 / 1024).toFixed(1)}MB`);
+
           const fileBuffer = await fs.readFile(finalVideoPath);
           const uploadRes = await fetch(uploadUrl, {
             method: 'POST',
@@ -253,17 +261,22 @@ async function processLongformJob(job: Job<LongformJobData>): Promise<LongformJo
               'Authorization': `Bearer ${process.env.AUTH_SECRET}`,
               'x-filename': outputFilename,
               'Content-Type': 'application/octet-stream',
+              'Content-Length': String(fileBuffer.length),
             },
             body: fileBuffer,
           });
-          if (!uploadRes.ok) {
+
+          if (uploadRes.ok) {
+            const uploadData = await uploadRes.json().catch(() => ({}));
+            logger.info(`[Longform] Upload success: ${JSON.stringify(uploadData)}`);
+          } else {
             const errBody = await uploadRes.text().catch(() => '');
-            logger.warn(`[Longform] Upload to app failed (${uploadRes.status}): ${errBody}, saving locally`);
-            // Fallback: save locally
-            await fs.copyFile(finalVideoPath, path.join(OUTPUT_DIR, outputFilename));
+            logger.error(`[Longform] Upload to app failed (${uploadRes.status}): ${errBody}`);
+            throw new Error(`Failed to upload output to web app (${uploadRes.status}): ${errBody}`);
           }
         } else {
           // Local dev or same-process: just copy to outputs
+          logger.info(`[Longform] Saving locally (workerMode=${isWorkerMode}, appUrl=${appUrl ? 'set' : 'not set'})`);
           await fs.mkdir(OUTPUT_DIR, { recursive: true });
           await fs.copyFile(finalVideoPath, path.join(OUTPUT_DIR, outputFilename));
         }
