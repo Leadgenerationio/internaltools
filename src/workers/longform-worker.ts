@@ -398,11 +398,21 @@ async function processReassemble(job: Job<LongformReassembleData>): Promise<Long
 
       // Resolve URL: if it starts with / it's a local API route
       const url = scene.clipUrl.startsWith('/') ? `${getAppBaseUrl()}${scene.clipUrl}` : scene.clipUrl;
+      logger.info(`[Longform] Downloading scene ${i}: ${url.slice(0, 120)}`);
       const res = await fetch(url, {
         headers: process.env.AUTH_SECRET ? { 'Authorization': `Bearer ${process.env.AUTH_SECRET}` } : {},
       });
       if (!res.ok) throw new Error(`Failed to download scene ${i}: ${res.status}`);
       const buffer = Buffer.from(await res.arrayBuffer());
+
+      // Validate downloaded file is actually video (not HTML error page)
+      if (buffer.length < 1000) {
+        throw new Error(`Scene ${i} download too small (${buffer.length} bytes) — file may not exist`);
+      }
+      if (buffer.slice(0, 15).toString().includes('<html') || buffer.slice(0, 15).toString().includes('<!DOC')) {
+        throw new Error(`Scene ${i} download returned HTML instead of video — auth or URL issue`);
+      }
+
       await fs.writeFile(clipPath, buffer);
       clipPaths.push(clipPath);
 

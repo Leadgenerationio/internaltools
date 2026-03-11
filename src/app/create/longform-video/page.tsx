@@ -110,9 +110,10 @@ export default function LongformVideoPage() {
   const [editingScenes, setEditingScenes] = useState<LongformScene[]>([]);
   const [editingVoiceoverUrl, setEditingVoiceoverUrl] = useState('');
   const [editingScriptText, setEditingScriptText] = useState('');
-  const [regenIndex, setRegenIndex] = useState<number | null>(null);
-  const [regenPrompt, setRegenPrompt] = useState('');
-  const [regenLoading, setRegenLoading] = useState(false);
+  // Per-scene regen state: allows multiple scenes to regenerate simultaneously
+  const [sceneRegenState, setSceneRegenState] = useState<Record<number, {
+    editing: boolean; prompt: string; model: string; loading: boolean; error?: string;
+  }>>({});
   const [reassembling, setReassembling] = useState(false);
   const [reassembleProgress, setReassembleProgress] = useState(0);
 
@@ -348,21 +349,47 @@ export default function LongformVideoPage() {
     setEditingScenes([...r.scenes]);
     setEditingVoiceoverUrl(r.voiceoverUrl);
     setEditingScriptText(r.scriptText || '');
-    setRegenIndex(null);
+    setSceneRegenState({});
+    setGenerateError(null);
     setStep('editor');
   }, [results]);
 
-  const handleRegenScene = useCallback(async (sceneIdx: number) => {
-    if (regenLoading) return;
-    const scene = editingScenes[sceneIdx];
-    if (!scene) return;
+  const openRegenEditor = useCallback((sceneIdx: number) => {
+    setSceneRegenState(prev => ({
+      ...prev,
+      [sceneIdx]: { editing: true, prompt: editingScenes[sceneIdx]?.prompt || '', model: videoModel, loading: false },
+    }));
+  }, [editingScenes, videoModel]);
 
-    setRegenLoading(true);
+  const closeRegenEditor = useCallback((sceneIdx: number) => {
+    setSceneRegenState(prev => {
+      const next = { ...prev };
+      delete next[sceneIdx];
+      return next;
+    });
+  }, []);
+
+  const updateRegenState = useCallback((sceneIdx: number, updates: Partial<{ prompt: string; model: string }>) => {
+    setSceneRegenState(prev => ({
+      ...prev,
+      [sceneIdx]: { ...prev[sceneIdx], ...updates },
+    }));
+  }, []);
+
+  const handleRegenScene = useCallback(async (sceneIdx: number) => {
+    const state = sceneRegenState[sceneIdx];
+    if (!state || state.loading) return;
+
+    setSceneRegenState(prev => ({
+      ...prev,
+      [sceneIdx]: { ...prev[sceneIdx], loading: true, error: undefined },
+    }));
+
     try {
       const res = await fetch('/api/longform/regenerate-scene', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: regenPrompt || scene.prompt, videoModel }),
+        body: JSON.stringify({ prompt: state.prompt, videoModel: state.model }),
       });
 
       if (!res.ok) {
@@ -377,26 +404,28 @@ export default function LongformVideoPage() {
 
       if (result.state === 'completed' && result.result) {
         const r = result.result as any;
-        const updated = [...editingScenes];
-        updated[sceneIdx] = {
-          ...updated[sceneIdx],
+        setEditingScenes(prev => prev.map((s, i) => i === sceneIdx ? {
+          ...s,
           clipUrl: r.clipUrl,
           clipFilename: r.clipFilename,
           durationSeconds: r.durationSeconds,
-          prompt: r.prompt || regenPrompt || scene.prompt,
-        };
-        setEditingScenes(updated);
-        setRegenIndex(null);
-        setRegenPrompt('');
+          prompt: r.prompt || state.prompt,
+        } : s));
+        setSceneRegenState(prev => {
+          const next = { ...prev };
+          delete next[sceneIdx];
+          return next;
+        });
       } else {
         throw new Error(result.error || 'Scene regeneration failed');
       }
     } catch (err: any) {
-      setGenerateError(err.message);
-    } finally {
-      setRegenLoading(false);
+      setSceneRegenState(prev => ({
+        ...prev,
+        [sceneIdx]: { ...prev[sceneIdx], loading: false, error: err.message },
+      }));
     }
-  }, [editingScenes, regenPrompt, videoModel, regenLoading]);
+  }, [sceneRegenState]);
 
   const handleReassemble = useCallback(async () => {
     if (reassembling || editingIndex === null) return;
@@ -1169,60 +1198,112 @@ export default function LongformVideoPage() {
             <div>
               <h2 className="text-2xl font-bold text-white mb-1">Edit Scenes</h2>
               <p className="text-gray-400 text-sm">
-                {results[editingIndex]?.variant} — {editingScenes.length} scene{editingScenes.length !== 1 ? 's' : ''}. Regenerate, replace, or remove clips, then finalize to add captions via Submagic.
+                {results[editingIndex]?.variant} — {editingScenes.length} scene{editingScenes.length !== 1 ? 's' : ''}.
+                Regenerate, replace, or remove clips, then finalize to add captions.
               </p>
+              {Object.values(sceneRegenState).some(s => s.loading) && (
+                <p className="text-blue-400 text-xs mt-1 flex items-center gap-1">
+                  <span className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                  {Object.values(sceneRegenState).filter(s => s.loading).length} scene{Object.values(sceneRegenState).filter(s => s.loading).length !== 1 ? 's' : ''} regenerating...
+                </p>
+              )}
             </div>
 
             {generateError && (
-              <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-4 py-3 rounded-lg">{generateError}</div>
+              <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-4 py-3 rounded-lg flex items-center justify-between">
+                <span className="text-sm">{generateError}</span>
+                <button onClick={() => setGenerateError(null)} className="text-red-400 hover:text-red-300 ml-3 shrink-0">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
             )}
 
             <div className="space-y-4">
-              {editingScenes.map((scene, si) => (
-                <div key={si} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+              {editingScenes.map((scene, si) => {
+                const regen = sceneRegenState[si];
+                const isLoading = regen?.loading;
+                const isEditing = regen?.editing && !regen?.loading;
+                const regenModel = regen ? BROLL_MODELS.find(m => m.id === regen.model) : null;
+
+                return (
+                <div key={si} className={`bg-gray-900 border rounded-xl p-4 transition-colors ${
+                  isLoading ? 'border-blue-500/50 bg-blue-500/5' : regen?.error ? 'border-red-500/50' : 'border-gray-800'
+                }`}>
                   <div className="flex items-center justify-between mb-3">
-                    <span className="text-sm font-semibold text-blue-400">Scene {si + 1}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-blue-400">Scene {si + 1}</span>
+                      {isLoading && (
+                        <span className="flex items-center gap-1 text-xs text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-full">
+                          <span className="w-2.5 h-2.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                          Generating with {regenModel?.label || 'AI'}...
+                        </span>
+                      )}
+                    </div>
                     <span className="text-xs text-gray-500">{scene.durationSeconds.toFixed(1)}s</span>
                   </div>
 
                   <div className="flex gap-4 flex-col sm:flex-row">
                     {/* Video preview */}
-                    <div className="sm:w-48 shrink-0">
+                    <div className="sm:w-48 shrink-0 relative">
                       <video src={scene.clipUrl} controls className="w-full rounded-lg bg-black aspect-[9/16] object-cover" preload="metadata" />
+                      {isLoading && (
+                        <div className="absolute inset-0 bg-black/60 rounded-lg flex items-center justify-center">
+                          <div className="w-10 h-10 border-3 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                        </div>
+                      )}
                     </div>
 
                     {/* Scene details + actions */}
                     <div className="flex-1 space-y-3">
-                      <p className="text-xs text-gray-400 line-clamp-3">{scene.prompt}</p>
+                      <p className="text-xs text-gray-400 line-clamp-2">{scene.prompt}</p>
 
-                      {regenIndex === si ? (
-                        <div className="space-y-2">
+                      {regen?.error && (
+                        <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-xs px-3 py-2 rounded-lg">
+                          {regen.error}
+                        </div>
+                      )}
+
+                      {isEditing ? (
+                        <div className="space-y-3">
                           <textarea
-                            value={regenPrompt}
-                            onChange={(e) => setRegenPrompt(e.target.value)}
-                            placeholder="Enter new scene prompt..."
-                            rows={3}
+                            value={regen.prompt}
+                            onChange={(e) => updateRegenState(si, { prompt: e.target.value })}
+                            placeholder="Describe the scene you want..."
+                            rows={2}
                             className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm placeholder-gray-500 focus:ring-1 focus:ring-blue-500 focus:border-transparent"
                           />
+
+                          {/* Model picker */}
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1.5">Model</label>
+                            <div className="flex flex-wrap gap-1.5">
+                              {BROLL_MODELS.map((m) => (
+                                <button key={m.id} onClick={() => updateRegenState(si, { model: m.id })}
+                                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                                    regen.model === m.id
+                                      ? 'bg-blue-500/20 border border-blue-500 text-blue-400'
+                                      : 'bg-gray-800 border border-gray-700 text-gray-400 hover:border-gray-600'
+                                  }`}>
+                                  {m.label} <span className="text-gray-500">({m.tokenCost}t)</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
                           <div className="flex gap-2">
-                            <button onClick={() => handleRegenScene(si)} disabled={regenLoading}
-                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors">
-                              {regenLoading ? (
-                                <span className="flex items-center gap-1">
-                                  <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                  Generating...
-                                </span>
-                              ) : `Regenerate (${selectedModel?.tokenCost || 5} tokens)`}
+                            <button onClick={() => handleRegenScene(si)}
+                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors">
+                              Generate ({regenModel?.tokenCost || 5} tokens)
                             </button>
-                            <button onClick={() => { setRegenIndex(null); setRegenPrompt(''); }}
+                            <button onClick={() => closeRegenEditor(si)}
                               className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-medium rounded-lg transition-colors">
                               Cancel
                             </button>
                           </div>
                         </div>
-                      ) : (
+                      ) : !isLoading ? (
                         <div className="flex gap-2 flex-wrap">
-                          <button onClick={() => { setRegenIndex(si); setRegenPrompt(scene.prompt); }}
+                          <button onClick={() => openRegenEditor(si)}
                             className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-xs font-medium rounded-lg transition-colors">
                             Regenerate
                           </button>
@@ -1238,11 +1319,12 @@ export default function LongformVideoPage() {
                             </button>
                           )}
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Finalize */}
@@ -1251,7 +1333,7 @@ export default function LongformVideoPage() {
                 className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
                 Back to Results
               </button>
-              <button onClick={handleReassemble} disabled={reassembling}
+              <button onClick={handleReassemble} disabled={reassembling || Object.values(sceneRegenState).some(s => s.loading)}
                 className="px-8 py-2.5 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors">
                 {reassembling ? (
                   <span className="flex items-center gap-2">

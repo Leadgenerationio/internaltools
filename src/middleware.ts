@@ -123,12 +123,18 @@ export async function middleware(request: NextRequest) {
 
   // ── Auth: redirect unauthenticated users to /welcome ──
   if (!isPublicRoute(pathname)) {
-    // secureCookie: true ensures getToken reads the __Secure- prefixed cookie
-    // (required when behind a reverse proxy like Railway that terminates TLS)
-    const token = await getToken({ req: request, secret: SECRET, secureCookie: USE_SECURE_COOKIE });
-    if (!token) {
-      const welcomeUrl = new URL('/welcome', request.url);
-      return NextResponse.redirect(welcomeUrl);
+    // Allow internal service-to-service calls with Bearer AUTH_SECRET
+    const authHeader = request.headers.get('authorization');
+    const isInternalCall = authHeader && SECRET && authHeader === `Bearer ${SECRET}`;
+
+    if (!isInternalCall) {
+      // secureCookie: true ensures getToken reads the __Secure- prefixed cookie
+      // (required when behind a reverse proxy like Railway that terminates TLS)
+      const token = await getToken({ req: request, secret: SECRET, secureCookie: USE_SECURE_COOKIE });
+      if (!token) {
+        const welcomeUrl = new URL('/welcome', request.url);
+        return NextResponse.redirect(welcomeUrl);
+      }
     }
   }
 
