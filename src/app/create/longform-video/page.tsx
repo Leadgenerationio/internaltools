@@ -985,16 +985,6 @@ export default function LongformVideoPage() {
                 <div className="pl-8 space-y-3">
                   <label className="block text-xs text-gray-400 font-medium">Caption Style</label>
                   <div className="flex flex-wrap gap-2">
-                    <button
-                      onClick={() => setCaptionConfig({ ...captionConfig, template: 'built-in' })}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                        captionConfig.template === 'built-in'
-                          ? 'bg-blue-500/20 border border-blue-500 text-blue-400'
-                          : 'bg-gray-800 border border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-300'
-                      }`}
-                    >
-                      Built-in (Free)
-                    </button>
                     {(captionTemplates.length > 0 ? captionTemplates : ['Hormozi 2', 'Beast', 'Sara', 'Ali', 'Kaizen', 'Matt', 'Jess', 'Jack', 'Nick', 'Laura', 'Hormozi 1', 'Dan', 'Devin', 'Maya', 'Karl', 'Iman', 'Noah']).map((t) => (
                       <button key={t} onClick={() => setCaptionConfig({ ...captionConfig, template: t })}
                         className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
@@ -1006,9 +996,7 @@ export default function LongformVideoPage() {
                       </button>
                     ))}
                   </div>
-                  {captionConfig.template !== 'built-in' && (
-                    <p className="text-xs text-amber-400">Submagic styles require cloud storage (S3). Falls back to built-in if unavailable.</p>
-                  )}
+                  <p className="text-xs text-gray-500">Powered by Submagic — requires cloud storage (S3/CDN) for processing.</p>
                 </div>
               )}
             </div>
@@ -1056,31 +1044,55 @@ export default function LongformVideoPage() {
           </div>
         )}
 
-        {/* ── Generate Step (Progress) ────────────────────────────────── */}
+        {/* ── Generate Step (Progress / Failure) ────────────────────── */}
         {step === 'generate' && (
           <div className="space-y-6 text-center py-10">
-            <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
-            <div>
-              <h2 className="text-2xl font-bold text-white mb-2">Generating Videos</h2>
-              <p className="text-gray-400 text-sm">This takes 5-15 minutes per variant. You can leave this page — the job runs in the background.</p>
-            </div>
-            <div className="max-w-md mx-auto">
-              <div className="flex justify-between text-sm text-gray-400 mb-2">
-                <span>Progress</span>
-                <span>{progress}%</span>
-              </div>
-              <div className="w-full bg-gray-800 rounded-full h-3">
-                <div className="bg-blue-500 h-3 rounded-full transition-all duration-500" style={{ width: `${progress}%` }} />
-              </div>
-            </div>
-            {generateError && (
-              <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-4 py-3 rounded-lg max-w-md mx-auto">{generateError}</div>
-            )}
-            {generating && (
-              <button onClick={handleCancel}
-                className="px-6 py-2.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/40 font-medium rounded-lg transition-colors">
-                Cancel
-              </button>
+            {generating ? (
+              <>
+                <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
+                <div>
+                  <h2 className="text-2xl font-bold text-white mb-2">Generating Videos</h2>
+                  <p className="text-gray-400 text-sm">This takes 5-15 minutes per variant. You can leave this page — the job runs in the background.</p>
+                </div>
+                <div className="max-w-md mx-auto">
+                  <div className="flex justify-between text-sm text-gray-400 mb-2">
+                    <span>Progress</span>
+                    <span>{progress}%</span>
+                  </div>
+                  <div className="w-full bg-gray-800 rounded-full h-3">
+                    <div className="bg-blue-500 h-3 rounded-full transition-all duration-500" style={{ width: `${progress}%` }} />
+                  </div>
+                </div>
+                <button onClick={handleCancel}
+                  className="px-6 py-2.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/40 font-medium rounded-lg transition-colors">
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="w-16 h-16 flex items-center justify-center mx-auto">
+                  <svg className="w-12 h-12 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                </div>
+                <div>
+                  <h2 className="text-2xl font-bold text-white mb-2">Generation Failed</h2>
+                  <p className="text-gray-400 text-sm">The video generation job could not complete.</p>
+                </div>
+                {generateError && (
+                  <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-4 py-3 rounded-lg max-w-md mx-auto">{generateError}</div>
+                )}
+                <div className="flex gap-3 justify-center">
+                  <button onClick={() => { setStep('configure'); setGenerateError(null); setProgress(0); }}
+                    className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
+                    Back to Configure
+                  </button>
+                  <button onClick={() => { setGenerateError(null); setProgress(0); handleGenerate(); }}
+                    className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors">
+                    Try Again
+                  </button>
+                </div>
+              </>
             )}
           </div>
         )}
@@ -1097,6 +1109,11 @@ export default function LongformVideoPage() {
                 {failedCount > 0 ? ` (${failedCount} failed)` : ''}
                 {' / '}{tokensUsed} tokens used
               </p>
+              {results.some(r => !r.captioned) && (
+                <p className="text-amber-400 text-xs mt-1">
+                  Edit scenes, then finalize to add Submagic captions.
+                </p>
+              )}
             </div>
 
             <div className="space-y-4">
@@ -1105,7 +1122,10 @@ export default function LongformVideoPage() {
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-sm font-semibold text-blue-400 uppercase tracking-wider">{r.variant}</span>
                     <div className="flex items-center gap-2 text-xs text-gray-500">
-                      {r.captioned && <span className="px-2 py-0.5 bg-green-500/10 text-green-400 border border-green-500/30 rounded">Captioned</span>}
+                      {r.captioned
+                        ? <span className="px-2 py-0.5 bg-green-500/10 text-green-400 border border-green-500/30 rounded">Captioned</span>
+                        : <span className="px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/30 rounded">No Captions</span>
+                      }
                       <span>{Math.round(r.durationSeconds)}s</span>
                     </div>
                   </div>
@@ -1117,8 +1137,8 @@ export default function LongformVideoPage() {
                     </a>
                     {r.scenes && r.scenes.length > 0 && r.voiceoverUrl && (
                       <button onClick={() => handleEditScenes(i)}
-                        className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium rounded-lg transition-colors">
-                        Edit Scenes
+                        className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-sm font-medium rounded-lg transition-colors">
+                        {r.captioned ? 'Edit Scenes' : 'Edit & Add Captions'}
                       </button>
                     )}
                   </div>
@@ -1149,7 +1169,7 @@ export default function LongformVideoPage() {
             <div>
               <h2 className="text-2xl font-bold text-white mb-1">Edit Scenes</h2>
               <p className="text-gray-400 text-sm">
-                {results[editingIndex]?.variant} — {editingScenes.length} scene{editingScenes.length !== 1 ? 's' : ''}. Regenerate, replace, or remove individual clips.
+                {results[editingIndex]?.variant} — {editingScenes.length} scene{editingScenes.length !== 1 ? 's' : ''}. Regenerate, replace, or remove clips, then finalize to add captions via Submagic.
               </p>
             </div>
 
@@ -1225,8 +1245,8 @@ export default function LongformVideoPage() {
               ))}
             </div>
 
-            {/* Reassemble */}
-            <div className="flex gap-3">
+            {/* Finalize */}
+            <div className="flex gap-3 items-center">
               <button onClick={() => { setStep('results'); setEditingIndex(null); setGenerateError(null); }}
                 className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
                 Back to Results
@@ -1236,11 +1256,21 @@ export default function LongformVideoPage() {
                 {reassembling ? (
                   <span className="flex items-center gap-2">
                     <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Reassembling ({reassembleProgress}%)...
+                    Processing ({reassembleProgress}%)...
                   </span>
-                ) : 'Re-assemble Video'}
+                ) : (
+                  <span className="flex items-center gap-2">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                    Finalize with Captions
+                  </span>
+                )}
               </button>
             </div>
+            {captionConfig.enabled && (
+              <p className="text-xs text-gray-500">
+                Caption style: <span className="text-gray-300">{captionConfig.template}</span> — powered by Submagic
+              </p>
+            )}
           </div>
         )}
       </div>

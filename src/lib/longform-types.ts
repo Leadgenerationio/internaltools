@@ -2,7 +2,7 @@
  * Types for the Longform Video ad creation pipeline.
  *
  * Pipeline: Brief → Scripts (Claude) → Voiceover (ElevenLabs)
- *         → B-Roll (kie.ai) → Stitch (FFmpeg) → Caption (built-in or Submagic)
+ *         → B-Roll (kie.ai) → Stitch (FFmpeg) → Edit Scenes → Finalize + Caption (Submagic)
  */
 
 // ─── Script Structure ────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ export const DEFAULT_VOICE_CONFIG: VoiceoverConfig = {
 
 export interface CaptionConfig {
   enabled: boolean;
-  template: string;        // e.g. "Hormozi 2" or "built-in"
+  template: string;        // e.g. "Hormozi 2" — Submagic template name
   language: string;        // e.g. "en"
   magicZooms: boolean;
   cleanAudio: boolean;
@@ -60,9 +60,9 @@ export interface CaptionConfig {
 
 export const DEFAULT_CAPTION_CONFIG: CaptionConfig = {
   enabled: true,
-  template: 'built-in',
+  template: 'Hormozi 2',
   language: 'en',
-  magicZooms: false,
+  magicZooms: true,
   cleanAudio: false,
 };
 

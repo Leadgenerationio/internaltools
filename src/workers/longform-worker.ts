@@ -5,7 +5,10 @@
  *   1. Generate voiceover (ElevenLabs)
  *   2. Generate b-roll clips (kie.ai) — optional, model selectable
  *   3. Normalize + stitch video (FFmpeg) — loops clips to match voiceover
- *   4. Add captions (built-in FFmpeg or Submagic) — optional
+ *
+ * Captions are NOT added during initial generation — user edits scenes
+ * in the editor first, then triggers reassembly which sends the final
+ * video to Submagic for captioning.
  *
  * Also handles scene regeneration and reassembly jobs for the editor.
  * Reports granular progress. Handles partial success and token refunds.
@@ -23,7 +26,6 @@ import { calculateLongformTokens } from '@/lib/token-pricing';
 import { fileUrl } from '@/lib/file-url';
 import { generateScriptVoiceover } from '@/lib/elevenlabs';
 import { assembleAd, getMediaDuration, normalizeClip } from '@/lib/longform-stitcher';
-import { addBuiltInCaptions } from '@/lib/longform-captions';
 import { generateVideoClip } from '@/lib/kie-api';
 import { captionVideo } from '@/lib/submagic';
 import type {
@@ -217,7 +219,7 @@ async function processLongformJob(job: Job<LongformJobData>): Promise<LongformJo
         await job.updateProgress(Math.round(baseProgress + variantWeight * 0.60));
 
         if (brollClips.length === 0) {
-          throw new Error(`No video clips produced for variant [${variant}]`);
+          throw new Error(`All AI video models are currently unavailable. Please try again in a few minutes or select a different model.`);
         }
 
         // ── Stage 3: Stitch (60-75% of variant) ─────────────────────
@@ -233,66 +235,11 @@ async function processLongformJob(job: Job<LongformJobData>): Promise<LongformJo
           tempDir: stitchDir,
         });
 
-        await job.updateProgress(Math.round(baseProgress + variantWeight * 0.75));
+        await job.updateProgress(Math.round(baseProgress + variantWeight * 0.90));
 
-        // ── Stage 4: Caption (75-95% of variant) ────────────────────
-        let finalVideoPath = rawVideoPath;
-        let captioned = false;
-
-        if (captionConfig.enabled) {
-          const captionDir = path.join(variantDir, 'caption');
-          await fs.mkdir(captionDir, { recursive: true });
-
-          // Try built-in captions first (no external dependency)
-          if (captionConfig.template === 'built-in' || !process.env.SUBMAGIC_API_KEY) {
-            logger.info(`[Longform] Adding built-in captions for [${variant}]`);
-            try {
-              const captionedPath = path.join(captionDir, `CAPTIONED_${variant}.mp4`);
-              await addBuiltInCaptions(
-                rawVideoPath,
-                scriptText,
-                voiceoverDuration * 1000,
-                captionedPath,
-                captionDir,
-              );
-              finalVideoPath = captionedPath;
-              captioned = true;
-            } catch (err: any) {
-              logger.warn(`[Longform] Built-in captioning failed for [${variant}]`, { error: err.message });
-            }
-          } else if (process.env.SUBMAGIC_API_KEY) {
-            // Try Submagic (needs public URL)
-            logger.info(`[Longform] Adding Submagic captions for [${variant}]`);
-            const publicUrl = await getPublicUrl(rawVideoPath);
-            if (publicUrl) {
-              const captionedPath = path.join(captionDir, `FINAL_${variant}.mp4`);
-              try {
-                await captionVideo(publicUrl, captionedPath, captionConfig, `Longform - ${variant}`);
-                finalVideoPath = captionedPath;
-                captioned = true;
-              } catch (err: any) {
-                logger.warn(`[Longform] Submagic captioning failed for [${variant}], trying built-in`, { error: err.message });
-                // Fall back to built-in
-                try {
-                  const fallbackPath = path.join(captionDir, `CAPTIONED_${variant}.mp4`);
-                  await addBuiltInCaptions(rawVideoPath, scriptText, voiceoverDuration * 1000, fallbackPath, captionDir);
-                  finalVideoPath = fallbackPath;
-                  captioned = true;
-                } catch { /* give up on captions */ }
-              }
-            } else {
-              // No public URL — use built-in
-              try {
-                const fallbackPath = path.join(captionDir, `CAPTIONED_${variant}.mp4`);
-                await addBuiltInCaptions(rawVideoPath, scriptText, voiceoverDuration * 1000, fallbackPath, captionDir);
-                finalVideoPath = fallbackPath;
-                captioned = true;
-              } catch { /* give up on captions */ }
-            }
-          }
-        }
-
-        await job.updateProgress(Math.round(baseProgress + variantWeight * 0.95));
+        // Captions are NOT applied here — user edits scenes first in the
+        // editor, then triggers reassembly which sends to Submagic.
+        const finalVideoPath = rawVideoPath;
 
         // ── Finalize: Upload final video + voiceover ─────────────────
         const outputId = crypto.randomUUID();
@@ -317,7 +264,7 @@ async function processLongformJob(job: Job<LongformJobData>): Promise<LongformJo
         results.push({
           variant: script.variant,
           videoUrl: fileUrl(`outputs/${outputFilename}`),
-          captioned,
+          captioned: false,
           durationSeconds: duration,
           voiceoverUrl,
           scenes: scenes.length > 0 ? scenes : undefined,
@@ -485,21 +432,25 @@ async function processReassemble(job: Job<LongformReassembleData>): Promise<Long
 
     await job.updateProgress(70);
 
-    // Captions
+    // Captions via Submagic
     let finalPath = rawPath;
     let captioned = false;
 
-    if (captionConfig.enabled && scriptText) {
-      try {
-        const duration = await getMediaDuration(voPath);
-        const captionDir = path.join(tempDir, 'captions');
-        await fs.mkdir(captionDir, { recursive: true });
-        const captionedPath = path.join(captionDir, 'captioned.mp4');
-        await addBuiltInCaptions(rawPath, scriptText, duration * 1000, captionedPath, captionDir);
-        finalPath = captionedPath;
-        captioned = true;
-      } catch (err: any) {
-        logger.warn('[Longform] Reassemble captioning failed', { error: err.message });
+    if (captionConfig.enabled && process.env.SUBMAGIC_API_KEY) {
+      const publicUrl = await getPublicUrl(rawPath);
+      if (publicUrl) {
+        try {
+          const captionDir = path.join(tempDir, 'captions');
+          await fs.mkdir(captionDir, { recursive: true });
+          const captionedPath = path.join(captionDir, 'captioned.mp4');
+          await captionVideo(publicUrl, captionedPath, captionConfig, 'Longform - Reassembled');
+          finalPath = captionedPath;
+          captioned = true;
+        } catch (err: any) {
+          logger.warn('[Longform] Reassemble captioning failed', { error: err.message });
+        }
+      } else {
+        logger.warn('[Longform] Reassemble: skipping captions — no public URL');
       }
     }
 

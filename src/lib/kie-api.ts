@@ -189,11 +189,57 @@ export async function submitAndPollVeo(
   return [];
 }
 
-// ─── Unified clip generator ─────────────────────────────────────────────────
+// ─── Fallback model order ───────────────────────────────────────────────────
+
+const FALLBACK_MODELS = ['veo3_fast', 'bytedance/seedance-1.5-pro', 'kling-2.6/text-to-video'];
+
+function isCapacityError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return lower.includes('heavy load') || lower.includes('not responding')
+    || lower.includes('capacity') || lower.includes('overloaded')
+    || lower.includes('temporarily unavailable') || lower.includes('service busy');
+}
+
+// ─── Single-model clip generation ───────────────────────────────────────────
+
+async function generateClipWithModel(
+  apiKey: string,
+  model: VideoModel,
+  prompt: string,
+  aspectRatio: string,
+  outputPath: string,
+): Promise<string> {
+  let resultUrls: string[];
+
+  if (model.apiType === 'veo') {
+    resultUrls = await submitAndPollVeo(apiKey, model.id, prompt, aspectRatio);
+  } else {
+    resultUrls = await submitAndPollMarket(apiKey, model, prompt, aspectRatio, model.supportsSound);
+  }
+
+  if (resultUrls.length === 0) {
+    throw new Error(`${model.label}: no video URLs returned`);
+  }
+
+  const dlRes = await fetch(resultUrls[0]);
+  if (!dlRes.ok) {
+    throw new Error(`${model.label}: download failed (${dlRes.status})`);
+  }
+
+  const buffer = Buffer.from(await dlRes.arrayBuffer());
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await fs.writeFile(outputPath, buffer);
+
+  return outputPath;
+}
+
+// ─── Unified clip generator with automatic fallback ─────────────────────────
 
 /**
  * Generate a single video clip and download it to outputPath.
  * Works with any kie.ai model (Veo or Market pattern).
+ * If the chosen model fails with a capacity/overload error, automatically
+ * falls back to alternative models (veo3_fast → seedance → kling).
  * Returns the output path on success, null on failure.
  */
 export async function generateVideoClip(
@@ -209,28 +255,35 @@ export async function generateVideoClip(
     return null;
   }
 
+  // Try the requested model first
   try {
-    let resultUrls: string[];
-
-    if (model.apiType === 'veo') {
-      resultUrls = await submitAndPollVeo(apiKey, model.id, prompt, aspectRatio);
-    } else {
-      resultUrls = await submitAndPollMarket(apiKey, model, prompt, aspectRatio, model.supportsSound);
-    }
-
-    if (resultUrls.length === 0) return null;
-
-    // Download the first result
-    const dlRes = await fetch(resultUrls[0]);
-    if (!dlRes.ok) return null;
-
-    const buffer = Buffer.from(await dlRes.arrayBuffer());
-    await fs.mkdir(path.dirname(outputPath), { recursive: true });
-    await fs.writeFile(outputPath, buffer);
-
-    return outputPath;
+    return await generateClipWithModel(apiKey, model, prompt, aspectRatio, outputPath);
   } catch (err: any) {
-    logger.warn(`[kie-api] Clip generation failed`, { model: modelId, prompt: prompt.slice(0, 60), error: err.message });
-    return null;
+    logger.warn(`[kie-api] Primary model failed`, { model: modelId, error: err.message });
+
+    // Only try fallbacks for capacity/load errors
+    if (!isCapacityError(err.message)) {
+      return null;
+    }
   }
+
+  // Try fallback models
+  for (const fallbackId of FALLBACK_MODELS) {
+    if (fallbackId === modelId) continue; // skip the one we already tried
+
+    const fallback = VIDEO_MODELS.find((m) => m.id === fallbackId);
+    if (!fallback) continue;
+
+    logger.info(`[kie-api] Trying fallback model: ${fallback.label}`);
+    try {
+      const result = await generateClipWithModel(apiKey, fallback, prompt, aspectRatio, outputPath);
+      logger.info(`[kie-api] Fallback ${fallback.label} succeeded`);
+      return result;
+    } catch (fbErr: any) {
+      logger.warn(`[kie-api] Fallback ${fallback.label} also failed`, { error: fbErr.message });
+    }
+  }
+
+  logger.error(`[kie-api] All models failed for prompt: ${prompt.slice(0, 60)}`);
+  return null;
 }
