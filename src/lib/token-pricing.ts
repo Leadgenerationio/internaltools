@@ -19,7 +19,9 @@ export const TOKEN_COSTS = {
   RENDER_VIDEO: 1,
   /** Default fallback for AI video — used when model lookup fails */
   GENERATE_VIDEO: 5,
-  /** Longform video ad (voiceover + b-roll + stitch + caption) per variant */
+  /** Longform base cost per variant (voiceover + stitch + caption) */
+  LONGFORM_BASE: 5,
+  /** Longform video ad (voiceover + b-roll + stitch + caption) per variant — legacy flat rate */
   LONGFORM_VIDEO: 35,
   /** Longform video without b-roll (voiceover + stitch + caption) */
   LONGFORM_VIDEO_NO_BROLL: 10,
@@ -51,11 +53,23 @@ export function calculateVeoTokens(videoCount: number, modelId?: string): number
 
 /**
  * Calculate total token cost for longform video generation.
- * Each variant costs LONGFORM_VIDEO (with b-roll) or LONGFORM_VIDEO_NO_BROLL (without).
+ * Without model: uses legacy flat rate (35 with b-roll, 10 without).
+ * With model: base cost + (clipCount × model token cost) per variant.
  */
-export function calculateLongformTokens(variantCount: number, skipBroll: boolean): number {
-  const perVariant = skipBroll ? TOKEN_COSTS.LONGFORM_VIDEO_NO_BROLL : TOKEN_COSTS.LONGFORM_VIDEO;
-  return variantCount * perVariant;
+export function calculateLongformTokens(variantCount: number, skipBroll: boolean, modelId?: string, clipCount = 3): number {
+  if (skipBroll) {
+    return variantCount * TOKEN_COSTS.LONGFORM_VIDEO_NO_BROLL;
+  }
+
+  if (modelId) {
+    const model = VIDEO_MODELS.find((m) => m.id === modelId);
+    if (model) {
+      const perVariant = TOKEN_COSTS.LONGFORM_BASE + (clipCount * model.tokenCost);
+      return variantCount * perVariant;
+    }
+  }
+
+  return variantCount * TOKEN_COSTS.LONGFORM_VIDEO;
 }
 
 /**

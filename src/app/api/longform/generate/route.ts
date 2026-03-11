@@ -23,6 +23,7 @@ interface RequestBody {
   voiceConfig: VoiceoverConfig;
   captionConfig: CaptionConfig;
   skipBroll: boolean;
+  videoModel?: string;
   hookClipPath?: string;
 }
 
@@ -40,7 +41,7 @@ export async function POST(request: NextRequest) {
   }
 
   const body: RequestBody = await request.json();
-  const { scripts, voiceConfig, captionConfig, skipBroll, hookClipPath } = body;
+  const { scripts, voiceConfig, captionConfig, skipBroll, videoModel, hookClipPath } = body;
 
   if (!scripts || scripts.length === 0) {
     return NextResponse.json({ error: 'At least one script is required' }, { status: 400 });
@@ -57,8 +58,8 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Calculate and check token cost
-  const tokenCost = calculateLongformTokens(scripts.length, skipBroll);
+  // Calculate and check token cost (model-aware pricing)
+  const tokenCost = calculateLongformTokens(scripts.length, skipBroll, videoModel);
 
   const balanceError = await checkTokenBalance(companyId, tokenCost);
   if (balanceError) return balanceError;
@@ -97,6 +98,7 @@ export async function POST(request: NextRequest) {
     voiceConfig,
     captionConfig,
     skipBroll,
+    videoModel,
     hookClipPath,
     tokenCost,
   });

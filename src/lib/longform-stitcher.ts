@@ -109,7 +109,7 @@ export async function concatenateClips(
 
 /**
  * Merge a video (no audio) with a voiceover audio track.
- * The video is trimmed/looped to match the audio duration if needed.
+ * The video is looped to match the audio duration so the full voiceover plays.
  */
 export async function mergeAudioVideo(
   videoPath: string,
@@ -120,16 +120,19 @@ export async function mergeAudioVideo(
 
   const audioDuration = await getMediaDuration(audioPath);
 
+  // -stream_loop -1 loops the video infinitely; -t caps at voiceover duration
+  // Re-encode video because -stream_loop requires it (can't use -c:v copy)
   await execFileAsync('ffmpeg', [
     '-y',
+    '-stream_loop', '-1',
     '-i', videoPath,
     '-i', audioPath,
     '-filter_complex',
     `[1:a]volume=1.0,atrim=0:${audioDuration},apad=whole_dur=${audioDuration}[a]`,
     '-map', '0:v', '-map', '[a]',
-    '-c:v', 'copy',
+    '-c:v', 'libx264', '-preset', FFMPEG_PRESET,
     '-c:a', 'aac', '-b:a', '192k',
-    '-shortest',
+    '-t', String(audioDuration),
     outputPath,
   ]);
 

@@ -2,7 +2,7 @@
  * Types for the Longform Video ad creation pipeline.
  *
  * Pipeline: Brief → Scripts (Claude) → Voiceover (ElevenLabs)
- *         → B-Roll (kie.ai) → Stitch (FFmpeg) → Caption (Submagic)
+ *         → B-Roll (kie.ai) → Stitch (FFmpeg) → Caption (built-in or Submagic)
  */
 
 // ─── Script Structure ────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ export const DEFAULT_VOICE_CONFIG: VoiceoverConfig = {
 
 export interface CaptionConfig {
   enabled: boolean;
-  template: string;        // e.g. "Hormozi 2"
+  template: string;        // e.g. "Hormozi 2" or "built-in"
   language: string;        // e.g. "en"
   magicZooms: boolean;
   cleanAudio: boolean;
@@ -60,11 +60,21 @@ export interface CaptionConfig {
 
 export const DEFAULT_CAPTION_CONFIG: CaptionConfig = {
   enabled: true,
-  template: 'Hormozi 2',
+  template: 'built-in',
   language: 'en',
-  magicZooms: true,
-  cleanAudio: true,
+  magicZooms: false,
+  cleanAudio: false,
 };
+
+// ─── Scene (individual b-roll clip) ─────────────────────────────────────────
+
+export interface LongformScene {
+  order: number;
+  prompt: string;
+  clipUrl: string;         // URL to the individual clip (via fileUrl)
+  clipFilename: string;    // filename in outputs/
+  durationSeconds: number;
+}
 
 // ─── Pipeline Options ────────────────────────────────────────────────────────
 
@@ -72,7 +82,8 @@ export interface LongformOptions {
   voiceConfig: VoiceoverConfig;
   captionConfig: CaptionConfig;
   skipBroll: boolean;
-  hookClipPath?: string;   // optional pre-filmed hook video
+  videoModel?: string;       // kie.ai model ID for b-roll generation
+  hookClipPath?: string;     // optional pre-filmed hook video
 }
 
 // ─── Pipeline Progress ──────────────────────────────────────────────────────
@@ -94,4 +105,7 @@ export interface LongformResultItem {
   videoUrl: string;
   captioned: boolean;
   durationSeconds: number;
+  voiceoverUrl?: string;       // URL to voiceover audio (for reassembly)
+  scenes?: LongformScene[];    // individual scene clips (for editor)
+  scriptText?: string;         // full script text (for re-captioning)
 }

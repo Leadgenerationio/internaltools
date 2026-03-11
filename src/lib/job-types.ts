@@ -101,6 +101,9 @@ export interface LongformJobData {
   /** Skip AI b-roll generation */
   skipBroll: boolean;
 
+  /** kie.ai model ID for b-roll clips (default: veo3_fast) */
+  videoModel?: string;
+
   /** Optional pre-filmed hook clip path */
   hookClipPath?: string;
 
@@ -113,6 +116,41 @@ export interface LongformJobResult {
   failed: number;
   tokensUsed: number;
   warning?: string;
+}
+
+// ─── Longform Scene Regeneration Job ────────────────────────────────────────
+
+export interface LongformSceneRegenData {
+  companyId: string;
+  userId: string;
+  prompt: string;
+  videoModel: string;
+  tokenCost: number;
+}
+
+export interface LongformSceneRegenResult {
+  clipUrl: string;
+  clipFilename: string;
+  durationSeconds: number;
+  prompt: string;
+  tokensUsed: number;
+}
+
+// ─── Longform Reassemble Job ────────────────────────────────────────────────
+
+export interface LongformReassembleData {
+  companyId: string;
+  userId: string;
+  scenes: Array<{ clipUrl: string; order: number; prompt: string }>;
+  voiceoverUrl: string;
+  captionConfig: CaptionConfig;
+  scriptText: string;
+}
+
+export interface LongformReassembleResult {
+  videoUrl: string;
+  durationSeconds: number;
+  captioned: boolean;
 }
 
 // ─── Job Status (returned by /api/jobs/[id]) ─────────────────────────────────

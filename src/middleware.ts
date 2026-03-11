@@ -25,6 +25,8 @@ const RATE_LIMITS: Record<string, { maxRequests: number; windowMs: number }> = {
   '/api/integrations/google-drive/export': { maxRequests: 5, windowMs: 60_000 },
   '/api/music-library': { maxRequests: 30, windowMs: 60_000 },
   '/api/music-library/download': { maxRequests: 10, windowMs: 60_000 },
+  '/api/longform/regenerate-scene': { maxRequests: 3, windowMs: 60_000 },
+  '/api/longform/reassemble': { maxRequests: 5, windowMs: 60_000 },
 };
 
 function getClientIp(request: NextRequest): string {

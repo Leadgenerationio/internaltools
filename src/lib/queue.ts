@@ -12,7 +12,9 @@ import type { RenderJobData, VideoGenJobData, LongformJobData } from '@/lib/job-
 
 let renderQueue: Queue<RenderJobData> | null = null;
 let videoGenQueue: Queue<VideoGenJobData> | null = null;
-let longformQueue: Queue<LongformJobData> | null = null;
+// Longform queue handles multiple job types (video, scene-regen, reassemble)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let longformQueue: Queue<any> | null = null;
 
 /**
  * Get the render queue. Returns null if Redis unavailable.
@@ -46,13 +48,13 @@ export function getVideoGenQueue(): Queue<VideoGenJobData> | null {
  * Get the longform video queue. Returns null if Redis unavailable.
  * Each queue gets its own dedicated Redis connection (BullMQ requirement).
  */
-export function getLongformQueue(): Queue<LongformJobData> | null {
+export function getLongformQueue(): Queue | null {
   if (longformQueue) return longformQueue;
 
   const connection = createRedisConnection();
   if (!connection) return null;
 
-  longformQueue = new Queue<LongformJobData>('longform', { connection: connection as any });
+  longformQueue = new Queue('longform', { connection: connection as any });
   return longformQueue;
 }
 
