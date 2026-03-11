@@ -37,7 +37,9 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 │  ┌── /create/longform-video ─────────────────────────────────┐      │
 │  │ ┌──────┐ ┌────────┐ ┌──────────┐ ┌───────┐ ┌──────────┐ │      │
 │  │ │Brief │→│Scripts │→│Voiceover │→│B-Roll │→│Stitch +  │ │      │
-│  │ │      │ │(Claude)│ │(11Labs)  │ │(kie)  │ │Caption   │ │      │
+│  │ │      │ │(Claude)│ │(11Labs)  │ │(kie)  │ │Caption + │ │      │
+│  │ │      │ │        │ │          │ │model  │ │Scene     │ │      │
+│  │ │      │ │        │ │          │ │select │ │Editor    │ │      │
 │  │ └──────┘ └────────┘ └──────────┘ └───────┘ └──────────┘ │      │
 │  └───────────────────────────────────────────────────────────┘      │
 │       │              │              │              │                    │
@@ -83,9 +85,9 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 | Video processing | FFmpeg (shell exec) | Compositing, scaling, audio mixing |
 | Overlay rendering | @napi-rs/canvas | Text-to-PNG with emoji support |
 | AI copy generation | Anthropic SDK (Claude Sonnet) | TOFU/MOFU/BOFU ad scripts |
-| AI video generation | kie.ai REST API (Seedance, Kling, Veo, Sora) | Optional AI background videos + longform b-roll |
+| AI video generation | kie.ai REST API (Seedance 1.5, Kling 2.6, Veo 3.1 Fast/Quality, Sora 2/Pro) | Optional AI background videos + longform b-roll (user-selectable model with dynamic token pricing) |
 | Voiceover | ElevenLabs TTS API | Text-to-speech for longform video scripts |
-| Captioning | Submagic API | Auto-captions for longform video output |
+| Captioning | Built-in ASS subtitles (FFmpeg) / Submagic API fallback | Auto-captions for longform video — built-in captioning estimates word timing from voiceover duration and burns ASS subtitles via FFmpeg; Submagic used when S3 is configured |
 | Background jobs | BullMQ + Redis (ioredis) | Async render + video gen + longform pipeline, survives page refresh |
 | Token billing | Prisma transactions | Atomic token deduction/credit, append-only ledger, budget alerts |
 | Payments | Stripe (Checkout + Customer Portal) | Subscriptions, one-time token top-ups, webhook handling |
@@ -117,7 +119,7 @@ Users are billed in tokens, not raw API costs. This abstracts away internal cost
   - Ad copy generation = **FREE** (0 tokens) — users can create and regenerate unlimited ad scripts
   - 1 finished ad video = **1 token** (using own uploaded background video)
   - 1 AI-generated video (kie.ai) = **3-25 tokens** depending on model (Seedance: 3, Sora 2: 3, Veo Fast: 5, Sora Pro: 5, Kling: 7, Veo Quality: 25)
-  - 1 longform video variant with b-roll = **35 tokens**, without b-roll = **10 tokens**
+  - 1 longform video variant = **base 5 tokens** + (clipCount x model token cost) for b-roll. Model selection: Seedance 1.5 (3), Kling 2.6 (7), Veo 3.1 Fast (5), Sora 2 (3), Sora 2 Pro (5), Veo 3.1 Quality (25). Without b-roll = **5 tokens**.
   - Longform script generation = **FREE** (0 tokens)
 - **Plan tiers**: FREE (40 tokens/mo), STARTER (500 tokens/mo, £29), PRO (2,500 tokens/mo, £99), ENTERPRISE (custom)
 - **Top-ups**: Paid plans can purchase additional token packages (Small/Medium/Large at plan-specific per-token rates)
@@ -292,7 +294,9 @@ src/
 │       ├── longform/
 │       │   ├── generate-scripts/route.ts # Claude API → longform video scripts (FREE)
 │       │   ├── voices/route.ts          # ElevenLabs voice listing (cached)
-│       │   └── generate/route.ts        # Longform pipeline trigger → enqueues BullMQ longform job
+│       │   ├── generate/route.ts        # Longform pipeline trigger → enqueues BullMQ longform job
+│       │   ├── regenerate-scene/route.ts # Regenerate a single scene clip (new prompt or upload replacement)
+│       │   └── reassemble/route.ts      # Re-stitch edited scenes into final longform video
 │       ├── generate-ads/route.ts     # Claude API → ad copy (+ cost tracking)
 │       ├── generate-video/route.ts   # kie.ai → AI videos — enqueues BullMQ job or falls back to sync
 │       ├── render/route.ts           # FFmpeg batch render — enqueues BullMQ job or falls back to sync
@@ -352,15 +356,17 @@ src/
 │   ├── job-types.ts                  # Type-safe job payloads (RenderJobData, VideoGenJobData, LongformJobData, JobStatus)
 │   ├── email-queue.ts                # BullMQ email queue with fallback to direct send
 │   ├── poll-job.ts                   # Client-side job polling with exponential backoff (max 20min for longform)
-│   ├── longform-types.ts             # Types for the longform video pipeline
+│   ├── longform-types.ts             # Types for the longform video pipeline (LongformScene, LongformSceneRegenData, LongformReassembleData)
+│   ├── kie-api.ts                    # Shared kie.ai API helpers (submit, poll, download — used by video-gen + longform)
 │   ├── elevenlabs.ts                 # ElevenLabs TTS client (text-to-speech)
 │   ├── submagic.ts                   # Submagic captioning client (auto-captions)
-│   └── longform-stitcher.ts          # FFmpeg video assembly for longform output
+│   ├── longform-captions.ts          # Built-in captioning: estimates word timing, generates ASS subtitles, burns via FFmpeg (fallback when S3/Submagic not configured)
+│   └── longform-stitcher.ts          # FFmpeg video assembly for longform output (loops b-roll via -stream_loop -1 to match voiceover duration)
 ├── workers/
 │   ├── index.ts                      # Worker entry point (starts all BullMQ workers)
 │   ├── render-worker.ts              # Render job processor (FFmpeg, uploads, notifications)
 │   ├── video-gen-worker.ts           # Video gen job processor (kie.ai, download, thumbnail)
-│   ├── longform-worker.ts            # Longform pipeline processor (voiceover→b-roll→stitch→caption, concurrency: 1)
+│   ├── longform-worker.ts            # Longform pipeline processor — handles 3 job types on one queue: longform-video (full pipeline), longform-scene-regen (single scene), longform-reassemble (re-stitch edited scenes). Concurrency: 1.
 │   └── email-worker.ts              # Email job processor (3 retries, exponential backoff)
 ├── prisma/
 │   ├── schema.prisma                 # Data models: Company, User, Session, ApiUsage, SupportTicket, TicketMessage, AdminAuditLog, Notification, ProjectTemplate, PasswordResetToken, ProcessedWebhookEvent, SpendAlertLog
@@ -388,6 +394,51 @@ src/
 ### Why Canvas PNGs instead of FFmpeg drawtext?
 FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to PNG with @napi-rs/canvas (which uses system emoji fonts), we get full emoji support. The PNGs are then composited using FFmpeg's `overlay` filter.
 
+## Longform Video Pipeline
+
+5-step wizard at `/create/longform-video`: Brief → Scripts → Voiceover → B-Roll → Stitch + Caption.
+
+### Pipeline stages
+1. **Brief** — User enters topic, target audience, desired length
+2. **Scripts** — Claude generates scene-by-scene script (FREE, 0 tokens)
+3. **Voiceover** — ElevenLabs TTS generates audio from script (user selects voice)
+4. **B-Roll** — AI-generated clips via kie.ai. User selects from 6 models: Seedance 1.5, Kling 2.6, Veo 3.1 Fast, Sora 2, Sora 2 Pro, Veo 3.1 Quality. Dynamic token pricing: base 5 tokens + (clipCount x model tokenCost). Or skip b-roll for flat 5 tokens.
+5. **Stitch + Caption** — FFmpeg assembles voiceover + b-roll into final video, then adds captions
+
+### Video stitching
+The longform stitcher (`src/lib/longform-stitcher.ts`) loops b-roll clips to match voiceover duration using FFmpeg `-stream_loop -1` instead of `-shortest`. This ensures the final video matches the full voiceover length even when individual b-roll clips are shorter than their corresponding scene audio.
+
+### Built-in captioning
+`src/lib/longform-captions.ts` provides a captioning pipeline that does not require external services:
+1. Estimates word timing by dividing voiceover duration proportionally across words in the script
+2. Generates an ASS (Advanced SubStation Alpha) subtitle file with timed word groups
+3. Burns subtitles into the video via FFmpeg's `ass` filter
+
+This is the primary captioning method. Submagic API is used as an alternative when S3 storage is configured (Submagic requires a publicly accessible URL for the video).
+
+### Post-generation scene editor
+After the initial pipeline completes, `LongformResultItem` includes `scenes[]` (individual scene clips), `voiceoverUrl`, and `scriptText`. Users can:
+- **View** individual scene clips with their prompts
+- **Regenerate** a scene with a new prompt (via `/api/longform/regenerate-scene`, costs model tokens)
+- **Replace** a scene with an uploaded clip (no token cost)
+- **Remove** scenes from the final output
+- **Re-assemble** the edited scenes into a new final video (via `/api/longform/reassemble`)
+
+### Worker job routing
+The longform worker (`src/workers/longform-worker.ts`) handles 3 job types on a single BullMQ queue, routed by job name:
+- `longform-video` — Full pipeline (voiceover → b-roll generation → stitch → caption)
+- `longform-scene-regen` — Regenerate a single scene (new kie.ai generation or accept uploaded clip)
+- `longform-reassemble` — Re-stitch edited scenes array into a new final video with captions
+
+### Key files
+- `src/lib/longform-types.ts` — `LongformScene`, `LongformSceneRegenData`, `LongformReassembleData`, updated `LongformResultItem`
+- `src/lib/longform-stitcher.ts` — FFmpeg assembly with `-stream_loop -1` for b-roll looping
+- `src/lib/longform-captions.ts` — Built-in ASS subtitle generation + FFmpeg burn-in
+- `src/lib/kie-api.ts` — Shared kie.ai API helpers (submit job, poll status, download result)
+- `src/workers/longform-worker.ts` — Multi-job-type worker (longform-video, scene-regen, reassemble)
+- `src/app/api/longform/regenerate-scene/route.ts` — Scene regeneration endpoint
+- `src/app/api/longform/reassemble/route.ts` — Scene re-assembly endpoint
+
 ## Background Job System (BullMQ)
 
 Long-running operations (render, video generation) are processed asynchronously via BullMQ when Redis is available. This prevents HTTP timeouts and survives page refreshes.
@@ -407,7 +458,10 @@ Redis (BullMQ queue)
 Worker Service (separate Railway instance, WORKER_MODE=true)
   ├── render-worker (concurrency: 2) — FFmpeg render, upload, email, notification
   ├── video-gen-worker (concurrency: 2) — kie.ai submit, poll, download, thumbnail
-  └── longform-worker (concurrency: 1) — voiceover, b-roll, stitch, caption pipeline
+  └── longform-worker (concurrency: 1) — routes by job name:
+        ├── longform-video: full pipeline (voiceover→b-roll→stitch→caption)
+        ├── longform-scene-regen: regenerate single scene (new prompt or upload)
+        └── longform-reassemble: re-stitch edited scenes into final video
   │
   ▼
 Client polls /api/jobs/[id]?type=render|video-gen|longform
@@ -423,7 +477,7 @@ Job completed → results shown
 - `src/workers/index.ts` — Worker entry point
 - `src/workers/render-worker.ts` — Render job processor
 - `src/workers/video-gen-worker.ts` — Video gen job processor
-- `src/workers/longform-worker.ts` — Longform pipeline processor (voiceover→b-roll→stitch→caption)
+- `src/workers/longform-worker.ts` — Longform pipeline processor (3 job types: longform-video, longform-scene-regen, longform-reassemble)
 - `src/app/api/jobs/[id]/route.ts` — Job status polling endpoint (supports render, video-gen, longform queues)
 
 ### Graceful degradation
@@ -438,6 +492,10 @@ When `REDIS_URL` is not configured, all operations fall back to synchronous in-r
 - `TextStyle` — fontSize, fontWeight, textColor, bgColor, bgOpacity, borderRadius, padding, maxWidth, textAlign
 - `UploadedVideo` — id, filename, path, duration, width, height, thumbnail, trimStart?, trimEnd?
 - `MusicTrack` — id, name, file, volume, fadeIn, fadeOut
+- `LongformResultItem` — scenes[], voiceoverUrl, scriptText (plus output path, thumbnail, etc.)
+- `LongformScene` — sceneIndex, clipPath, prompt, duration
+- `LongformSceneRegenData` — data for regenerating a single scene (new prompt or uploaded clip)
+- `LongformReassembleData` — data for re-stitching edited scenes into final video
 
 ### State (all in page.tsx)
 - `step` — which wizard step is active
@@ -504,7 +562,9 @@ When `REDIS_URL` is not configured, all operations fall back to synchronous in-r
 | `/api/jobs/[id]` | GET | Poll background job status (state, progress, result) | default | required (company-scoped) |
 | `/api/longform/generate-scripts` | POST | Generate longform video scripts via Claude (FREE, 0 tokens) | 60s | required |
 | `/api/longform/voices` | GET | List ElevenLabs voices (cached) | default | required |
-| `/api/longform/generate` | POST | Trigger longform pipeline (10-35 tokens/variant) — enqueues BullMQ longform job | default | required + token deduction |
+| `/api/longform/generate` | POST | Trigger longform pipeline (5+ tokens/variant, dynamic by model) — enqueues BullMQ longform job | default | required + token deduction |
+| `/api/longform/regenerate-scene` | POST | Regenerate a single scene clip with new prompt or replace with upload | default | required + token deduction |
+| `/api/longform/reassemble` | POST | Re-stitch edited scenes (remove/reorder/replace) into final longform video | default | required |
 | `/api/generate-ads` | POST | Generate ad copy via Claude (FREE, 0 tokens) | 60s | required |
 | `/api/generate-video` | POST | Generate video via kie.ai (3-25 tokens/video by model) — enqueues BullMQ job if Redis available | 300s | required + token deduction |
 | `/api/upload` | POST | Upload video files (max 500MB each, streams to disk) | 60s | required |
