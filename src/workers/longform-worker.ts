@@ -235,13 +235,38 @@ async function processLongformJob(job: Job<LongformJobData>): Promise<LongformJo
 
         await job.updateProgress(Math.round(baseProgress + variantWeight * 0.95));
 
-        // ── Finalize: Move to outputs ────────────────────────────────
+        // ── Finalize: Upload to web app or save locally ─────────────
         const outputId = crypto.randomUUID();
         const outputFilename = `longform_${variant}_${outputId}.mp4`;
-        const outputPath = path.join(OUTPUT_DIR, outputFilename);
-        await fs.copyFile(finalVideoPath, outputPath);
 
-        const duration = await getMediaDuration(outputPath).catch(() => 30);
+        const duration = await getMediaDuration(finalVideoPath).catch(() => 30);
+
+        // If running as a separate worker service, upload to web app's volume
+        const appUrl = process.env.RAILWAY_SERVICE_INTERNALTOOLS_URL || process.env.APP_INTERNAL_URL;
+        if (appUrl && process.env.AUTH_SECRET) {
+          const baseUrl = appUrl.startsWith('http') ? appUrl : `http://${appUrl}`;
+          const uploadUrl = `${baseUrl}/api/internal/upload-output`;
+          const fileBuffer = await fs.readFile(finalVideoPath);
+          const uploadRes = await fetch(uploadUrl, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${process.env.AUTH_SECRET}`,
+              'x-filename': outputFilename,
+              'Content-Type': 'application/octet-stream',
+            },
+            body: fileBuffer,
+          });
+          if (!uploadRes.ok) {
+            const errBody = await uploadRes.text().catch(() => '');
+            logger.warn(`[Longform] Upload to app failed (${uploadRes.status}): ${errBody}, saving locally`);
+            // Fallback: save locally
+            await fs.copyFile(finalVideoPath, path.join(OUTPUT_DIR, outputFilename));
+          }
+        } else {
+          // Local dev or same-process: just copy to outputs
+          await fs.mkdir(OUTPUT_DIR, { recursive: true });
+          await fs.copyFile(finalVideoPath, path.join(OUTPUT_DIR, outputFilename));
+        }
 
         results.push({
           variant: script.variant,

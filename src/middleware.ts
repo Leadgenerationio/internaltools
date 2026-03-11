@@ -103,7 +103,7 @@ const USE_SECURE_COOKIE = process.env.NODE_ENV === 'production';
 
 // ─── Public Routes (no auth required) ───────────────────────────────────────
 
-const PUBLIC_ROUTES = ['/login', '/register', '/welcome', '/reset-password', '/suspended', '/api/auth', '/api/health', '/api/webhooks', '/api/integrations/google-drive/callback', '/api/admin/cleanup', '/privacy', '/terms', '/help'];
+const PUBLIC_ROUTES = ['/login', '/register', '/welcome', '/reset-password', '/suspended', '/api/auth', '/api/health', '/api/webhooks', '/api/integrations/google-drive/callback', '/api/admin/cleanup', '/api/internal', '/privacy', '/terms', '/help'];
 
 function isPublicRoute(pathname: string): boolean {
   return PUBLIC_ROUTES.some((route) => pathname.startsWith(route));
