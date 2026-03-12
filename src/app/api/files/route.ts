@@ -44,63 +44,121 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Access denied' }, { status: 403 });
   }
 
+  const ext = path.extname(fullPath).toLowerCase();
+  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+
+  // Try local file first
   try {
     const fileStat = await stat(fullPath);
-    if (!fileStat.isFile()) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    if (fileStat.isFile()) {
+      return serveLocalFile(request, fullPath, contentType, fileStat.size);
     }
+  } catch {
+    // File not on local disk — try S3 fallback
+  }
 
-    const ext = path.extname(fullPath).toLowerCase();
-    const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-    const fileSize = fileStat.size;
+  // Fallback: fetch from S3 if cloud storage is configured
+  return serveFromS3(normalized, contentType);
+}
 
-    // Parse Range header for partial content (video seeking)
-    const rangeHeader = request.headers.get('range');
+/**
+ * Serve a local file with Range header support.
+ */
+function serveLocalFile(
+  request: NextRequest,
+  fullPath: string,
+  contentType: string,
+  fileSize: number,
+): NextResponse {
+  const rangeHeader = request.headers.get('range');
 
-    if (rangeHeader) {
-      const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
-      if (!match) {
-        return new NextResponse(null, {
-          status: 416,
-          headers: { 'Content-Range': `bytes */${fileSize}` },
-        });
-      }
-
-      const start = parseInt(match[1], 10);
-      const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
-
-      if (start >= fileSize || end >= fileSize || start > end) {
-        return new NextResponse(null, {
-          status: 416,
-          headers: { 'Content-Range': `bytes */${fileSize}` },
-        });
-      }
-
-      const chunkSize = end - start + 1;
-      const nodeStream = createReadStream(fullPath, { start, end });
-      const webStream = nodeStreamToWeb(nodeStream);
-
-      return new NextResponse(webStream, {
-        status: 206,
-        headers: {
-          'Content-Type': contentType,
-          'Content-Length': String(chunkSize),
-          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-          'Accept-Ranges': 'bytes',
-          'Cache-Control': 'public, max-age=3600',
-        },
+  if (rangeHeader) {
+    const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+    if (!match) {
+      return new NextResponse(null, {
+        status: 416,
+        headers: { 'Content-Range': `bytes */${fileSize}` },
       });
     }
 
-    // Full file — stream instead of readFile
-    const nodeStream = createReadStream(fullPath);
+    const start = parseInt(match[1], 10);
+    const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
+
+    if (start >= fileSize || end >= fileSize || start > end) {
+      return new NextResponse(null, {
+        status: 416,
+        headers: { 'Content-Range': `bytes */${fileSize}` },
+      });
+    }
+
+    const chunkSize = end - start + 1;
+    const nodeStream = createReadStream(fullPath, { start, end });
     const webStream = nodeStreamToWeb(nodeStream);
+
+    return new NextResponse(webStream, {
+      status: 206,
+      headers: {
+        'Content-Type': contentType,
+        'Content-Length': String(chunkSize),
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'public, max-age=3600',
+      },
+    });
+  }
+
+  const nodeStream = createReadStream(fullPath);
+  const webStream = nodeStreamToWeb(nodeStream);
+
+  return new NextResponse(webStream, {
+    headers: {
+      'Content-Type': contentType,
+      'Content-Length': String(fileSize),
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'public, max-age=3600',
+    },
+  });
+}
+
+/**
+ * Fetch a file from S3 and proxy it back to the client.
+ * Used when the file doesn't exist on local disk (e.g., worker uploaded to S3).
+ */
+async function serveFromS3(storagePath: string, contentType: string): Promise<NextResponse> {
+  const bucket = process.env.S3_BUCKET;
+  const endpoint = process.env.S3_ENDPOINT;
+  const accessKey = process.env.S3_ACCESS_KEY_ID;
+  const secretKey = process.env.S3_SECRET_ACCESS_KEY;
+
+  if (!bucket || !endpoint || !accessKey || !secretKey) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+
+  try {
+    const { S3Client, GetObjectCommand } = await import('@aws-sdk/client-s3');
+    const client = new S3Client({
+      endpoint,
+      region: process.env.S3_REGION || 'auto',
+      credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
+      forcePathStyle: true,
+    });
+
+    const response = await client.send(new GetObjectCommand({
+      Bucket: bucket,
+      Key: storagePath,
+    }));
+
+    if (!response.Body) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
+    // Convert S3 body stream to web ReadableStream
+    const webStream = response.Body.transformToWebStream();
 
     return new NextResponse(webStream, {
       headers: {
         'Content-Type': contentType,
-        'Content-Length': String(fileSize),
-        'Accept-Ranges': 'bytes',
+        ...(response.ContentLength ? { 'Content-Length': String(response.ContentLength) } : {}),
         'Cache-Control': 'public, max-age=3600',
       },
     });
