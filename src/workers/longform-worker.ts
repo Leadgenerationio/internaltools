@@ -40,9 +40,25 @@ const TEMP_BASE = path.join(process.cwd(), 'public', 'outputs', 'longform_temp')
 const DEFAULT_BROLL_MODEL = 'veo3_fast';
 const MAX_BROLL_CLIPS = 5; // more clips = better coverage of longer scripts
 
-// ─── File upload helper (worker → web app) ──────────────────────────────────
+// ─── File upload helper (worker → S3 or web app) ────────────────────────────
 
 async function uploadToApp(localPath: string, filename: string): Promise<void> {
+  // Prefer S3 when configured — files get a public URL and are accessible everywhere
+  try {
+    const { isCloudStorage, uploadFile } = await import('@/lib/storage');
+    if (isCloudStorage) {
+      // Copy file before uploading because uploadFile deletes the local file,
+      // but we may still need it for assembly later in the pipeline.
+      const tmpCopy = localPath + '.s3upload.tmp';
+      await fs.copyFile(localPath, tmpCopy);
+      await uploadFile(tmpCopy, `outputs/${filename}`);
+      return;
+    }
+  } catch {
+    // storage module not available — fall through to internal upload
+  }
+
+  // Fallback: upload to web app's local filesystem via internal API
   const appUrl = process.env.APP_INTERNAL_URL || process.env.RAILWAY_SERVICE_INTERNALTOOLS_URL;
   const isWorkerMode = process.env.WORKER_MODE === 'true';
 
