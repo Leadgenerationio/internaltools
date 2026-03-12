@@ -40,11 +40,12 @@ async function getS3Client() {
   const { S3Client } = await import('@aws-sdk/client-s3');
   s3Client = new S3Client({
     endpoint: S3_ENDPOINT,
-    region: 'auto',
+    region: process.env.S3_REGION || 'auto',
     credentials: {
       accessKeyId: S3_ACCESS_KEY_ID!,
       secretAccessKey: S3_SECRET_ACCESS_KEY!,
     },
+    forcePathStyle: true, // Required for Supabase Storage S3 compatibility
   });
   return s3Client;
 }
