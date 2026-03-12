@@ -39,6 +39,25 @@ const BROLL_MODELS = [
   { id: 'veo3', label: 'Veo 3.1 Quality', badge: 'Premium', duration: 8, tokenCost: 25 },
 ];
 
+/**
+ * Normalize a video URL: convert external Supabase/S3 URLs to /api/files proxy.
+ * This ensures videos play regardless of bucket RLS policies.
+ */
+function normalizeVideoUrl(url: string): string {
+  if (!url) return url;
+  // Already an /api/files URL — leave it
+  if (url.startsWith('/api/files')) return url;
+  // Relative URL — leave it
+  if (url.startsWith('/')) return url;
+  // External Supabase URL — extract path and proxy through /api/files
+  const match = url.match(/\/object\/public\/[^/]+\/(.+)$/);
+  if (match) return `/api/files?path=${encodeURIComponent(match[1])}`;
+  // Other S3 URL patterns — try to extract outputs/ or longform/ path
+  const pathMatch = url.match(/(outputs\/[^\s?#]+|longform\/[^\s?#]+)/);
+  if (pathMatch) return `/api/files?path=${encodeURIComponent(pathMatch[1])}`;
+  return url;
+}
+
 export default function LongformVideoPage() {
   const { status } = useSession();
   const router = useRouter();
@@ -1315,9 +1334,9 @@ export default function LongformVideoPage() {
                       <span>{Math.round(r.durationSeconds)}s</span>
                     </div>
                   </div>
-                  <video src={r.videoUrl} controls className="w-full max-w-sm rounded-lg bg-black mx-auto" preload="metadata" />
+                  <video src={normalizeVideoUrl(r.videoUrl)} controls className="w-full max-w-sm rounded-lg bg-black mx-auto" preload="metadata" />
                   <div className="mt-3 flex gap-2 justify-center flex-wrap">
-                    <a href={r.videoUrl} download={`longform_${r.variant}.mp4`}
+                    <a href={normalizeVideoUrl(r.videoUrl)} download={`longform_${r.variant}.mp4`}
                       className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors">
                       Download
                     </a>
@@ -1402,7 +1421,7 @@ export default function LongformVideoPage() {
                   <div className="flex gap-4 flex-col sm:flex-row">
                     {/* Video preview */}
                     <div className="sm:w-48 shrink-0 relative">
-                      <video src={scene.clipUrl} controls className="w-full rounded-lg bg-black aspect-[9/16] object-cover" preload="metadata" />
+                      <video src={normalizeVideoUrl(scene.clipUrl)} controls className="w-full rounded-lg bg-black aspect-[9/16] object-cover" preload="metadata" />
                       {isLoading && (
                         <div className="absolute inset-0 bg-black/60 rounded-lg flex items-center justify-center">
                           <div className="w-10 h-10 border-3 border-blue-400 border-t-transparent rounded-full animate-spin" />
