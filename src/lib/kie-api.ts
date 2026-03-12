@@ -18,6 +18,28 @@ const KIE_API_BASE = 'https://api.kie.ai/api/v1';
 const POLL_INTERVAL_MS = 15_000;
 const MAX_POLL_TIME_MS = 10 * 60 * 1000; // 10 minutes
 
+// ─── Rate limit throttle ─────────────────────────────────────────────────────
+// kie.ai allows 20 requests per 10 seconds. We track submission timestamps
+// and wait if we'd exceed the limit.
+const RATE_WINDOW_MS = 10_000;
+const MAX_REQUESTS_PER_WINDOW = 18; // leave 2 buffer for polling
+const submitTimestamps: number[] = [];
+
+async function throttleSubmit(): Promise<void> {
+  const now = Date.now();
+  // Remove timestamps outside the window
+  while (submitTimestamps.length > 0 && submitTimestamps[0] < now - RATE_WINDOW_MS) {
+    submitTimestamps.shift();
+  }
+  if (submitTimestamps.length >= MAX_REQUESTS_PER_WINDOW) {
+    const waitUntil = submitTimestamps[0] + RATE_WINDOW_MS;
+    const delay = waitUntil - now + 500; // +500ms safety buffer
+    logger.info(`[kie-api] Throttling: waiting ${(delay / 1000).toFixed(1)}s to avoid rate limit`);
+    await new Promise((r) => setTimeout(r, delay));
+  }
+  submitTimestamps.push(Date.now());
+}
+
 // ─── Market API ──────────────────────────────────────────────────────────────
 
 export function buildMarketInput(
@@ -68,6 +90,7 @@ export async function submitAndPollMarket(
   aspectRatio: string,
   includeSound: boolean,
 ): Promise<string[]> {
+  await throttleSubmit();
   const submitRes = await fetch(`${KIE_API_BASE}/jobs/createTask`, {
     method: 'POST',
     headers: {
@@ -133,6 +156,7 @@ export async function submitAndPollVeo(
   prompt: string,
   aspectRatio: string,
 ): Promise<string[]> {
+  await throttleSubmit();
   const submitRes = await fetch(`${KIE_API_BASE}/veo/generate`, {
     method: 'POST',
     headers: {
@@ -193,11 +217,12 @@ export async function submitAndPollVeo(
 
 const FALLBACK_MODELS = ['veo3_fast', 'bytedance/seedance-1.5-pro', 'kling-2.6/text-to-video'];
 
-function isCapacityError(message: string): boolean {
+function isRetriableError(message: string): boolean {
   const lower = message.toLowerCase();
   return lower.includes('heavy load') || lower.includes('not responding')
     || lower.includes('capacity') || lower.includes('overloaded')
-    || lower.includes('temporarily unavailable') || lower.includes('service busy');
+    || lower.includes('temporarily unavailable') || lower.includes('service busy')
+    || lower.includes('rate limited') || lower.includes('429');
 }
 
 // ─── Single-model clip generation ───────────────────────────────────────────
@@ -255,24 +280,38 @@ export async function generateVideoClip(
     return null;
   }
 
-  // Try the requested model first
+  // Try the requested model first (with one retry on rate limit)
   try {
     return await generateClipWithModel(apiKey, model, prompt, aspectRatio, outputPath);
   } catch (err: any) {
     logger.warn(`[kie-api] Primary model failed`, { model: modelId, error: err.message });
 
-    // Only try fallbacks for capacity/load errors
-    if (!isCapacityError(err.message)) {
+    // On rate limit, wait and retry the same model once
+    if (err.message.includes('Rate limited') || err.message.includes('429')) {
+      logger.info(`[kie-api] Rate limited — waiting 12s before retry`);
+      await new Promise((r) => setTimeout(r, 12_000));
+      try {
+        return await generateClipWithModel(apiKey, model, prompt, aspectRatio, outputPath);
+      } catch (retryErr: any) {
+        logger.warn(`[kie-api] Retry after rate limit also failed`, { error: retryErr.message });
+      }
+    }
+
+    // Only try fallbacks for retriable errors (capacity, overload, rate limit)
+    if (!isRetriableError(err.message)) {
       return null;
     }
   }
 
-  // Try fallback models
+  // Try fallback models (with delay between attempts)
   for (const fallbackId of FALLBACK_MODELS) {
     if (fallbackId === modelId) continue; // skip the one we already tried
 
     const fallback = VIDEO_MODELS.find((m) => m.id === fallbackId);
     if (!fallback) continue;
+
+    // Brief delay before trying next model to avoid rate limit cascade
+    await new Promise((r) => setTimeout(r, 2_000));
 
     logger.info(`[kie-api] Trying fallback model: ${fallback.label}`);
     try {
