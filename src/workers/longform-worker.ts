@@ -446,22 +446,26 @@ async function processReassemble(job: Job<LongformReassembleData>): Promise<Long
     let finalPath = rawPath;
     let captioned = false;
 
-    if (captionConfig.enabled && process.env.SUBMAGIC_API_KEY) {
-      const publicUrl = await getPublicUrl(rawPath);
-      if (publicUrl) {
-        try {
-          const captionDir = path.join(tempDir, 'captions');
-          await fs.mkdir(captionDir, { recursive: true });
-          const captionedPath = path.join(captionDir, 'captioned.mp4');
-          await captionVideo(publicUrl, captionedPath, captionConfig, 'Longform - Reassembled');
-          finalPath = captionedPath;
-          captioned = true;
-        } catch (err: any) {
-          logger.warn('[Longform] Reassemble captioning failed', { error: err.message });
-        }
-      } else {
-        logger.warn('[Longform] Reassemble: skipping captions — no public URL');
+    if (captionConfig.enabled) {
+      if (!process.env.SUBMAGIC_API_KEY) {
+        throw new Error('Captions enabled but SUBMAGIC_API_KEY is not configured. Disable captions or contact admin.');
       }
+
+      logger.info('[Longform] Uploading video for Submagic captioning...');
+      const publicUrl = await getPublicUrl(rawPath);
+      if (!publicUrl) {
+        throw new Error('Captions require cloud storage (S3/R2) to generate a public URL. Configure S3_BUCKET, S3_REGION, and S3_ACCESS_KEY_ID environment variables.');
+      }
+
+      logger.info(`[Longform] Sending to Submagic (template: ${captionConfig.template})...`);
+      const captionDir = path.join(tempDir, 'captions');
+      await fs.mkdir(captionDir, { recursive: true });
+      const captionedPath = path.join(captionDir, 'captioned.mp4');
+
+      await captionVideo(publicUrl, captionedPath, captionConfig, 'Longform - Reassembled');
+      finalPath = captionedPath;
+      captioned = true;
+      logger.info('[Longform] Submagic captioning complete');
     }
 
     await job.updateProgress(90);

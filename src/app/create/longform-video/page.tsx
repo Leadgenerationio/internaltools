@@ -1328,29 +1328,37 @@ export default function LongformVideoPage() {
             </div>
 
             {/* Finalize */}
-            <div className="flex gap-3 items-center">
+            {reassembling && (
+              <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-5 text-center space-y-3">
+                <div className="flex items-center justify-center gap-3">
+                  <span className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-white font-medium">
+                    {reassembleProgress < 40 ? 'Downloading scenes...' :
+                     reassembleProgress < 70 ? 'Stitching video...' :
+                     reassembleProgress < 90 ? 'Adding captions via Submagic...' :
+                     'Uploading final video...'}
+                  </span>
+                </div>
+                <div className="w-full bg-gray-800 rounded-full h-2 max-w-xs mx-auto">
+                  <div className="bg-blue-500 h-2 rounded-full transition-all duration-500" style={{ width: `${reassembleProgress}%` }} />
+                </div>
+                <p className="text-xs text-gray-500">{reassembleProgress}% complete</p>
+              </div>
+            )}
+
+            <div className="flex gap-3 items-center flex-wrap">
               <button onClick={() => { setStep('results'); setEditingIndex(null); setGenerateError(null); }}
                 className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
                 Back to Results
               </button>
               <button onClick={handleReassemble} disabled={reassembling || Object.values(sceneRegenState).some(s => s.loading)}
                 className="px-8 py-2.5 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors">
-                {reassembling ? (
-                  <span className="flex items-center gap-2">
-                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Processing ({reassembleProgress}%)...
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                    Finalize with Captions
-                  </span>
-                )}
+                {captionConfig.enabled ? 'Finalize with Captions' : 'Finalize Video'}
               </button>
             </div>
             {captionConfig.enabled && (
               <p className="text-xs text-gray-500">
-                Caption style: <span className="text-gray-300">{captionConfig.template}</span> — powered by Submagic
+                Caption style: <span className="text-gray-300">{captionConfig.template}</span> — powered by Submagic. Requires S3/cloud storage.
               </p>
             )}
           </div>
