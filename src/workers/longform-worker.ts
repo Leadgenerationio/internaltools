@@ -234,8 +234,8 @@ async function processLongformJob(job: Job<LongformJobData>): Promise<LongformJo
 
         await job.updateProgress(Math.round(baseProgress + variantWeight * 0.60));
 
-        if (brollClips.length === 0) {
-          throw new Error(`All AI video models are currently unavailable. Please try again in a few minutes or select a different model.`);
+        if (brollClips.length === 0 && !skipBroll) {
+          throw new Error(`All AI video models are currently unavailable for variant [${script.variant}]. Try again later or generate without b-roll.`);
         }
 
         // ── Stage 3: Stitch (60-75% of variant) ─────────────────────

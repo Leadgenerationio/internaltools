@@ -1264,6 +1264,19 @@ export default function LongformVideoPage() {
                       Try Again
                     </button>
                   )}
+                  {generateError && (generateError.includes('video models') || generateError.includes('No video clips') || generateError.includes('unavailable')) && !skipBroll && (
+                    <button onClick={() => {
+                      setSkipBroll(true);
+                      setGenerateError(null);
+                      setProgress(0);
+                      setJobId(null);
+                      localStorage.removeItem('longform_job_id');
+                      setStep('configure');
+                    }}
+                      className="px-6 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-medium rounded-lg transition-colors">
+                      Retry without B-roll
+                    </button>
+                  )}
                 </div>
               </>
             )}
