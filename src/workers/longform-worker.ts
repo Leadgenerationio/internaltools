@@ -396,6 +396,86 @@ async function processSceneRegen(job: Job<LongformSceneRegenData>): Promise<Long
   }
 }
 
+// ─── S3 download helper for reassemble ──────────────────────────────────────
+
+/**
+ * Extract the S3 storage path from a URL.
+ * Handles Supabase public URLs, /api/files URLs, and direct S3 paths.
+ */
+function extractStoragePath(url: string): string | null {
+  // /api/files?path=outputs/filename.mp4
+  if (url.includes('/api/files')) {
+    const match = url.match(/[?&]path=([^&]+)/);
+    if (match) return decodeURIComponent(match[1]);
+  }
+  // Supabase public URL: .../object/public/media/outputs/filename.mp4
+  const bucketName = process.env.S3_BUCKET;
+  if (bucketName) {
+    const pattern = `/object/public/${bucketName}/`;
+    const idx = url.indexOf(pattern);
+    if (idx >= 0) return url.slice(idx + pattern.length);
+  }
+  // Try to extract just the outputs/ or longform/ path
+  const match = url.match(/(outputs\/[^\s?#]+|longform\/[^\s?#]+)/);
+  if (match) return match[1];
+  return null;
+}
+
+/**
+ * Download a file by URL, falling back to S3 if the direct fetch fails.
+ */
+async function downloadWithS3Fallback(url: string, label: string): Promise<Buffer> {
+  // Resolve relative URLs
+  const resolvedUrl = url.startsWith('/') ? `${getAppBaseUrl()}${url}` : url;
+
+  // Try direct fetch first
+  try {
+    const res = await fetch(resolvedUrl, {
+      headers: process.env.AUTH_SECRET ? { 'Authorization': `Bearer ${process.env.AUTH_SECRET}` } : {},
+    });
+    if (res.ok) {
+      const buffer = Buffer.from(await res.arrayBuffer());
+      if (buffer.length > 1000) return buffer;
+    }
+    logger.warn(`[Longform] Direct download failed for ${label}: ${res.status}, trying S3 fallback`);
+  } catch (err: any) {
+    logger.warn(`[Longform] Direct download error for ${label}: ${err.message}, trying S3 fallback`);
+  }
+
+  // S3 fallback
+  const storagePath = extractStoragePath(url);
+  if (!storagePath) {
+    throw new Error(`${label}: download failed and could not extract S3 path from URL`);
+  }
+
+  const bucket = process.env.S3_BUCKET;
+  const endpoint = process.env.S3_ENDPOINT;
+  const accessKey = process.env.S3_ACCESS_KEY_ID;
+  const secretKey = process.env.S3_SECRET_ACCESS_KEY;
+
+  if (!bucket || !endpoint || !accessKey || !secretKey) {
+    throw new Error(`${label}: download failed and S3 not configured for fallback`);
+  }
+
+  logger.info(`[Longform] Fetching ${label} from S3: ${storagePath}`);
+  const { S3Client, GetObjectCommand } = await import('@aws-sdk/client-s3');
+  const client = new S3Client({
+    endpoint,
+    region: process.env.S3_REGION || 'auto',
+    credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
+    forcePathStyle: true,
+  });
+
+  const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: storagePath }));
+  if (!response.Body) throw new Error(`${label}: S3 returned empty body`);
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of response.Body as any) {
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
 // ─── Reassemble ─────────────────────────────────────────────────────────────
 
 async function processReassemble(job: Job<LongformReassembleData>): Promise<LongformReassembleResult> {
@@ -406,20 +486,14 @@ async function processReassemble(job: Job<LongformReassembleData>): Promise<Long
     await fs.mkdir(tempDir, { recursive: true });
     await job.updateProgress(5);
 
-    // Download all scene clips and voiceover
+    // Download all scene clips and voiceover (with S3 fallback)
     const clipPaths: string[] = [];
     for (let i = 0; i < scenes.length; i++) {
       const scene = scenes[i];
       const clipPath = path.join(tempDir, `clip_${i}.mp4`);
 
-      // Resolve URL: if it starts with / it's a local API route
-      const url = scene.clipUrl.startsWith('/') ? `${getAppBaseUrl()}${scene.clipUrl}` : scene.clipUrl;
-      logger.info(`[Longform] Downloading scene ${i}: ${url.slice(0, 120)}`);
-      const res = await fetch(url, {
-        headers: process.env.AUTH_SECRET ? { 'Authorization': `Bearer ${process.env.AUTH_SECRET}` } : {},
-      });
-      if (!res.ok) throw new Error(`Failed to download scene ${i}: ${res.status}`);
-      const buffer = Buffer.from(await res.arrayBuffer());
+      logger.info(`[Longform] Downloading scene ${i}: ${scene.clipUrl.slice(0, 120)}`);
+      const buffer = await downloadWithS3Fallback(scene.clipUrl, `Scene ${i}`);
 
       // Validate downloaded file is actually video (not HTML error page)
       if (buffer.length < 1000) {
@@ -435,14 +509,11 @@ async function processReassemble(job: Job<LongformReassembleData>): Promise<Long
       await job.updateProgress(5 + Math.round((i / scenes.length) * 30));
     }
 
-    // Download voiceover
+    // Download voiceover (with S3 fallback)
     const voPath = path.join(tempDir, 'voiceover.mp3');
-    const voUrl = voiceoverUrl.startsWith('/') ? `${getAppBaseUrl()}${voiceoverUrl}` : voiceoverUrl;
-    const voRes = await fetch(voUrl, {
-      headers: process.env.AUTH_SECRET ? { 'Authorization': `Bearer ${process.env.AUTH_SECRET}` } : {},
-    });
-    if (!voRes.ok) throw new Error(`Failed to download voiceover: ${voRes.status}`);
-    await fs.writeFile(voPath, Buffer.from(await voRes.arrayBuffer()));
+    logger.info(`[Longform] Downloading voiceover: ${voiceoverUrl.slice(0, 120)}`);
+    const voBuffer = await downloadWithS3Fallback(voiceoverUrl, 'Voiceover');
+    await fs.writeFile(voPath, voBuffer);
 
     await job.updateProgress(40);
 
