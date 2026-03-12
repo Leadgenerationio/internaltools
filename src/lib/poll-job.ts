@@ -18,6 +18,7 @@ export interface PollJobResult {
 
 const POLL_INTERVALS = [3000, 5000, 10000, 15000]; // exponential backoff
 const DEFAULT_MAX_POLL_MS = 20 * 60 * 1000; // 20 minutes max
+const LONGFORM_MAX_POLL_MS = 45 * 60 * 1000; // 45 minutes for longform (multi-variant + model fallback)
 
 /**
  * Poll a background job until it completes or fails.
@@ -32,7 +33,8 @@ export async function pollJob(
     maxPollMs?: number;
   } = {}
 ): Promise<PollJobResult> {
-  const { onProgress, signal, maxPollMs = DEFAULT_MAX_POLL_MS } = options;
+  const defaultTimeout = type === 'longform' ? LONGFORM_MAX_POLL_MS : DEFAULT_MAX_POLL_MS;
+  const { onProgress, signal, maxPollMs = defaultTimeout } = options;
   let pollIndex = 0;
   const startTime = Date.now();
 

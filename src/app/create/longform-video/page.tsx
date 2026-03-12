@@ -47,6 +47,84 @@ export default function LongformVideoPage() {
     if (status === 'unauthenticated') router.replace('/login');
   }, [status, router]);
 
+  // ── Resume pending job on page load ──────────────────────────────────────
+  const resumeAttempted = useRef(false);
+  useEffect(() => {
+    if (status !== 'authenticated' || resumeAttempted.current) return;
+    resumeAttempted.current = true;
+
+    const savedJobId = localStorage.getItem('longform_job_id');
+    if (!savedJobId) return;
+
+    // Check job status and resume if still relevant
+    (async () => {
+      setResumingJob(true);
+      try {
+        const res = await fetch(`/api/jobs/${savedJobId}?type=longform`);
+        if (!res.ok) {
+          localStorage.removeItem('longform_job_id');
+          setResumingJob(false);
+          return;
+        }
+
+        const data = await res.json();
+
+        if (data.state === 'completed' && data.result) {
+          // Job finished — show results
+          const r = data.result as any;
+          setResults(r.videos || []);
+          setFailedCount(r.failed || 0);
+          setTokensUsed(r.tokensUsed || 0);
+          setJobId(savedJobId);
+          setStep('results');
+          localStorage.removeItem('longform_job_id');
+        } else if (data.state === 'failed') {
+          // Job failed — show error
+          setJobId(savedJobId);
+          setGenerateError(data.error || 'Generation failed');
+          setStep('generate');
+          localStorage.removeItem('longform_job_id');
+        } else if (data.state === 'active' || data.state === 'waiting') {
+          // Job still running — resume polling
+          setJobId(savedJobId);
+          setGenerating(true);
+          setProgress(data.progress || 0);
+          setStep('generate');
+
+          const abort = new AbortController();
+          abortRef.current = abort;
+
+          const { pollJob } = await import('@/lib/poll-job');
+          const result = await pollJob(savedJobId, 'longform', {
+            onProgress: (p) => setProgress(p),
+            signal: abort.signal,
+          });
+
+          if (result.state === 'completed' && result.result) {
+            const r = result.result as any;
+            setResults(r.videos || []);
+            setFailedCount(r.failed || 0);
+            setTokensUsed(r.tokensUsed || 0);
+            setStep('results');
+            localStorage.removeItem('longform_job_id');
+          } else if (result.state === 'failed') {
+            setGenerateError(result.error || 'Generation failed');
+            localStorage.removeItem('longform_job_id');
+          }
+
+          setGenerating(false);
+          abortRef.current = null;
+        } else {
+          localStorage.removeItem('longform_job_id');
+        }
+      } catch {
+        localStorage.removeItem('longform_job_id');
+      } finally {
+        setResumingJob(false);
+      }
+    })();
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Wizard state
   const [step, setStep] = useState<WizardStep>('script');
   const [scriptMode, setScriptMode] = useState<ScriptMode>('paste');
@@ -99,6 +177,7 @@ export default function LongformVideoPage() {
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const [resumingJob, setResumingJob] = useState(false);
 
   // Results
   const [results, setResults] = useState<LongformResultItem[]>([]);
@@ -310,6 +389,7 @@ export default function LongformVideoPage() {
       const { jobId: jid } = await res.json();
       setJobId(jid);
       setStep('generate');
+      localStorage.setItem('longform_job_id', jid);
 
       const { pollJob } = await import('@/lib/poll-job');
       const result = await pollJob(jid, 'longform', {
@@ -323,7 +403,9 @@ export default function LongformVideoPage() {
         setFailedCount(r.failed || 0);
         setTokensUsed(r.tokensUsed || 0);
         setStep('results');
+        localStorage.removeItem('longform_job_id');
       } else if (result.state === 'failed') {
+        localStorage.removeItem('longform_job_id');
         throw new Error(result.error || 'Generation failed');
       }
     } catch (err: any) {
@@ -519,10 +601,13 @@ export default function LongformVideoPage() {
 
   // ── Loading ───────────────────────────────────────────────────────────────
 
-  if (status === 'loading' || status === 'unauthenticated') {
+  if (status === 'loading' || status === 'unauthenticated' || resumingJob) {
     return (
       <main className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
+          {resumingJob && <p className="text-gray-400 text-sm mt-3">Checking for pending job...</p>}
+        </div>
       </main>
     );
   }
@@ -1105,21 +1190,80 @@ export default function LongformVideoPage() {
                   </svg>
                 </div>
                 <div>
-                  <h2 className="text-2xl font-bold text-white mb-2">Generation Failed</h2>
-                  <p className="text-gray-400 text-sm">The video generation job could not complete.</p>
+                  <h2 className="text-2xl font-bold text-white mb-2">
+                    {generateError?.includes('timed out') ? 'Still Processing' : 'Generation Failed'}
+                  </h2>
+                  <p className="text-gray-400 text-sm">
+                    {generateError?.includes('timed out')
+                      ? 'The job is still running in the background. Click below to check if it\'s finished.'
+                      : 'The video generation job could not complete.'}
+                  </p>
                 </div>
-                {generateError && (
+                {generateError && !generateError.includes('timed out') && (
                   <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-4 py-3 rounded-lg max-w-md mx-auto">{generateError}</div>
                 )}
                 <div className="flex gap-3 justify-center">
-                  <button onClick={() => { setStep('configure'); setGenerateError(null); setProgress(0); }}
+                  <button onClick={() => { setStep('configure'); setGenerateError(null); setProgress(0); localStorage.removeItem('longform_job_id'); }}
                     className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
                     Back to Configure
                   </button>
-                  <button onClick={() => { setGenerateError(null); setProgress(0); handleGenerate(); }}
-                    className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors">
-                    Try Again
-                  </button>
+                  {jobId && (
+                    <button onClick={async () => {
+                      setGenerating(true);
+                      setGenerateError(null);
+                      try {
+                        const res = await fetch(`/api/jobs/${jobId}?type=longform`);
+                        if (!res.ok) throw new Error('Could not reach job server');
+                        const data = await res.json();
+                        if (data.state === 'completed' && data.result) {
+                          const r = data.result as any;
+                          setResults(r.videos || []);
+                          setFailedCount(r.failed || 0);
+                          setTokensUsed(r.tokensUsed || 0);
+                          setStep('results');
+                          localStorage.removeItem('longform_job_id');
+                        } else if (data.state === 'failed') {
+                          setGenerateError(data.error || 'Generation failed');
+                          localStorage.removeItem('longform_job_id');
+                        } else {
+                          // Still running — resume polling
+                          setProgress(data.progress || 0);
+                          const abort = new AbortController();
+                          abortRef.current = abort;
+                          const { pollJob } = await import('@/lib/poll-job');
+                          const result = await pollJob(jobId, 'longform', {
+                            onProgress: (p) => setProgress(p),
+                            signal: abort.signal,
+                          });
+                          if (result.state === 'completed' && result.result) {
+                            const r = result.result as any;
+                            setResults(r.videos || []);
+                            setFailedCount(r.failed || 0);
+                            setTokensUsed(r.tokensUsed || 0);
+                            setStep('results');
+                            localStorage.removeItem('longform_job_id');
+                          } else if (result.state === 'failed') {
+                            setGenerateError(result.error || 'Generation failed');
+                            localStorage.removeItem('longform_job_id');
+                          }
+                        }
+                      } catch (err: any) {
+                        if (err.name !== 'AbortError') setGenerateError(err.message);
+                      } finally {
+                        setGenerating(false);
+                        abortRef.current = null;
+                      }
+                    }}
+                      className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors">
+                      Check Job Status
+                    </button>
+                  )}
+                  {!jobId && (
+                    <button onClick={() => { setGenerateError(null); setProgress(0); handleGenerate(); }}
+                      className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors">
+                      Try Again
+                    </button>
+                  )}
                 </div>
               </>
             )}
