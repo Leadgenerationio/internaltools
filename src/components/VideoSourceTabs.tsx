@@ -4,10 +4,11 @@ import { useState } from 'react';
 import VideoUploader from '@/components/VideoUploader';
 import VideoGenerator from '@/components/VideoGenerator';
 import MediaLibrary from '@/components/MediaLibrary';
+import StoryblocksSearch from '@/components/StoryblocksSearch';
 import type { UploadedVideo } from '@/lib/types';
 import Tooltip from '@/components/Tooltip';
 
-type Tab = 'upload' | 'generate' | 'library';
+type Tab = 'upload' | 'generate' | 'library' | 'stock';
 
 interface Props {
   videos: UploadedVideo[];
@@ -32,13 +33,29 @@ export default function VideoSourceTabs({
     { id: 'upload', label: 'Upload' },
     { id: 'generate', label: 'AI Generate' },
     { id: 'library', label: 'Library' },
+    { id: 'stock', label: 'Stock Video' },
   ];
+
+  const handleStockSelect = (video: any) => {
+    const newVideo: UploadedVideo = {
+      id: video.id,
+      filename: video.filename,
+      originalName: video.originalName,
+      path: video.path,
+      duration: video.duration,
+      width: video.width,
+      height: video.height,
+      thumbnail: video.thumbnail,
+      ...(video.storageFileId && { storageFileId: video.storageFileId }),
+    };
+    onUpload([...videos, newVideo]);
+  };
 
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-semibold text-white flex items-center">
         1. Background Videos
-        <Tooltip text="These are the background videos your ad text will appear over. Upload your own or generate one with AI." />
+        <Tooltip text="These are the background videos your ad text will appear over. Upload your own, generate with AI, or search stock footage." />
       </h2>
 
       {/* Tab bar */}
@@ -84,9 +101,12 @@ export default function VideoSourceTabs({
           onUpload={onUpload}
         />
       )}
+      {activeTab === 'stock' && (
+        <StoryblocksSearch onSelect={handleStockSelect} />
+      )}
 
-      {/* Video thumbnails — shown on generate tab (upload tab has its own) */}
-      {activeTab === 'generate' && videos.length > 0 && (
+      {/* Video thumbnails — shown on generate/stock tabs (upload tab has its own) */}
+      {(activeTab === 'generate' || activeTab === 'stock') && videos.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {videos.map((v) => (
             <div key={v.id} className="relative group bg-gray-800 rounded-lg overflow-hidden">
