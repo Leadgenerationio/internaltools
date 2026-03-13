@@ -23,10 +23,10 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 │  └──────────┘                └──────────┘                            │
 │  ┌─────────────────────────────────────────────────┐                 │
 │  │ / (Home Hub) — Ad creation model picker         │                 │
-│  │ ┌────────────────┐ ┌────────┐ ┌────────┐       │                 │
-│  │ │ Video Overlay   │ │Longform│ │ Image  │ ...   │                 │
-│  │ │ (available)     │ │ Video  │ │ (soon) │       │                 │
-│  │ └───────┬────────┘ └───┬────┘ └────────┘       │                 │
+│  │ ┌──────────────┐ ┌────────┐ ┌────────┐ ┌──────┐│                 │
+│  │ │Video Overlay │ │Longform│ │ Video  │ │Image ││                 │
+│  │ │ (available)  │ │ Video  │ │ Cut Up │ │(soon)││                 │
+│  │ └──────┬───────┘ └───┬────┘ └───┬────┘ └──────┘│                 │
 │  └─────────┼──────────────┼────────────────────────┘                 │
 │            ▼              ▼                                           │
 │  ┌── /create/video-overlay ──────────────────┐                      │
@@ -37,11 +37,18 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 │  ┌── /create/longform-video ─────────────────────────────────┐      │
 │  │ ┌──────┐ ┌────────┐ ┌──────────┐ ┌───────┐ ┌──────────┐ │      │
 │  │ │Brief │→│Scripts │→│Voiceover │→│B-Roll │→│Stitch +  │ │      │
-│  │ │      │ │(Claude)│ │(11Labs)  │ │(kie)  │ │Caption + │ │      │
+│  │ │      │ │(Claude)│ │(11Labs)  │ │(kie)  │ │Stitch +  │ │      │
 │  │ │      │ │        │ │          │ │model  │ │Scene     │ │      │
 │  │ │      │ │        │ │          │ │select │ │Editor    │ │      │
 │  │ └──────┘ └────────┘ └──────────┘ └───────┘ └──────────┘ │      │
 │  └───────────────────────────────────────────────────────────┘      │
+│  ┌── /create/video-cutup ──────────────────────────────────┐      │
+│  │ ┌──────┐ ┌────────────┐ ┌──────────┐                   │      │
+│  │ │Upload│→│Review Clips│→│  Done    │  (FREE, no tokens) │      │
+│  │ │      │ │(select/    │ │(saved to │                    │      │
+│  │ │      │ │ preview)   │ │ library) │                    │      │
+│  │ └──────┘ └────────────┘ └──────────┘                    │      │
+│  └──────────────────────────────────────────────────────────┘      │
 │       │              │              │              │                    │
 └───────┼──────────────┼──────────────┼──────────────┼────────────────────┘
         │              │              │              │
@@ -85,9 +92,9 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 | Video processing | FFmpeg (shell exec) | Compositing, scaling, audio mixing |
 | Overlay rendering | @napi-rs/canvas | Text-to-PNG with emoji support |
 | AI copy generation | Anthropic SDK (Claude Sonnet) | TOFU/MOFU/BOFU ad scripts |
-| AI video generation | kie.ai REST API (Seedance 1.5, Kling 2.6, Veo 3.1 Fast/Quality, Sora 2/Pro) | Optional AI background videos + longform b-roll (user-selectable model with dynamic token pricing) |
+| AI video generation | kie.ai REST API (Seedance 1.5, Kling 2.6, Veo 3.1 Fast/Quality, Sora 2/Pro) | Optional AI background videos + longform b-roll (user-selectable model with dynamic token pricing). Automatic model fallback on capacity/overload errors: veo3_fast → seedance-1.5-pro → kling-2.6 (`src/lib/kie-api.ts`) |
 | Voiceover | ElevenLabs TTS API | Text-to-speech for longform video scripts |
-| Captioning | Built-in ASS subtitles (FFmpeg) / Submagic API fallback | Auto-captions for longform video — built-in captioning estimates word timing from voiceover duration and burns ASS subtitles via FFmpeg; Submagic used when S3 is configured |
+| Captioning | Submagic API | Auto-captions for longform video — applied during reassemble/finalize step only (deferred captioning), not during initial generation |
 | Background jobs | BullMQ + Redis (ioredis) | Async render + video gen + longform pipeline, survives page refresh |
 | Token billing | Prisma transactions | Atomic token deduction/credit, append-only ledger, budget alerts |
 | Payments | Stripe (Checkout + Customer Portal) | Subscriptions, one-time token top-ups, webhook handling |
@@ -326,13 +333,13 @@ src/
 │   ├── OnboardingChecklist.tsx       # 5-step onboarding checklist (accounts <7 days old)
 │   ├── TemplatePickerModal.tsx       # Template picker modal (system + company templates)
 │   └── SaveAsTemplateModal.tsx       # Save current brief as a reusable template
-├── middleware.ts                     # Auth verification, JWT validation, rate limiting
+├── middleware.ts                     # Auth verification, JWT validation, rate limiting, service-to-service auth (Bearer AUTH_SECRET)
 ├── lib/
 │   ├── types.ts                      # All TypeScript interfaces + constants
 │   ├── ffmpeg-renderer.ts            # FFmpeg render pipeline (draft/final quality, trim)
 │   ├── overlay-renderer.ts           # Canvas → PNG overlay generation
 │   ├── get-video-info.ts             # ffprobe metadata + FFmpeg check
-│   ├── storage.ts                    # Cloud storage abstraction (local FS / S3 / R2, streaming uploads)
+│   ├── storage.ts                    # Cloud storage abstraction (local FS / S3 / R2 / Supabase, streaming uploads, forcePathStyle for S3-compat)
 │   ├── logger.ts                     # Winston logger config
 │   ├── prisma.ts                     # Prisma client singleton
 │   ├── auth.ts                       # NextAuth session helpers, user context
@@ -355,18 +362,17 @@ src/
 │   ├── queue.ts                      # BullMQ queue setup (renderQueue, videoGenQueue, longformQueue)
 │   ├── job-types.ts                  # Type-safe job payloads (RenderJobData, VideoGenJobData, LongformJobData, JobStatus)
 │   ├── email-queue.ts                # BullMQ email queue with fallback to direct send
-│   ├── poll-job.ts                   # Client-side job polling with exponential backoff (max 20min for longform)
+│   ├── poll-job.ts                   # Client-side job polling with exponential backoff (render/video-gen max 20min, longform max 45min)
 │   ├── longform-types.ts             # Types for the longform video pipeline (LongformScene, LongformSceneRegenData, LongformReassembleData)
-│   ├── kie-api.ts                    # Shared kie.ai API helpers (submit, poll, download — used by video-gen + longform)
+│   ├── kie-api.ts                    # Shared kie.ai API helpers (submit, poll, download, model fallback — used by video-gen + longform)
 │   ├── elevenlabs.ts                 # ElevenLabs TTS client (text-to-speech)
-│   ├── submagic.ts                   # Submagic captioning client (auto-captions)
-│   ├── longform-captions.ts          # Built-in captioning: estimates word timing, generates ASS subtitles, burns via FFmpeg (fallback when S3/Submagic not configured)
+│   ├── submagic.ts                   # Submagic captioning client (sole caption provider for longform video)
 │   └── longform-stitcher.ts          # FFmpeg video assembly for longform output (loops b-roll via -stream_loop -1 to match voiceover duration)
 ├── workers/
 │   ├── index.ts                      # Worker entry point (starts all BullMQ workers)
 │   ├── render-worker.ts              # Render job processor (FFmpeg, uploads, notifications)
 │   ├── video-gen-worker.ts           # Video gen job processor (kie.ai, download, thumbnail)
-│   ├── longform-worker.ts            # Longform pipeline processor — handles 3 job types on one queue: longform-video (full pipeline), longform-scene-regen (single scene), longform-reassemble (re-stitch edited scenes). Concurrency: 1.
+│   ├── longform-worker.ts            # Longform pipeline processor — handles 3 job types on one queue: longform-video (full pipeline, no captions), longform-scene-regen (single scene), longform-reassemble (re-stitch + caption via Submagic). Concurrency: 1. Uploads to S3 when configured.
 │   └── email-worker.ts              # Email job processor (3 retries, exponential backoff)
 ├── prisma/
 │   ├── schema.prisma                 # Data models: Company, User, Session, ApiUsage, SupportTicket, TicketMessage, AdminAuditLog, Notification, ProjectTemplate, PasswordResetToken, ProcessedWebhookEvent, SpendAlertLog
@@ -396,45 +402,45 @@ FFmpeg's `drawtext` filter renders emoji as empty squares. By rendering text to 
 
 ## Longform Video Pipeline
 
-5-step wizard at `/create/longform-video`: Brief → Scripts → Voiceover → B-Roll → Stitch + Caption.
+5-step wizard at `/create/longform-video`: Brief → Scripts → Voiceover → B-Roll → Stitch + Scene Editor.
 
 ### Pipeline stages
 1. **Brief** — User enters topic, target audience, desired length
 2. **Scripts** — Claude generates scene-by-scene script (FREE, 0 tokens)
 3. **Voiceover** — ElevenLabs TTS generates audio from script (user selects voice)
 4. **B-Roll** — AI-generated clips via kie.ai. User selects from 6 models: Seedance 1.5, Kling 2.6, Veo 3.1 Fast, Sora 2, Sora 2 Pro, Veo 3.1 Quality. Dynamic token pricing: base 5 tokens + (clipCount x model tokenCost). Or skip b-roll for flat 5 tokens.
-5. **Stitch + Caption** — FFmpeg assembles voiceover + b-roll into final video, then adds captions
+5. **Stitch** — FFmpeg assembles voiceover + b-roll into final video (no captions at this stage)
+
+### Deferred captioning
+Captions are **not** applied during the initial pipeline generation. Instead, captions are only added during the reassemble/finalize step via Submagic API. This allows users to edit scenes, reorder clips, and regenerate b-roll before committing to a captioned final output. Submagic is the sole caption provider — built-in FFmpeg captioning has been removed.
 
 ### Video stitching
 The longform stitcher (`src/lib/longform-stitcher.ts`) loops b-roll clips to match voiceover duration using FFmpeg `-stream_loop -1` instead of `-shortest`. This ensures the final video matches the full voiceover length even when individual b-roll clips are shorter than their corresponding scene audio.
 
-### Built-in captioning
-`src/lib/longform-captions.ts` provides a captioning pipeline that does not require external services:
-1. Estimates word timing by dividing voiceover duration proportionally across words in the script
-2. Generates an ASS (Advanced SubStation Alpha) subtitle file with timed word groups
-3. Burns subtitles into the video via FFmpeg's `ass` filter
-
-This is the primary captioning method. Submagic API is used as an alternative when S3 storage is configured (Submagic requires a publicly accessible URL for the video).
+### Model fallback
+kie.ai video generation has automatic model fallback for b-roll generation. If the chosen model fails with a capacity or overload error, it tries fallback models in order: `veo3_fast` → `seedance-1.5-pro` → `kling-2.6`. This is implemented in `src/lib/kie-api.ts` and applies to both standalone video generation and longform b-roll.
 
 ### Post-generation scene editor
 After the initial pipeline completes, `LongformResultItem` includes `scenes[]` (individual scene clips), `voiceoverUrl`, and `scriptText`. Users can:
 - **View** individual scene clips with their prompts
-- **Regenerate** a scene with a new prompt (via `/api/longform/regenerate-scene`, costs model tokens)
+- **Regenerate** multiple scenes simultaneously with per-scene model selection — each scene has its own regen state (editing, prompt, model, loading, error)
 - **Replace** a scene with an uploaded clip (no token cost)
 - **Remove** scenes from the final output
-- **Re-assemble** the edited scenes into a new final video (via `/api/longform/reassemble`)
+- **Re-assemble** the edited scenes into a new final video with captions (via `/api/longform/reassemble`)
 
 ### Worker job routing
 The longform worker (`src/workers/longform-worker.ts`) handles 3 job types on a single BullMQ queue, routed by job name:
-- `longform-video` — Full pipeline (voiceover → b-roll generation → stitch → caption)
+- `longform-video` — Full pipeline (voiceover → b-roll generation → stitch). No captions at this stage.
 - `longform-scene-regen` — Regenerate a single scene (new kie.ai generation or accept uploaded clip)
-- `longform-reassemble` — Re-stitch edited scenes array into a new final video with captions
+- `longform-reassemble` — Re-stitch edited scenes into final video + apply captions via Submagic
+
+The longform worker uploads files to S3 when cloud storage is configured, using a temp copy of the assembled video to prevent premature local file deletion during FFmpeg assembly.
 
 ### Key files
 - `src/lib/longform-types.ts` — `LongformScene`, `LongformSceneRegenData`, `LongformReassembleData`, updated `LongformResultItem`
 - `src/lib/longform-stitcher.ts` — FFmpeg assembly with `-stream_loop -1` for b-roll looping
-- `src/lib/longform-captions.ts` — Built-in ASS subtitle generation + FFmpeg burn-in
-- `src/lib/kie-api.ts` — Shared kie.ai API helpers (submit job, poll status, download result)
+- `src/lib/kie-api.ts` — Shared kie.ai API helpers (submit job, poll status, download result, model fallback)
+- `src/lib/submagic.ts` — Submagic captioning client (sole caption provider)
 - `src/workers/longform-worker.ts` — Multi-job-type worker (longform-video, scene-regen, reassemble)
 - `src/app/api/longform/regenerate-scene/route.ts` — Scene regeneration endpoint
 - `src/app/api/longform/reassemble/route.ts` — Scene re-assembly endpoint
@@ -459,13 +465,14 @@ Worker Service (separate Railway instance, WORKER_MODE=true)
   ├── render-worker (concurrency: 2) — FFmpeg render, upload, email, notification
   ├── video-gen-worker (concurrency: 2) — kie.ai submit, poll, download, thumbnail
   └── longform-worker (concurrency: 1) — routes by job name:
-        ├── longform-video: full pipeline (voiceover→b-roll→stitch→caption)
+        ├── longform-video: full pipeline (voiceover→b-roll→stitch, no captions)
         ├── longform-scene-regen: regenerate single scene (new prompt or upload)
-        └── longform-reassemble: re-stitch edited scenes into final video
+        └── longform-reassemble: re-stitch edited scenes + apply captions (Submagic)
   │
   ▼
 Client polls /api/jobs/[id]?type=render|video-gen|longform
-  │ Exponential backoff: 3s → 5s → 10s → 15s (longform max 20min)
+  │ Exponential backoff: 3s → 5s → 10s → 15s
+  │ Render/video-gen max 20min, longform max 45min
   ▼
 Job completed → results shown
 ```
@@ -473,7 +480,7 @@ Job completed → results shown
 ### Key files
 - `src/lib/queue.ts` — Queue factory (renderQueue, videoGenQueue, longformQueue)
 - `src/lib/job-types.ts` — Type-safe job payloads (RenderJobData, VideoGenJobData, LongformJobData, JobStatus)
-- `src/lib/poll-job.ts` — Client-side polling utility with exponential backoff (max 20min for longform)
+- `src/lib/poll-job.ts` — Client-side polling utility with exponential backoff (render/video-gen max 20min, longform max 45min)
 - `src/workers/index.ts` — Worker entry point
 - `src/workers/render-worker.ts` — Render job processor
 - `src/workers/video-gen-worker.ts` — Video gen job processor
@@ -588,7 +595,7 @@ NEXTAUTH_URL=http://localhost:3000  # Required — Base URL for NextAuth callbac
 ANTHROPIC_API_KEY=sk-ant-...     # Required for ad copy generation
 KIE_API_KEY=...                  # Optional for kie.ai video generation (Seedance, Kling, Veo, Sora)
 ELEVENLABS_API_KEY=...           # Optional for ElevenLabs TTS (longform video voiceover)
-SUBMAGIC_API_KEY=...             # Optional for Submagic captioning (longform video captions)
+SUBMAGIC_API_KEY=...             # Required for longform video captions (sole caption provider, applied during reassemble/finalize)
 
 # Super Admin
 SUPER_ADMIN_EMAILS=admin@example.com  # Comma-separated list of super admin emails
@@ -612,10 +619,11 @@ DB_POOL_SIZE=20                  # Optional — max connections per instance (de
 DATA_DIR=/app/data               # Set when using Railway Volume — entrypoint symlinks storage dirs
 
 # Cloud Storage (optional — alternative to Railway Volume)
-S3_BUCKET=your-bucket            # Optional — enable cloud storage (S3/R2)
+S3_BUCKET=your-bucket            # Optional — enable cloud storage (S3/R2/Supabase)
 S3_ENDPOINT=https://...          # Required with S3_BUCKET
 S3_ACCESS_KEY_ID=...             # Required with S3_BUCKET
 S3_SECRET_ACCESS_KEY=...         # Required with S3_BUCKET
+S3_REGION=us-east-1              # Optional — S3 region (default: us-east-1, used by Supabase S3-compat)
 S3_PUBLIC_URL=https://...        # Optional — public URL prefix for S3 files (also used as CDN_URL fallback)
 CDN_URL=https://cdn.example.com  # Optional — CDN URL for file serving (overrides /api/files, offloads Node.js)
 
@@ -646,6 +654,7 @@ GOOGLE_REDIRECT_URI=https://yourdomain.com/api/integrations/google-drive/callbac
 
 ### Middleware (`src/middleware.ts`)
 - **JWT verification**: Validates session tokens, refreshes if needed
+- **Service-to-service auth**: Accepts `Authorization: Bearer AUTH_SECRET` header for internal calls between Railway services (e.g., worker → web app), bypassing JWT session requirements
 - **Rate limiting**: Per-IP rate limits on all API routes (configurable per-route), stricter limits on costly operations (generate-ads, render)
 - **CORS**: Explicit `Access-Control-Allow-Origin` restricted to allowed origins
 - **Security headers**: X-Frame-Options, X-Content-Type-Options, Referrer-Policy, X-XSS-Protection, Permissions-Policy, Content-Security-Policy
@@ -790,12 +799,13 @@ scripts/
 
 ## Cloud Storage (`src/lib/storage.ts`)
 
-Abstraction layer that defaults to local filesystem and switches to S3-compatible storage (AWS S3, Cloudflare R2, etc.) when `S3_BUCKET` is configured.
+Abstraction layer that defaults to local filesystem and switches to S3-compatible storage (AWS S3, Cloudflare R2, Supabase Storage, etc.) when `S3_BUCKET` is configured.
 
 - **Local mode** (default): Files stay on disk in `public/`, URLs served via `/api/files?path=xxx`
 - **Cloud mode**: Files uploaded to S3 after processing, local copies cleaned up
 - AWS SDK is lazy-loaded — only imported when cloud storage is actually configured
-- Currently integrated into the render route (output videos uploaded to S3)
+- **Supabase Storage support**: S3 compatibility mode via `forcePathStyle: true` and configurable `S3_REGION` env var
+- Integrated into the render route and longform worker (output videos uploaded to S3)
 
 ## Video Trimming
 
@@ -1007,7 +1017,7 @@ Phase 3 moves long-running operations (render, video gen) to BullMQ background w
 - **Job types** (`src/lib/job-types.ts`): Type-safe payloads for render, video-gen, and job status.
 - **Worker processes** (`src/workers/`): Separate Railway service (same Docker image, `WORKER_MODE=true`). `render-worker.ts` (concurrency 2) and `video-gen-worker.ts` (concurrency 1). Handles token refund on failure, notifications, email on completion.
 - **Job status API** (`/api/jobs/[id]`): GET returns state/progress/result, auth-gated to job owner's company.
-- **Client-side polling** (`src/lib/poll-job.ts`): Exponential backoff (3s→5s→10s→15s), AbortSignal support.
+- **Client-side polling** (`src/lib/poll-job.ts`): Exponential backoff (3s→5s→10s→15s), AbortSignal support. Render/video-gen jobs timeout at 20 minutes, longform jobs at 45 minutes (to accommodate multi-variant jobs with model fallback retries).
 - **Route changes**: Render and video-gen routes enqueue BullMQ jobs and return `{ jobId }` immediately. Fall back to synchronous when Redis unavailable.
 - **Docker**: `WORKER_MODE=true` starts BullMQ workers instead of web server via `docker-entrypoint.sh`.
 
