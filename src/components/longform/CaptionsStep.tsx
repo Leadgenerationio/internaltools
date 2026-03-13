@@ -3,11 +3,6 @@
 import { useState, useEffect } from 'react';
 import type { CaptionConfig } from '@/lib/longform-types';
 
-interface CaptionTemplate {
-  name: string;
-  description?: string;
-}
-
 interface Props {
   captionConfig: CaptionConfig;
   onConfigChange: (config: CaptionConfig) => void;
@@ -30,7 +25,7 @@ const LANGUAGES = [
 ];
 
 export default function CaptionsStep({ captionConfig, onConfigChange, onNext }: Props) {
-  const [templates, setTemplates] = useState<CaptionTemplate[]>([]);
+  const [templates, setTemplates] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -38,7 +33,11 @@ export default function CaptionsStep({ captionConfig, onConfigChange, onNext }: 
     setLoading(true);
     fetch('/api/longform/caption-templates')
       .then((r) => r.json())
-      .then((data) => setTemplates(data.templates || []))
+      .then((data) => {
+        // API returns string[] — normalize in case of objects
+        const raw = data.templates || [];
+        setTemplates(raw.map((t: any) => typeof t === 'string' ? t : t.name || String(t)));
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [captionConfig.enabled]);
@@ -84,17 +83,17 @@ export default function CaptionsStep({ captionConfig, onConfigChange, onNext }: 
               <div className="text-sm text-gray-500">Loading templates...</div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {templates.map((t) => (
+                {templates.map((name) => (
                   <button
-                    key={t.name}
-                    onClick={() => update({ template: t.name })}
+                    key={name}
+                    onClick={() => update({ template: name })}
                     className={`px-3 py-3 rounded-lg border text-sm font-medium text-left transition-colors ${
-                      captionConfig.template === t.name
+                      captionConfig.template === name
                         ? 'border-blue-600 bg-blue-600/10 text-blue-400'
                         : 'border-gray-700 text-gray-400 hover:text-white hover:border-gray-600'
                     }`}
                   >
-                    {t.name}
+                    {name}
                   </button>
                 ))}
               </div>
