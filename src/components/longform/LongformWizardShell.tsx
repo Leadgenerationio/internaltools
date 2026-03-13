@@ -15,10 +15,11 @@ interface Props {
   currentStep: LongformWizardStep;
   completedSteps: Set<LongformWizardStep>;
   onStepClick: (step: LongformWizardStep) => void;
+  onStartNew?: () => void;
   children: React.ReactNode;
 }
 
-export default function LongformWizardShell({ currentStep, completedSteps, onStepClick, children }: Props) {
+export default function LongformWizardShell({ currentStep, completedSteps, onStepClick, onStartNew, children }: Props) {
   const currentIdx = STEPS.findIndex((s) => s.key === currentStep);
 
   return (
@@ -27,6 +28,18 @@ export default function LongformWizardShell({ currentStep, completedSteps, onSte
       <div className="border-b border-gray-800 bg-gray-900/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 py-3">
           <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto">
+            {onStartNew && currentStep !== 'prompt' && (
+              <button
+                onClick={onStartNew}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-red-400 hover:bg-red-600/10 hover:text-red-300 transition-colors whitespace-nowrap border border-red-600/30"
+                title="Start over with a new prompt"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182" />
+                </svg>
+                <span className="hidden sm:inline">Start New</span>
+              </button>
+            )}
             {STEPS.map((step, idx) => {
               const isCompleted = completedSteps.has(step.key);
               const isCurrent = step.key === currentStep;

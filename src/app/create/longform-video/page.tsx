@@ -190,6 +190,7 @@ export default function LongformVideoPage() {
         currentStep={step}
         completedSteps={completedSteps}
         onStepClick={goToStep}
+        onStartNew={handleStartNew}
       >
         {step === 'prompt' && (
           <PromptStep
