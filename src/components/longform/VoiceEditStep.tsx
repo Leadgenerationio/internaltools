@@ -144,7 +144,9 @@ export default function VoiceEditStep({ scripts, defaultVoiceConfig, onScriptsCh
                     </div>
                   </div>
                   {v.preview_url && (
-                    <VoicePreviewPlayer src={v.preview_url} compact />
+                    <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <VoicePreviewPlayer src={v.preview_url} compact />
+                    </div>
                   )}
                 </div>
               ))}
@@ -160,12 +162,30 @@ export default function VoiceEditStep({ scripts, defaultVoiceConfig, onScriptsCh
           <textarea
             value={script.fullText}
             onChange={(e) => {
-              // When editing full text, update fullText and keep scenes in sync
-              // (simple approach: put all text in first scene)
+              // Re-distribute text across ~8-second scenes (~20 words each)
               const newText = e.target.value;
-              const updatedScenes = script.scenes.length > 0
-                ? script.scenes.map((sc, i) => i === 0 ? { ...sc, text: newText } : { ...sc, text: '' })
-                : [{ id: crypto.randomUUID(), order: 0, text: newText, visualPrompt: '', durationEstimate: 30, source: 'empty' as const }];
+              const words = newText.split(/\s+/).filter(Boolean);
+              const WORDS_PER_SCENE = 20;
+              const numScenes = Math.max(1, Math.ceil(words.length / WORDS_PER_SCENE));
+
+              const updatedScenes = [];
+              for (let i = 0; i < numScenes; i++) {
+                const start = i * WORDS_PER_SCENE;
+                const end = Math.min(start + WORDS_PER_SCENE, words.length);
+                const sceneText = words.slice(start, end).join(' ');
+                const existing = script.scenes[i];
+                updatedScenes.push({
+                  id: existing?.id || crypto.randomUUID(),
+                  order: i,
+                  text: sceneText,
+                  visualPrompt: existing?.visualPrompt || '',
+                  durationEstimate: 8,
+                  source: existing?.source || 'empty' as const,
+                  clipUrl: existing?.clipUrl,
+                  clipFilename: existing?.clipFilename,
+                  clipDuration: existing?.clipDuration,
+                });
+              }
               updateScript(activeTab, { fullText: newText, scenes: updatedScenes });
             }}
             rows={6}

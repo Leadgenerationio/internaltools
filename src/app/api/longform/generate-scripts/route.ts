@@ -31,23 +31,30 @@ Given a user's freeform prompt, generate the requested number of UNIQUE ad scrip
 Each variant MUST take a distinctly different creative angle (e.g. pain-point, social-proof,
 urgency, curiosity, transformation, before-after, testimonial-style, question-led).
 
-Each script must be broken into scenes. A scene is a portion of the script meant to be
-spoken over a visual clip. Typically 3-6 scenes per script depending on length.
+CRITICAL — SCENE RULES:
+Each script MUST be split into scenes of EXACTLY 8 seconds each. Each scene corresponds to
+one AI-generated video clip which is always 8 seconds long. This means:
+- At ~150 words per minute speaking rate, each scene should contain ~20 words of script text
+- A 24-second script = 3 scenes, a 32-second script = 4 scenes, a 40-second script = 5 scenes
+- Every scene's "durationEstimate" MUST be 8
+- ALL text must be distributed across scenes — every word of fullText must appear in exactly one scene
+- Scene breaks should be at natural sentence boundaries — do NOT split mid-sentence
+- Adjust sentence lengths so each scene's text is close to ~20 words
 
 Return your output as a JSON array. Each object has:
   - "variant": a short label (e.g. "pain-point", "social-proof")
   - "fullText": the complete script text as one paragraph
   - "scenes": an array of scene objects, each with:
-    - "text": the exact portion of the script for this scene (all scene texts together = fullText)
+    - "text": the exact portion of the script for this scene (all scene texts joined with spaces = fullText)
     - "visualPrompt": a short description of a suitable b-roll video clip for this scene (cinematic, vertical, descriptive — these will be used to generate AI video)
-    - "durationEstimate": estimated seconds when spoken aloud (at ~150 words/minute)
+    - "durationEstimate": 8 (always 8 seconds — one AI video clip per scene)
 
 Guidelines:
 - Make every variant GENUINELY different — different hooks, angles, structures, emotional appeals
 - Write conversationally — short punchy sentences, like a real person talking to camera
-- Each script should be 20-45 seconds total when spoken
+- Each script should be 24-40 seconds total when spoken (3-5 scenes of 8 seconds each)
 - Visual prompts should be specific and cinematic — describe the shot, lighting, motion
-- Scene breaks should feel natural — don't split mid-sentence
+- Each scene's text MUST be roughly 20 words (15-25 words acceptable) — this is critical for timing
 
 Return ONLY the JSON array — no markdown, no code fences, no explanation.`;
 
@@ -189,7 +196,7 @@ async function handleV2(
         order: idx,
         text: sc.text || '',
         visualPrompt: sc.visualPrompt || sc.visual_prompt || '',
-        durationEstimate: sc.durationEstimate || sc.duration_estimate || 5,
+        durationEstimate: 8, // Always 8s — matches AI video clip duration
         source: 'empty' as const,
       })),
     }));

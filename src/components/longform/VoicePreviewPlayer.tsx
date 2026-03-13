@@ -13,13 +13,17 @@ export default function VoicePreviewPlayer({ src, label, compact }: Props) {
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
 
+  // Stop playback when src changes or component unmounts
   useEffect(() => {
+    setPlaying(false);
+    setProgress(0);
     return () => {
       audioRef.current?.pause();
     };
-  }, []);
+  }, [src]);
 
-  const toggle = () => {
+  const toggle = (e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent parent onClick (e.g. voice selection)
     const audio = audioRef.current;
     if (!audio) return;
     if (playing) {
@@ -53,7 +57,13 @@ export default function VoicePreviewPlayer({ src, label, compact }: Props) {
           <svg className="w-3.5 h-3.5 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
         )}
       </button>
-      {!compact && (
+      {compact ? (
+        playing && (
+          <div className="w-12 h-1 bg-gray-700 rounded-full">
+            <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${progress}%` }} />
+          </div>
+        )
+      ) : (
         <div className="flex-1 min-w-0">
           {label && <span className="text-xs text-gray-400 truncate block">{label}</span>}
           <div className="h-1 bg-gray-700 rounded-full mt-1">
