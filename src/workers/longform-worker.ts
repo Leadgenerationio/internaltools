@@ -25,13 +25,14 @@ import { refundTokens } from '@/lib/token-balance';
 import { calculateLongformTokens } from '@/lib/token-pricing';
 import { fileUrl } from '@/lib/file-url';
 import { generateScriptVoiceover } from '@/lib/elevenlabs';
-import { assembleAd, getMediaDuration, normalizeClip } from '@/lib/longform-stitcher';
+import { assembleAd, assembleAdV2, getMediaDuration, normalizeClip, mixBackgroundMusic } from '@/lib/longform-stitcher';
 import { generateVideoClip } from '@/lib/kie-api';
 import { captionVideo } from '@/lib/submagic';
 import type {
   LongformJobData, LongformJobResult,
   LongformSceneRegenData, LongformSceneRegenResult,
   LongformReassembleData, LongformReassembleResult,
+  LongformFinalizeData, LongformFinalizeResult,
 } from '@/lib/job-types';
 import type { LongformResultItem, LongformScene } from '@/lib/longform-types';
 
@@ -596,6 +597,147 @@ async function processReassemble(job: Job<LongformReassembleData>): Promise<Long
   }
 }
 
+// ─── Finalize (new wizard flow: assemble pre-built components) ───────────────
+
+async function processFinalize(job: Job<LongformFinalizeData>): Promise<LongformFinalizeResult> {
+  const { variants, music, captionConfig, aspectRatio } = job.data;
+  const tempDir = path.join(TEMP_BASE, `finalize_${job.id || crypto.randomUUID()}`);
+
+  const results: LongformResultItem[] = [];
+  const failures: string[] = [];
+
+  try {
+    await fs.mkdir(tempDir, { recursive: true });
+    const totalVariants = variants.length;
+
+    for (let vi = 0; vi < variants.length; vi++) {
+      const v = variants[vi];
+      const variantDir = path.join(tempDir, `v_${vi}`);
+      await fs.mkdir(variantDir, { recursive: true });
+
+      const baseProgress = (vi / totalVariants) * 100;
+      const variantWeight = 100 / totalVariants;
+
+      try {
+        // 1. Download voiceover
+        logger.info(`[Longform Finalize] Downloading voiceover for [${v.variant}]`);
+        const voPath = path.join(variantDir, 'voiceover.mp3');
+        const voBuffer = await downloadWithS3Fallback(v.voiceoverUrl, `Voiceover (${v.variant})`);
+        await fs.writeFile(voPath, voBuffer);
+        await job.updateProgress(Math.round(baseProgress + variantWeight * 0.1));
+
+        // 2. Download scene clips (ordered)
+        const sortedScenes = [...v.scenes].sort((a, b) => a.order - b.order);
+        const clipPaths: string[] = [];
+        for (let si = 0; si < sortedScenes.length; si++) {
+          const scene = sortedScenes[si];
+          logger.info(`[Longform Finalize] Downloading scene ${si} for [${v.variant}]`);
+          const clipPath = path.join(variantDir, `clip_${si}.mp4`);
+          const buffer = await downloadWithS3Fallback(scene.clipUrl, `Scene ${si} (${v.variant})`);
+
+          if (buffer.length < 1000) {
+            throw new Error(`Scene ${si} download too small (${buffer.length} bytes)`);
+          }
+          await fs.writeFile(clipPath, buffer);
+          clipPaths.push(clipPath);
+
+          const dlProgress = 0.1 + (0.3 * (si + 1)) / sortedScenes.length;
+          await job.updateProgress(Math.round(baseProgress + variantWeight * dlProgress));
+        }
+
+        // 3. Download music if provided
+        let musicPath: string | undefined;
+        if (music?.url) {
+          logger.info(`[Longform Finalize] Downloading music for [${v.variant}]`);
+          const mPath = path.join(variantDir, 'music.mp3');
+          const musicBuffer = await downloadWithS3Fallback(music.url, `Music (${v.variant})`);
+          await fs.writeFile(mPath, musicBuffer);
+          musicPath = mPath;
+        }
+
+        await job.updateProgress(Math.round(baseProgress + variantWeight * 0.45));
+
+        // 4. Assemble: normalize clips → concat → merge voiceover → mix music
+        logger.info(`[Longform Finalize] Assembling video for [${v.variant}] (${clipPaths.length} clips, AR: ${aspectRatio})`);
+        const rawPath = path.join(variantDir, 'assembled.mp4');
+        const stitchDir = path.join(variantDir, 'stitch');
+
+        await assembleAdV2({
+          clips: clipPaths,
+          voiceoverPath: voPath,
+          outputPath: rawPath,
+          tempDir: stitchDir,
+          aspectRatio,
+          musicPath,
+          musicVolume: music?.volume ?? 0.15,
+        });
+
+        await job.updateProgress(Math.round(baseProgress + variantWeight * 0.7));
+
+        // 5. Captions via Submagic (optional)
+        let finalPath = rawPath;
+        let captioned = false;
+
+        if (captionConfig?.enabled) {
+          if (!process.env.SUBMAGIC_API_KEY) {
+            logger.warn('[Longform Finalize] Captions enabled but SUBMAGIC_API_KEY not set, skipping');
+          } else {
+            logger.info(`[Longform Finalize] Sending [${v.variant}] to Submagic for captioning...`);
+            const publicUrl = await getPublicUrl(rawPath);
+            if (publicUrl) {
+              const captionDir = path.join(variantDir, 'captions');
+              await fs.mkdir(captionDir, { recursive: true });
+              const captionedPath = path.join(captionDir, 'captioned.mp4');
+              await captionVideo(publicUrl, captionedPath, captionConfig, `Longform - ${v.variant}`);
+              finalPath = captionedPath;
+              captioned = true;
+              logger.info(`[Longform Finalize] Submagic captioning complete for [${v.variant}]`);
+            } else {
+              logger.warn('[Longform Finalize] Could not get public URL for captioning, skipping captions');
+            }
+          }
+        }
+
+        await job.updateProgress(Math.round(baseProgress + variantWeight * 0.9));
+
+        // 6. Upload final video
+        const duration = await getMediaDuration(finalPath).catch(() => 30);
+        const outputFilename = `longform_final_${v.variant.replace(/[^a-zA-Z0-9_-]/g, '_')}_${crypto.randomUUID()}.mp4`;
+
+        logger.info(`[Longform Finalize] Uploading ${outputFilename}`);
+        await uploadToApp(finalPath, outputFilename);
+
+        results.push({
+          variant: v.variant,
+          videoUrl: fileUrl(`outputs/${outputFilename}`),
+          captioned,
+          durationSeconds: duration,
+          voiceoverUrl: v.voiceoverUrl,
+        });
+
+        await job.updateProgress(Math.round(baseProgress + variantWeight));
+        logger.info(`[Longform Finalize] Variant [${v.variant}] complete (${duration.toFixed(1)}s)`);
+      } catch (err: any) {
+        logger.error(`[Longform Finalize] Variant [${v.variant}] failed`, { error: err.message });
+        failures.push(`${v.variant}: ${err.message}`);
+      }
+    }
+
+    if (results.length === 0) {
+      throw new Error(failures[0] || 'All variants failed to finalize');
+    }
+
+    return {
+      videos: results,
+      failed: failures.length,
+      tokensUsed: 0, // Assembly is free — tokens already paid per-step
+      ...(failures.length > 0 && { warning: `${failures.length} of ${variants.length} variants failed` }),
+    };
+  } finally {
+    try { await fs.rm(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+}
+
 function getAppBaseUrl(): string {
   const appUrl = process.env.APP_INTERNAL_URL || process.env.RAILWAY_SERVICE_INTERNALTOOLS_URL;
   if (appUrl) return appUrl.startsWith('http') ? appUrl : `http://${appUrl}`;
@@ -618,6 +760,9 @@ export function startLongformWorker(): Worker | null {
     }
     if (job.name === 'longform-reassemble') {
       return processReassemble(job as Job<LongformReassembleData>);
+    }
+    if (job.name === 'longform-finalize') {
+      return processFinalize(job as Job<LongformFinalizeData>);
     }
     return processLongformJob(job as Job<LongformJobData>);
   }, {

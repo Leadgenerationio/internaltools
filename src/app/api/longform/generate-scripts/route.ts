@@ -1,20 +1,59 @@
 /**
  * POST /api/longform/generate-scripts
  *
- * Generate UGC ad scripts from a brief using Claude.
- * Returns an array of LongformScript objects (hook/body/cta per variant).
+ * Generate UGC ad scripts using Claude.
+ *
+ * Accepts two formats:
+ * - V2 (new wizard): { prompt: string, numScripts: number, language?: string }
+ *   → Returns { scripts: LongformScriptV2[] } with scene-aware structure
+ * - Legacy: { productService, targetAudience, ... } (LongformBrief)
+ *   → Returns { scripts: LongformScript[] } with hook/body/cta structure
+ *
  * Free operation (0 tokens) — same as ad copy generation.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import crypto from 'crypto';
 import { getAuthContext } from '@/lib/api-auth';
 import { trackAnthropicUsage } from '@/lib/track-usage';
-import type { LongformBrief, LongformScript } from '@/lib/longform-types';
+import type { LongformBrief, LongformScript, LongformScriptV2 } from '@/lib/longform-types';
 
 export const maxDuration = 60;
 
-const SYSTEM_PROMPT = `You are an expert direct-response ad copywriter specialising in
+// ─── V2 system prompt (scene-aware scripts from freeform prompt) ────────────
+
+const SYSTEM_PROMPT_V2 = `You are an expert direct-response ad copywriter specialising in
+short-form vertical video ads (TikTok, Reels, YouTube Shorts). You write scripts
+for UGC-style ads that stop the scroll and generate leads.
+
+Given a user's freeform prompt, generate the requested number of UNIQUE ad script variants.
+Each variant MUST take a distinctly different creative angle (e.g. pain-point, social-proof,
+urgency, curiosity, transformation, before-after, testimonial-style, question-led).
+
+Each script must be broken into scenes. A scene is a portion of the script meant to be
+spoken over a visual clip. Typically 3-6 scenes per script depending on length.
+
+Return your output as a JSON array. Each object has:
+  - "variant": a short label (e.g. "pain-point", "social-proof")
+  - "fullText": the complete script text as one paragraph
+  - "scenes": an array of scene objects, each with:
+    - "text": the exact portion of the script for this scene (all scene texts together = fullText)
+    - "visualPrompt": a short description of a suitable b-roll video clip for this scene (cinematic, vertical, descriptive — these will be used to generate AI video)
+    - "durationEstimate": estimated seconds when spoken aloud (at ~150 words/minute)
+
+Guidelines:
+- Make every variant GENUINELY different — different hooks, angles, structures, emotional appeals
+- Write conversationally — short punchy sentences, like a real person talking to camera
+- Each script should be 20-45 seconds total when spoken
+- Visual prompts should be specific and cinematic — describe the shot, lighting, motion
+- Scene breaks should feel natural — don't split mid-sentence
+
+Return ONLY the JSON array — no markdown, no code fences, no explanation.`;
+
+// ─── Legacy system prompt (hook/body/cta structure) ─────────────────────────
+
+const SYSTEM_PROMPT_LEGACY = `You are an expert direct-response ad copywriter specialising in
 short-form vertical video ads (TikTok, Reels, YouTube Shorts). You write scripts
 for UGC-style ads that generate leads.
 
@@ -43,7 +82,7 @@ Return your output as a JSON array of objects. Each object has:
 
 Return ONLY the JSON array — no markdown, no code fences, no explanation.`;
 
-function buildPrompt(brief: LongformBrief): string {
+function buildLegacyPrompt(brief: LongformBrief): string {
   const parts = [
     `Generate ${brief.numVariants} different ad script variants for the following brief:`,
     '',
@@ -62,12 +101,139 @@ function buildPrompt(brief: LongformBrief): string {
   return parts.filter(Boolean).join('\n');
 }
 
+function buildV2Prompt(prompt: string, numScripts: number, language: string): string {
+  const parts = [
+    `Generate ${numScripts} UNIQUE ad script variants based on this prompt:`,
+    '',
+    `"${prompt}"`,
+    '',
+    language !== 'English' ? `Write ALL scripts in ${language}. Do not use English.` : '',
+    '',
+    `Remember: each variant must be genuinely different — different hooks, angles, and approaches.`,
+  ];
+  return parts.filter(Boolean).join('\n');
+}
+
 export async function POST(request: NextRequest) {
   const authResult = await getAuthContext();
   if (authResult.error) return authResult.error;
   const { companyId, userId } = authResult.auth;
 
   const body = await request.json();
+
+  // Detect format: V2 has "prompt" field, legacy has "productService"
+  const isV2 = typeof body.prompt === 'string' && !body.productService;
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({ error: 'AI service not configured' }, { status: 503 });
+  }
+
+  if (isV2) {
+    return handleV2(body, companyId, userId, apiKey);
+  }
+  return handleLegacy(body, companyId, userId, apiKey);
+}
+
+// ─── V2 handler (freeform prompt → scene-aware scripts) ─────────────────────
+
+async function handleV2(
+  body: { prompt: string; numScripts?: number; language?: string },
+  companyId: string,
+  userId: string,
+  apiKey: string,
+) {
+  const { prompt } = body;
+  if (!prompt?.trim()) {
+    return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
+  }
+
+  const numScripts = Math.min(Math.max(body.numScripts || 3, 1), 5);
+  const language = body.language || 'English';
+
+  const startTime = Date.now();
+  const model = 'claude-sonnet-4-20250514';
+
+  try {
+    const client = new Anthropic({ apiKey });
+
+    const response = await client.messages.create({
+      model,
+      max_tokens: 8192,
+      system: SYSTEM_PROMPT_V2,
+      messages: [{ role: 'user', content: buildV2Prompt(prompt, numScripts, language) }],
+    });
+
+    const text = response.content
+      .filter((c): c is Anthropic.TextBlock => c.type === 'text')
+      .map((c) => c.text)
+      .join('');
+
+    let rawScripts: any[];
+    try {
+      const parsed = JSON.parse(text);
+      rawScripts = Array.isArray(parsed)
+        ? parsed
+        : parsed.scripts || parsed.variants || Object.values(parsed)[0];
+    } catch {
+      return NextResponse.json({ error: 'AI returned invalid JSON' }, { status: 502 });
+    }
+
+    // Validate and normalize V2 structure
+    const scripts: LongformScriptV2[] = rawScripts.map((s: any) => ({
+      id: crypto.randomUUID(),
+      variant: s.variant || 'default',
+      fullText: s.fullText || s.full_text || '',
+      scenes: (Array.isArray(s.scenes) ? s.scenes : []).map((sc: any, idx: number) => ({
+        id: crypto.randomUUID(),
+        order: idx,
+        text: sc.text || '',
+        visualPrompt: sc.visualPrompt || sc.visual_prompt || '',
+        durationEstimate: sc.durationEstimate || sc.duration_estimate || 5,
+        source: 'empty' as const,
+      })),
+    }));
+
+    trackAnthropicUsage({
+      companyId,
+      userId,
+      model,
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+      endpoint: 'longform/generate-scripts',
+      durationMs: Date.now() - startTime,
+      success: true,
+    });
+
+    return NextResponse.json({ scripts });
+  } catch (err: any) {
+    trackAnthropicUsage({
+      companyId,
+      userId,
+      model: 'claude-sonnet-4-20250514',
+      inputTokens: 0,
+      outputTokens: 0,
+      endpoint: 'longform/generate-scripts',
+      durationMs: Date.now() - startTime,
+      success: false,
+      errorMessage: err.message,
+    });
+
+    return NextResponse.json(
+      { error: err.message || 'Script generation failed' },
+      { status: 500 },
+    );
+  }
+}
+
+// ─── Legacy handler (structured brief → hook/body/cta scripts) ──────────────
+
+async function handleLegacy(
+  body: any,
+  companyId: string,
+  userId: string,
+  apiKey: string,
+) {
   const brief = body as LongformBrief;
 
   if (!brief.productService) {
@@ -78,11 +244,6 @@ export async function POST(request: NextRequest) {
   brief.numVariants = numVariants;
   brief.language = brief.language || 'English';
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json({ error: 'AI service not configured' }, { status: 503 });
-  }
-
   const startTime = Date.now();
   const model = 'claude-sonnet-4-20250514';
 
@@ -92,8 +253,8 @@ export async function POST(request: NextRequest) {
     const response = await client.messages.create({
       model,
       max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: buildPrompt(brief) }],
+      system: SYSTEM_PROMPT_LEGACY,
+      messages: [{ role: 'user', content: buildLegacyPrompt(brief) }],
     });
 
     const text = response.content
@@ -101,7 +262,6 @@ export async function POST(request: NextRequest) {
       .map((c) => c.text)
       .join('');
 
-    // Parse JSON response
     let scripts: LongformScript[];
     try {
       const parsed = JSON.parse(text);
@@ -112,7 +272,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'AI returned invalid JSON' }, { status: 502 });
     }
 
-    // Validate structure
     scripts = scripts.map((s: any) => ({
       variant: s.variant || 'default',
       hook: s.hook || '',
@@ -127,7 +286,6 @@ export async function POST(request: NextRequest) {
             : [],
     }));
 
-    // Track usage (free, but log cost for admin)
     trackAnthropicUsage({
       companyId,
       userId,

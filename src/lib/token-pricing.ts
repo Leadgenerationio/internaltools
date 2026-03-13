@@ -27,6 +27,8 @@ export const TOKEN_COSTS = {
   LONGFORM_VIDEO_NO_BROLL: 10,
   /** Longform script generation — included free, costs 0 tokens */
   LONGFORM_SCRIPTS: 0,
+  /** Longform voiceover generation (per script) — new wizard flow */
+  LONGFORM_VOICEOVER: 2,
 } as const;
 
 export type TokenOperation = keyof typeof TOKEN_COSTS;

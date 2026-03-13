@@ -1,1545 +1,267 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import UserMenu from '@/components/UserMenu';
-import type { LongformScript, LongformBrief, VoiceoverConfig, CaptionConfig, LongformResultItem, LongformScene } from '@/lib/longform-types';
+import type {
+  LongformScriptV2, LongformWizardStep, VoiceoverConfig, CaptionConfig, LongformResultItem,
+} from '@/lib/longform-types';
 import { DEFAULT_VOICE_CONFIG, DEFAULT_CAPTION_CONFIG } from '@/lib/longform-types';
+import type { MusicTrack } from '@/lib/types';
 
-type WizardStep = 'script' | 'scripts' | 'configure' | 'generate' | 'results' | 'editor';
-type ScriptMode = 'paste' | 'generate';
+import LongformWizardShell from '@/components/longform/LongformWizardShell';
+import PromptStep from '@/components/longform/PromptStep';
+import VoiceEditStep from '@/components/longform/VoiceEditStep';
+import BuildScenesStep from '@/components/longform/BuildScenesStep';
+import MusicStep from '@/components/longform/MusicStep';
+import CaptionsStep from '@/components/longform/CaptionsStep';
+import FinalizeStep from '@/components/longform/FinalizeStep';
 
-const STEPS: { id: WizardStep; label: string }[] = [
-  { id: 'script', label: 'Script' },
-  { id: 'scripts', label: 'Review' },
-  { id: 'configure', label: 'Configure' },
-  { id: 'generate', label: 'Generate' },
-  { id: 'results', label: 'Results' },
-];
+const STORAGE_KEY = 'longform_wizard_v2';
+const JOB_KEY = 'longform_job_id';
 
-interface Voice {
-  id: string;
-  name: string;
-  category: string;
-  previewUrl: string;
-  accent: string;
-  gender: string;
-  age: string;
-}
-
-// Models available for b-roll generation (subset suitable for longform)
-const BROLL_MODELS = [
-  { id: 'bytedance/seedance-1.5-pro', label: 'Seedance 1.5', badge: 'Very Fast', duration: 8, tokenCost: 3 },
-  { id: 'kling-2.6/text-to-video', label: 'Kling 2.6', badge: 'Fast', duration: 5, tokenCost: 7 },
-  { id: 'veo3_fast', label: 'Veo 3.1 Fast', badge: 'Fast + Audio', duration: 8, tokenCost: 5 },
-  { id: 'sora-2-text-to-video', label: 'Sora 2', badge: 'Budget', duration: 10, tokenCost: 3 },
-  { id: 'sora-2-pro-text-to-video', label: 'Sora 2 Pro', badge: 'HD Quality', duration: 10, tokenCost: 5 },
-  { id: 'veo3', label: 'Veo 3.1 Quality', badge: 'Premium', duration: 8, tokenCost: 25 },
-];
-
-/**
- * Normalize a video URL: convert external Supabase/S3 URLs to /api/files proxy.
- * This ensures videos play regardless of bucket RLS policies.
- */
-function normalizeVideoUrl(url: string): string {
-  if (!url) return url;
-  // Already an /api/files URL — leave it
-  if (url.startsWith('/api/files')) return url;
-  // Relative URL — leave it
-  if (url.startsWith('/')) return url;
-  // External Supabase URL — extract path and proxy through /api/files
-  const match = url.match(/\/object\/public\/[^/]+\/(.+)$/);
-  if (match) return `/api/files?path=${encodeURIComponent(match[1])}`;
-  // Other S3 URL patterns — try to extract outputs/ or longform/ path
-  const pathMatch = url.match(/(outputs\/[^\s?#]+|longform\/[^\s?#]+)/);
-  if (pathMatch) return `/api/files?path=${encodeURIComponent(pathMatch[1])}`;
-  return url;
-}
+const VALID_STEPS: LongformWizardStep[] = ['prompt', 'voice-edit', 'build-scenes', 'music', 'captions', 'finalize'];
 
 export default function LongformVideoPage() {
   const { status } = useSession();
   const router = useRouter();
 
-  useEffect(() => {
-    if (status === 'unauthenticated') router.replace('/login');
-  }, [status, router]);
-
-  // ── Resume pending job on page load ──────────────────────────────────────
-  const resumeAttempted = useRef(false);
-  useEffect(() => {
-    if (status !== 'authenticated' || resumeAttempted.current) return;
-    resumeAttempted.current = true;
-
-    const savedJobId = localStorage.getItem('longform_job_id');
-    if (!savedJobId) return;
-
-    // Check job status and resume if still relevant
-    (async () => {
-      setResumingJob(true);
-      try {
-        const res = await fetch(`/api/jobs/${savedJobId}?type=longform`);
-        if (!res.ok) {
-          localStorage.removeItem('longform_job_id');
-          setResumingJob(false);
-          return;
-        }
-
-        const data = await res.json();
-
-        if (data.state === 'completed' && data.result) {
-          // Job finished — show results
-          const r = data.result as any;
-          setResults(r.videos || []);
-          setFailedCount(r.failed || 0);
-          setTokensUsed(r.tokensUsed || 0);
-          setJobId(savedJobId);
-          setStep('results');
-          localStorage.removeItem('longform_job_id');
-        } else if (data.state === 'failed') {
-          // Job failed — show error
-          setJobId(savedJobId);
-          setGenerateError(data.error || 'Generation failed');
-          setStep('generate');
-          localStorage.removeItem('longform_job_id');
-        } else if (data.state === 'active' || data.state === 'waiting') {
-          // Job still running — resume polling
-          setJobId(savedJobId);
-          setGenerating(true);
-          setProgress(data.progress || 0);
-          setStep('generate');
-
-          const abort = new AbortController();
-          abortRef.current = abort;
-
-          const { pollJob } = await import('@/lib/poll-job');
-          const result = await pollJob(savedJobId, 'longform', {
-            onProgress: (p) => setProgress(p),
-            signal: abort.signal,
-          });
-
-          if (result.state === 'completed' && result.result) {
-            const r = result.result as any;
-            setResults(r.videos || []);
-            setFailedCount(r.failed || 0);
-            setTokensUsed(r.tokensUsed || 0);
-            setStep('results');
-            localStorage.removeItem('longform_job_id');
-          } else if (result.state === 'failed') {
-            setGenerateError(result.error || 'Generation failed');
-            localStorage.removeItem('longform_job_id');
-          }
-
-          setGenerating(false);
-          abortRef.current = null;
-        } else {
-          localStorage.removeItem('longform_job_id');
-        }
-      } catch {
-        localStorage.removeItem('longform_job_id');
-      } finally {
-        setResumingJob(false);
-      }
-    })();
-  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Wizard state
-  const [step, setStep] = useState<WizardStep>('script');
-  const [scriptMode, setScriptMode] = useState<ScriptMode>('paste');
-
-  // Paste mode
-  const [pastedScript, setPastedScript] = useState('');
-  const [hookMode, setHookMode] = useState<'none' | 'write' | 'ai'>('none');
-  const [customHook, setCustomHook] = useState('');
-  const [aiHooks, setAiHooks] = useState<string[]>([]);
-  const [selectedHookIndex, setSelectedHookIndex] = useState<number | null>(null);
-  const [generatingHooks, setGeneratingHooks] = useState(false);
-  const [hookError, setHookError] = useState<string | null>(null);
-  const [pastedCta, setPastedCta] = useState('');
-
-  // AI Generate mode
-  const [brief, setBrief] = useState<LongformBrief>({
-    productService: '',
-    targetAudience: '',
-    offer: '',
-    keyBenefits: '',
-    cta: '',
-    tone: 'Friendly, trustworthy, slightly urgent',
-    language: 'English',
-    numVariants: 3,
-  });
-
-  // Scripts
-  const [scripts, setScripts] = useState<LongformScript[]>([]);
-  const [selectedScripts, setSelectedScripts] = useState<Set<number>>(new Set());
-  const [generatingScripts, setGeneratingScripts] = useState(false);
-  const [scriptError, setScriptError] = useState<string | null>(null);
-
-  // Configure
-  const [voiceConfig, setVoiceConfig] = useState<VoiceoverConfig>({ ...DEFAULT_VOICE_CONFIG });
-  const [captionConfig, setCaptionConfig] = useState<CaptionConfig>({ ...DEFAULT_CAPTION_CONFIG });
-  const [skipBroll, setSkipBroll] = useState(false);
-  const [videoModel, setVideoModel] = useState('veo3_fast');
-  const [voices, setVoices] = useState<Voice[]>([]);
-  const [loadingVoices, setLoadingVoices] = useState(false);
-  const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [voiceSearch, setVoiceSearch] = useState('');
-  const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
-  const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
-  const [captionTemplates, setCaptionTemplates] = useState<string[]>([]);
-  const [loadingTemplates, setLoadingTemplates] = useState(false);
-
-  // Generate
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [progress, setProgress] = useState(0);
-  const [generating, setGenerating] = useState(false);
-  const [generateError, setGenerateError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const [resumingJob, setResumingJob] = useState(false);
-
-  // Results
+  // ─── Wizard state ───────────────────────────────────────────────────────────
+  const [step, setStep] = useState<LongformWizardStep>('prompt');
+  const [prompt, setPrompt] = useState('');
+  const [numScripts, setNumScripts] = useState(3);
+  const [language, setLanguage] = useState('English');
+  const [scripts, setScripts] = useState<LongformScriptV2[]>([]);
+  const [voiceConfig] = useState<VoiceoverConfig>(DEFAULT_VOICE_CONFIG);
+  const [music, setMusic] = useState<MusicTrack | null>(null);
+  const [captionConfig, setCaptionConfig] = useState<CaptionConfig>(DEFAULT_CAPTION_CONFIG);
+  const [aspectRatio, setAspectRatio] = useState('9:16');
   const [results, setResults] = useState<LongformResultItem[]>([]);
-  const [failedCount, setFailedCount] = useState(0);
-  const [tokensUsed, setTokensUsed] = useState(0);
+  const [isGenerating, setIsGenerating] = useState(false);
 
-  // Editor
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [editingScenes, setEditingScenes] = useState<LongformScene[]>([]);
-  const [editingVoiceoverUrl, setEditingVoiceoverUrl] = useState('');
-  const [editingScriptText, setEditingScriptText] = useState('');
-  // Per-scene regen state: allows multiple scenes to regenerate simultaneously
-  const [sceneRegenState, setSceneRegenState] = useState<Record<number, {
-    editing: boolean; prompt: string; model: string; loading: boolean; error?: string;
-  }>>({});
-  const [reassembling, setReassembling] = useState(false);
-  const [reassembleProgress, setReassembleProgress] = useState(0);
+  // ─── Completed steps tracking ───────────────────────────────────────────────
+  const [completedSteps, setCompletedSteps] = useState<Set<LongformWizardStep>>(new Set());
 
-  // ── Paste mode handlers ──────────────────────────────────────────────────
+  const markComplete = useCallback((s: LongformWizardStep) => {
+    setCompletedSteps((prev) => new Set([...prev, s]));
+  }, []);
 
-  const handleGenerateHooks = useCallback(async () => {
-    if (!pastedScript.trim() || generatingHooks) return;
-    setGeneratingHooks(true);
-    setHookError(null);
-    setAiHooks([]);
-    setSelectedHookIndex(null);
+  // ─── Persistence ────────────────────────────────────────────────────────────
+  const initialized = useRef(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout>>();
 
+  // Restore state from localStorage
+  useEffect(() => {
+    if (initialized.current) return;
+    initialized.current = true;
     try {
-      const res = await fetch('/api/longform/generate-hooks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scriptBody: pastedScript.trim(), count: 5 }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: 'Failed to generate hooks' }));
-        throw new Error(data.error || `Failed (${res.status})`);
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const state = JSON.parse(saved);
+        if (state.prompt) setPrompt(state.prompt);
+        if (state.numScripts) setNumScripts(state.numScripts);
+        if (state.language) setLanguage(state.language);
+        // Only restore V2 scripts (have fullText + scenes), skip legacy format
+        if (state.scripts?.length && state.scripts[0]?.fullText) setScripts(state.scripts);
+        if (state.music) setMusic(state.music);
+        if (state.captionConfig) setCaptionConfig(state.captionConfig);
+        if (state.aspectRatio) setAspectRatio(state.aspectRatio);
+        if (state.step && VALID_STEPS.includes(state.step)) setStep(state.step);
+        if (state.completedSteps) {
+          const valid = (state.completedSteps as string[]).filter((s) => VALID_STEPS.includes(s as LongformWizardStep));
+          setCompletedSteps(new Set(valid as LongformWizardStep[]));
+        }
       }
+    } catch { /* ignore */ }
 
-      const data = await res.json();
-      setAiHooks(data.hooks || []);
-      if (data.hooks?.length > 0) setSelectedHookIndex(0);
-    } catch (err: any) {
-      setHookError(err.message);
+    // Clean up old wizard state key
+    localStorage.removeItem('longform_wizard_state');
+
+    // Check for pending job
+    const pendingJobId = localStorage.getItem(JOB_KEY);
+    if (pendingJobId) {
+      resumeJob(pendingJobId);
+    }
+  }, []);
+
+  // Debounced save to localStorage
+  useEffect(() => {
+    if (!initialized.current) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          step, prompt, numScripts, language, scripts, music, captionConfig, aspectRatio,
+          completedSteps: [...completedSteps],
+        }));
+      } catch { /* ignore */ }
+    }, 2000);
+  }, [step, prompt, numScripts, language, scripts, music, captionConfig, aspectRatio, completedSteps]);
+
+  // ─── Job resume ─────────────────────────────────────────────────────────────
+  const resumeJob = async (jobId: string) => {
+    setStep('finalize');
+    setIsGenerating(true);
+    try {
+      const { pollJob } = await import('@/lib/poll-job');
+      const result = await pollJob(jobId, 'longform');
+      localStorage.removeItem(JOB_KEY);
+      if (result.state === 'completed' && result.result) {
+        const r = result.result as any;
+        setResults(r.videos || []);
+      } else if (result.state === 'failed') {
+        // Stay on finalize step so user can retry
+      }
+    } catch {
+      localStorage.removeItem(JOB_KEY);
     } finally {
-      setGeneratingHooks(false);
+      setIsGenerating(false);
     }
-  }, [pastedScript, generatingHooks]);
+  };
 
-  const handlePastedContinue = useCallback(() => {
-    let hook = '';
-    if (hookMode === 'write') {
-      hook = customHook.trim();
-    } else if (hookMode === 'ai' && selectedHookIndex !== null && aiHooks[selectedHookIndex]) {
-      hook = aiHooks[selectedHookIndex];
-    }
-
-    const script: LongformScript = {
-      variant: 'custom',
-      hook,
-      body: pastedScript.trim(),
-      cta: pastedCta.trim(),
-      suggestedBroll: [],
-    };
-
-    setScripts([script]);
-    setSelectedScripts(new Set([0]));
-    setStep('configure');
-  }, [pastedScript, hookMode, customHook, aiHooks, selectedHookIndex, pastedCta]);
-
-  // ── AI Generate mode handlers ─────────────────────────────────────────────
-
-  const handleGenerateScripts = useCallback(async () => {
-    if (!brief.productService.trim()) return;
-    setGeneratingScripts(true);
-    setScriptError(null);
-
+  // ─── Script generation ─────────────────────────────────────────────────────
+  const handleGenerate = async () => {
+    setIsGenerating(true);
     try {
       const res = await fetch('/api/longform/generate-scripts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(brief),
+        body: JSON.stringify({ prompt, numScripts, language }),
       });
-
       if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: 'Script generation failed' }));
+        const data = await res.json().catch(() => ({ error: 'Failed' }));
         throw new Error(data.error || `Failed (${res.status})`);
       }
-
       const data = await res.json();
-      setScripts(data.scripts);
-      setSelectedScripts(new Set(data.scripts.map((_: any, i: number) => i)));
-      setStep('scripts');
+      setScripts(data.scripts || []);
+      markComplete('prompt');
+      setStep('voice-edit');
     } catch (err: any) {
-      setScriptError(err.message);
+      throw err; // PromptStep handles the error display
     } finally {
-      setGeneratingScripts(false);
+      setIsGenerating(false);
     }
-  }, [brief]);
-
-  // ── Configure Step — load voices ──────────────────────────────────────────
-
-  const loadVoices = useCallback(async () => {
-    if (voices.length > 0 || loadingVoices) return;
-    setLoadingVoices(true);
-    setVoiceError(null);
-    try {
-      const res = await fetch('/api/longform/voices');
-      if (res.ok) {
-        const data = await res.json();
-        setVoices(data.voices || []);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setVoiceError(data.error || `Failed to load voices (${res.status})`);
-      }
-    } catch {
-      setVoiceError('Network error — could not reach voice API');
-    } finally {
-      setLoadingVoices(false);
-    }
-  }, [voices.length, loadingVoices]);
-
-  const loadCaptionTemplates = useCallback(async () => {
-    if (captionTemplates.length > 0 || loadingTemplates) return;
-    setLoadingTemplates(true);
-    try {
-      const res = await fetch('/api/longform/caption-templates');
-      if (res.ok) {
-        const data = await res.json();
-        setCaptionTemplates(data.templates || []);
-      }
-    } catch { /* ignore */ } finally {
-      setLoadingTemplates(false);
-    }
-  }, [captionTemplates.length, loadingTemplates]);
-
-  useEffect(() => {
-    if (step === 'configure') {
-      loadVoices();
-      loadCaptionTemplates();
-    }
-  }, [step, loadVoices, loadCaptionTemplates]);
-
-  const handlePlayPreview = useCallback((voice: Voice) => {
-    if (!voice.previewUrl) return;
-
-    if (playingVoiceId === voice.id && voiceAudioRef.current) {
-      voiceAudioRef.current.pause();
-      voiceAudioRef.current = null;
-      setPlayingVoiceId(null);
-      return;
-    }
-
-    if (voiceAudioRef.current) {
-      voiceAudioRef.current.pause();
-      voiceAudioRef.current = null;
-    }
-
-    const audio = new Audio(voice.previewUrl);
-    voiceAudioRef.current = audio;
-    setPlayingVoiceId(voice.id);
-
-    audio.play().catch(() => setPlayingVoiceId(null));
-    audio.onended = () => { setPlayingVoiceId(null); voiceAudioRef.current = null; };
-    audio.onerror = () => { setPlayingVoiceId(null); voiceAudioRef.current = null; };
-  }, [playingVoiceId]);
-
-  useEffect(() => {
-    return () => {
-      if (voiceAudioRef.current) {
-        voiceAudioRef.current.pause();
-        voiceAudioRef.current = null;
-      }
-    };
-  }, []);
-
-  // ── Generate Step ─────────────────────────────────────────────────────────
-
-  const handleGenerate = useCallback(async () => {
-    const selected = scripts.filter((_, i) => selectedScripts.has(i));
-    if (selected.length === 0) return;
-
-    setGenerating(true);
-    setGenerateError(null);
-    setProgress(0);
-
-    const abort = new AbortController();
-    abortRef.current = abort;
-
-    try {
-      const res = await fetch('/api/longform/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scripts: selected,
-          voiceConfig,
-          captionConfig,
-          skipBroll,
-          videoModel: skipBroll ? undefined : videoModel,
-        }),
-        signal: abort.signal,
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: 'Failed to start generation' }));
-        throw new Error(data.error || `Failed (${res.status})`);
-      }
-
-      const { jobId: jid } = await res.json();
-      setJobId(jid);
-      setStep('generate');
-      localStorage.setItem('longform_job_id', jid);
-
-      const { pollJob } = await import('@/lib/poll-job');
-      const result = await pollJob(jid, 'longform', {
-        onProgress: (p) => setProgress(p),
-        signal: abort.signal,
-      });
-
-      if (result.state === 'completed' && result.result) {
-        const r = result.result as any;
-        setResults(r.videos || []);
-        setFailedCount(r.failed || 0);
-        setTokensUsed(r.tokensUsed || 0);
-        setStep('results');
-        localStorage.removeItem('longform_job_id');
-      } else if (result.state === 'failed') {
-        localStorage.removeItem('longform_job_id');
-        throw new Error(result.error || 'Generation failed');
-      }
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        setGenerateError(err.message);
-      }
-    } finally {
-      setGenerating(false);
-      abortRef.current = null;
-    }
-  }, [scripts, selectedScripts, voiceConfig, captionConfig, skipBroll, videoModel]);
-
-  const handleCancel = () => {
-    abortRef.current?.abort();
   };
 
-  // ── Editor handlers ───────────────────────────────────────────────────────
+  // ─── Step navigation ───────────────────────────────────────────────────────
+  const goToStep = (target: LongformWizardStep) => {
+    setStep(target);
+  };
 
-  const handleEditScenes = useCallback((resultIndex: number) => {
-    const r = results[resultIndex];
-    if (!r.scenes || !r.voiceoverUrl) return;
-    setEditingIndex(resultIndex);
-    setEditingScenes([...r.scenes]);
-    setEditingVoiceoverUrl(r.voiceoverUrl);
-    setEditingScriptText(r.scriptText || '');
-    setSceneRegenState({});
-    setGenerateError(null);
-    setStep('editor');
-  }, [results]);
+  const handleStartNew = () => {
+    setStep('prompt');
+    setPrompt('');
+    setNumScripts(3);
+    setLanguage('English');
+    setScripts([]);
+    setMusic(null);
+    setCaptionConfig(DEFAULT_CAPTION_CONFIG);
+    setAspectRatio('9:16');
+    setResults([]);
+    setCompletedSteps(new Set());
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(JOB_KEY);
+  };
 
-  const openRegenEditor = useCallback((sceneIdx: number) => {
-    setSceneRegenState(prev => ({
-      ...prev,
-      [sceneIdx]: { editing: true, prompt: editingScenes[sceneIdx]?.prompt || '', model: videoModel, loading: false },
-    }));
-  }, [editingScenes, videoModel]);
-
-  const closeRegenEditor = useCallback((sceneIdx: number) => {
-    setSceneRegenState(prev => {
-      const next = { ...prev };
-      delete next[sceneIdx];
-      return next;
-    });
-  }, []);
-
-  const updateRegenState = useCallback((sceneIdx: number, updates: Partial<{ prompt: string; model: string }>) => {
-    setSceneRegenState(prev => ({
-      ...prev,
-      [sceneIdx]: { ...prev[sceneIdx], ...updates },
-    }));
-  }, []);
-
-  const handleRegenScene = useCallback(async (sceneIdx: number) => {
-    const state = sceneRegenState[sceneIdx];
-    if (!state || state.loading) return;
-
-    setSceneRegenState(prev => ({
-      ...prev,
-      [sceneIdx]: { ...prev[sceneIdx], loading: true, error: undefined },
-    }));
-
-    try {
-      const res = await fetch('/api/longform/regenerate-scene', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: state.prompt, videoModel: state.model }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: 'Failed to regenerate' }));
-        throw new Error(data.error || `Failed (${res.status})`);
-      }
-
-      const { jobId: jid } = await res.json();
-
-      const { pollJob } = await import('@/lib/poll-job');
-      const result = await pollJob(jid, 'longform', { onProgress: () => {} });
-
-      if (result.state === 'completed' && result.result) {
-        const r = result.result as any;
-        setEditingScenes(prev => prev.map((s, i) => i === sceneIdx ? {
-          ...s,
-          clipUrl: r.clipUrl,
-          clipFilename: r.clipFilename,
-          durationSeconds: r.durationSeconds,
-          prompt: r.prompt || state.prompt,
-        } : s));
-        setSceneRegenState(prev => {
-          const next = { ...prev };
-          delete next[sceneIdx];
-          return next;
-        });
-      } else {
-        throw new Error(result.error || 'Scene regeneration failed');
-      }
-    } catch (err: any) {
-      setSceneRegenState(prev => ({
-        ...prev,
-        [sceneIdx]: { ...prev[sceneIdx], loading: false, error: err.message },
-      }));
-    }
-  }, [sceneRegenState]);
-
-  const handleReassemble = useCallback(async () => {
-    if (reassembling || editingIndex === null) return;
-    setReassembling(true);
-    setReassembleProgress(0);
-
-    try {
-      const res = await fetch('/api/longform/reassemble', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scenes: editingScenes.map((s, i) => ({ clipUrl: s.clipUrl, order: i, prompt: s.prompt })),
-          voiceoverUrl: editingVoiceoverUrl,
-          captionConfig,
-          scriptText: editingScriptText,
-        }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: 'Failed to reassemble' }));
-        throw new Error(data.error || `Failed (${res.status})`);
-      }
-
-      const { jobId: jid } = await res.json();
-
-      const { pollJob } = await import('@/lib/poll-job');
-      const result = await pollJob(jid, 'longform', {
-        onProgress: (p) => setReassembleProgress(p),
-      });
-
-      if (result.state === 'completed' && result.result) {
-        const r = result.result as any;
-        // Update the result with the new video
-        const updated = [...results];
-        updated[editingIndex] = {
-          ...updated[editingIndex],
-          videoUrl: r.videoUrl,
-          durationSeconds: r.durationSeconds,
-          captioned: r.captioned,
-          scenes: editingScenes,
-        };
-        setResults(updated);
-        setStep('results');
-        setEditingIndex(null);
-      } else {
-        throw new Error(result.error || 'Reassembly failed');
-      }
-    } catch (err: any) {
-      setGenerateError(err.message);
-    } finally {
-      setReassembling(false);
-    }
-  }, [editingScenes, editingVoiceoverUrl, editingScriptText, captionConfig, editingIndex, results, reassembling]);
-
-  const handleReplaceScene = useCallback(async (sceneIdx: number, file: File) => {
-    // Upload the file via /api/upload
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
-      if (!res.ok) throw new Error('Upload failed');
-      const data = await res.json();
-
-      const updated = [...editingScenes];
-      updated[sceneIdx] = {
-        ...updated[sceneIdx],
-        clipUrl: data.path || data.url,
-        prompt: `Uploaded: ${file.name}`,
-        durationSeconds: data.duration || updated[sceneIdx].durationSeconds,
-      };
-      setEditingScenes(updated);
-    } catch (err: any) {
-      setGenerateError(`Upload failed: ${err.message}`);
-    }
-  }, [editingScenes]);
-
-  const handleDeleteScene = useCallback((sceneIdx: number) => {
-    if (editingScenes.length <= 1) return; // must keep at least 1
-    const updated = editingScenes.filter((_, i) => i !== sceneIdx).map((s, i) => ({ ...s, order: i }));
-    setEditingScenes(updated);
-  }, [editingScenes]);
-
-  // ── Token cost calculation ────────────────────────────────────────────────
-
-  const selectedCount = selectedScripts.size;
-  const selectedModel = BROLL_MODELS.find((m) => m.id === videoModel);
-  const LONGFORM_BASE = 5;
-  const perVariantCost = skipBroll ? 10 : (LONGFORM_BASE + 3 * (selectedModel?.tokenCost || 5));
-  const totalTokenCost = selectedCount * perVariantCost;
-
-  // ── Loading ───────────────────────────────────────────────────────────────
-
-  if (status === 'loading' || status === 'unauthenticated' || resumingJob) {
-    return (
-      <main className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
-          {resumingJob && <p className="text-gray-400 text-sm mt-3">Checking for pending job...</p>}
-        </div>
-      </main>
-    );
+  // ─── Auth guard ─────────────────────────────────────────────────────────────
+  if (status === 'loading') {
+    return <div className="min-h-screen bg-gray-950 flex items-center justify-center text-gray-500">Loading...</div>;
+  }
+  if (status === 'unauthenticated') {
+    router.push('/login');
+    return null;
   }
 
   return (
-    <main className="min-h-screen bg-gray-950">
+    <>
       {/* Header */}
-      <header className="border-b border-gray-800 px-3 sm:px-6 py-3 sm:py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
-          <Link href="/" className="text-lg sm:text-xl font-bold text-white shrink-0 hover:text-blue-400 transition-colors">Ad Maker</Link>
-
-          <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide flex-1 justify-center min-w-0">
-            {[...STEPS, ...(step === 'editor' ? [{ id: 'editor' as WizardStep, label: 'Editor' }] : [])].map((s, i) => {
-              const currentIndex = [...STEPS, ...(step === 'editor' ? [{ id: 'editor' as WizardStep, label: 'Editor' }] : [])].findIndex((st) => st.id === step);
-              const isPast = i < currentIndex;
-              const isCurrent = s.id === step;
-              return (
-                <div key={s.id} className="flex items-center shrink-0">
-                  {i > 0 && <div className={`w-4 sm:w-8 h-px ${isPast ? 'bg-blue-500' : 'bg-gray-700'}`} />}
-                  <div className={`px-2 sm:px-3 py-1 rounded-full text-xs sm:text-sm font-medium whitespace-nowrap transition-colors ${
-                    isCurrent ? 'bg-blue-500 text-white' : isPast ? 'bg-blue-500/20 text-blue-400' : 'bg-gray-800 text-gray-500'
-                  }`}>
-                    {s.label}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
+      <div className="bg-gray-950 border-b border-gray-800">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+          <Link href="/" className="text-xl font-bold text-white hover:text-blue-400 transition-colors">
+            Ad Maker
+          </Link>
           <UserMenu />
         </div>
-      </header>
-
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-10">
-        {/* ── Script Step ────────────────────────────────────────────── */}
-        {step === 'script' && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-2xl font-bold text-white mb-1">Your Script</h2>
-              <p className="text-gray-400 text-sm">Paste your own script or generate one with AI.</p>
-            </div>
-
-            {/* Mode tabs */}
-            <div className="flex gap-1 bg-gray-900 rounded-lg p-1 w-fit">
-              <button
-                onClick={() => setScriptMode('paste')}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                  scriptMode === 'paste' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-gray-300'
-                }`}
-              >
-                Paste Script
-              </button>
-              <button
-                onClick={() => setScriptMode('generate')}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                  scriptMode === 'generate' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-gray-300'
-                }`}
-              >
-                AI Generate
-              </button>
-            </div>
-
-            {/* ── Paste Mode ─────────────────────────────────────────── */}
-            {scriptMode === 'paste' && (
-              <div className="space-y-5">
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-1">Script *</label>
-                  <textarea
-                    value={pastedScript}
-                    onChange={(e) => setPastedScript(e.target.value)}
-                    placeholder="Paste your full ad script here..."
-                    rows={8}
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm leading-relaxed"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">{pastedScript.trim().split(/\s+/).filter(Boolean).length} words</p>
-                </div>
-
-                {/* Hook section */}
-                <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3">
-                  <div>
-                    <h3 className="text-white font-semibold text-sm">Hook (optional)</h3>
-                    <p className="text-xs text-gray-500">A 2-5 second attention-grabbing opener before the main script.</p>
-                  </div>
-
-                  <div className="flex gap-2">
-                    {(['none', 'write', 'ai'] as const).map((mode) => (
-                      <button
-                        key={mode}
-                        onClick={() => setHookMode(mode)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                          hookMode === mode
-                            ? 'bg-blue-500/20 border border-blue-500 text-blue-400'
-                            : 'bg-gray-800 border border-gray-700 text-gray-400 hover:border-gray-600'
-                        }`}
-                      >
-                        {mode === 'none' ? 'No Hook' : mode === 'write' ? 'Write My Own' : 'AI Generate'}
-                      </button>
-                    ))}
-                  </div>
-
-                  {hookMode === 'write' && (
-                    <textarea
-                      value={customHook}
-                      onChange={(e) => setCustomHook(e.target.value)}
-                      placeholder="e.g. Stop scrolling if you own a home in the UK..."
-                      rows={2}
-                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                    />
-                  )}
-
-                  {hookMode === 'ai' && (
-                    <div className="space-y-3">
-                      {aiHooks.length === 0 && !generatingHooks && (
-                        <button
-                          onClick={handleGenerateHooks}
-                          disabled={!pastedScript.trim() || generatingHooks}
-                          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
-                        >
-                          Generate Hook Ideas
-                        </button>
-                      )}
-
-                      {generatingHooks && (
-                        <div className="flex items-center gap-2 text-gray-400 text-sm">
-                          <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                          Generating hooks...
-                        </div>
-                      )}
-
-                      {hookError && <div className="text-red-400 text-sm">{hookError}</div>}
-
-                      {aiHooks.length > 0 && (
-                        <div className="space-y-2">
-                          {aiHooks.map((hook, i) => (
-                            <button
-                              key={i}
-                              onClick={() => setSelectedHookIndex(i)}
-                              className={`w-full text-left px-3 py-2.5 rounded-lg text-sm transition-colors ${
-                                selectedHookIndex === i
-                                  ? 'bg-blue-500/20 border border-blue-500 text-white'
-                                  : 'bg-gray-800 border border-gray-700 text-gray-300 hover:border-gray-600'
-                              }`}
-                            >
-                              {hook}
-                            </button>
-                          ))}
-                          <button
-                            onClick={handleGenerateHooks}
-                            disabled={generatingHooks}
-                            className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                          >
-                            Regenerate hooks
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Optional CTA */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-1">CTA (optional)</label>
-                  <input
-                    type="text"
-                    value={pastedCta}
-                    onChange={(e) => setPastedCta(e.target.value)}
-                    placeholder="e.g. Click the link below to get started"
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                  />
-                </div>
-
-                <button
-                  onClick={handlePastedContinue}
-                  disabled={!pastedScript.trim()}
-                  className="w-full sm:w-auto px-8 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
-                >
-                  Continue to Configure
-                </button>
-              </div>
-            )}
-
-            {/* ── AI Generate Mode ───────────────────────────────────── */}
-            {scriptMode === 'generate' && (
-              <div className="space-y-4">
-                <div className="grid gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-1">Product / Service *</label>
-                    <input type="text" value={brief.productService}
-                      onChange={(e) => setBrief({ ...brief, productService: e.target.value })}
-                      placeholder="e.g. Free solar panel installation for UK homeowners"
-                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-1">Target Audience</label>
-                    <input type="text" value={brief.targetAudience}
-                      onChange={(e) => setBrief({ ...brief, targetAudience: e.target.value })}
-                      placeholder="e.g. Homeowners in the UK, aged 30-65"
-                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-1">Offer</label>
-                    <input type="text" value={brief.offer}
-                      onChange={(e) => setBrief({ ...brief, offer: e.target.value })}
-                      placeholder="e.g. Government-backed scheme covers full cost"
-                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-1">Key Benefits</label>
-                    <textarea value={brief.keyBenefits}
-                      onChange={(e) => setBrief({ ...brief, keyBenefits: e.target.value })}
-                      placeholder="e.g. Free installation, reduce bills by 70%, government-funded"
-                      rows={3}
-                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-1">CTA</label>
-                      <input type="text" value={brief.cta}
-                        onChange={(e) => setBrief({ ...brief, cta: e.target.value })}
-                        placeholder="e.g. Enter your postcode to check"
-                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-1">Tone</label>
-                      <input type="text" value={brief.tone}
-                        onChange={(e) => setBrief({ ...brief, tone: e.target.value })}
-                        placeholder="e.g. Friendly, trustworthy"
-                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-1">Language</label>
-                      <select value={brief.language} onChange={(e) => setBrief({ ...brief, language: e.target.value })}
-                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                        {['English', 'Spanish', 'French', 'German', 'Italian', 'Portuguese', 'Dutch', 'Polish', 'Arabic', 'Hindi'].map((l) => (
-                          <option key={l} value={l}>{l}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-300 mb-1">Script Variants</label>
-                      <select value={brief.numVariants} onChange={(e) => setBrief({ ...brief, numVariants: Number(e.target.value) })}
-                        className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                        {[1, 2, 3, 4].map((n) => (
-                          <option key={n} value={n}>{n} variant{n !== 1 ? 's' : ''}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                {scriptError && (
-                  <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-4 py-3 rounded-lg">{scriptError}</div>
-                )}
-
-                <button
-                  onClick={handleGenerateScripts}
-                  disabled={!brief.productService.trim() || generatingScripts}
-                  className="w-full sm:w-auto px-8 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
-                >
-                  {generatingScripts ? 'Generating Scripts...' : 'Generate Scripts'}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── Scripts Step ────────────────────────────────────────────── */}
-        {step === 'scripts' && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-2xl font-bold text-white mb-1">Review Scripts</h2>
-              <p className="text-gray-400 text-sm">Select which variants to produce. Edit text directly if needed.</p>
-            </div>
-
-            <div className="space-y-4">
-              {scripts.map((script, i) => (
-                <div key={i} className={`border rounded-xl p-5 transition-colors ${
-                  selectedScripts.has(i) ? 'border-blue-500 bg-gray-900' : 'border-gray-800 bg-gray-900/50 opacity-60'
-                }`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <input type="checkbox" checked={selectedScripts.has(i)}
-                        onChange={() => {
-                          const next = new Set(selectedScripts);
-                          next.has(i) ? next.delete(i) : next.add(i);
-                          setSelectedScripts(next);
-                        }}
-                        className="w-5 h-5 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500" />
-                      <span className="text-sm font-semibold text-blue-400 uppercase tracking-wider">{script.variant}</span>
-                    </div>
-                  </div>
-                  <div className="space-y-3">
-                    {script.hook !== undefined && (
-                      <div>
-                        <label className="text-xs text-gray-500 uppercase tracking-wider font-medium">Hook</label>
-                        <textarea value={script.hook}
-                          onChange={(e) => { const u = [...scripts]; u[i] = { ...u[i], hook: e.target.value }; setScripts(u); }}
-                          rows={2} className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-white text-sm mt-1 focus:ring-1 focus:ring-blue-500 focus:border-transparent" />
-                      </div>
-                    )}
-                    <div>
-                      <label className="text-xs text-gray-500 uppercase tracking-wider font-medium">Body</label>
-                      <textarea value={script.body}
-                        onChange={(e) => { const u = [...scripts]; u[i] = { ...u[i], body: e.target.value }; setScripts(u); }}
-                        rows={4} className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-white text-sm mt-1 focus:ring-1 focus:ring-blue-500 focus:border-transparent" />
-                    </div>
-                    <div>
-                      <label className="text-xs text-gray-500 uppercase tracking-wider font-medium">CTA</label>
-                      <textarea value={script.cta}
-                        onChange={(e) => { const u = [...scripts]; u[i] = { ...u[i], cta: e.target.value }; setScripts(u); }}
-                        rows={2} className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-white text-sm mt-1 focus:ring-1 focus:ring-blue-500 focus:border-transparent" />
-                    </div>
-                    {script.suggestedBroll.length > 0 && (
-                      <div>
-                        <label className="text-xs text-gray-500 uppercase tracking-wider font-medium">Suggested B-Roll</label>
-                        <p className="text-xs text-gray-400 mt-1">{script.suggestedBroll.join(' / ')}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex gap-3">
-              <button onClick={() => setStep('script')} className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
-                Back
-              </button>
-              <button onClick={() => setStep('configure')} disabled={selectedScripts.size === 0}
-                className="px-8 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors">
-                Configure ({selectedScripts.size} selected)
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ── Configure Step ──────────────────────────────────────────── */}
-        {step === 'configure' && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-2xl font-bold text-white mb-1">Configure</h2>
-              <p className="text-gray-400 text-sm">Choose your voice, video model, caption style, and options.</p>
-            </div>
-
-            {/* Voice Selection */}
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-              <h3 className="text-white font-semibold">Voice</h3>
-
-              {loadingVoices ? (
-                <div className="flex items-center gap-2 text-gray-400 text-sm">
-                  <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                  Loading voices...
-                </div>
-              ) : voiceError ? (
-                <div className="space-y-2">
-                  <p className="text-red-400 text-sm">{voiceError}</p>
-                  <button onClick={() => { setVoices([]); setVoiceError(null); loadVoices(); }}
-                    className="px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 hover:border-gray-500 transition-colors">
-                    Retry
-                  </button>
-                </div>
-              ) : voices.length > 0 ? (
-                <div className="space-y-3">
-                  <input type="text" value={voiceSearch} onChange={(e) => setVoiceSearch(e.target.value)}
-                    placeholder="Search voices..."
-                    className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm placeholder-gray-500 focus:ring-1 focus:ring-blue-500 focus:border-transparent" />
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-72 overflow-y-auto">
-                    {voices
-                      .filter((v) => {
-                        if (!voiceSearch.trim()) return true;
-                        const q = voiceSearch.toLowerCase();
-                        return v.name.toLowerCase().includes(q) || v.gender?.toLowerCase().includes(q) || v.accent?.toLowerCase().includes(q) || v.age?.toLowerCase().includes(q);
-                      })
-                      .map((v) => (
-                      <div key={v.id} onClick={() => setVoiceConfig({ ...voiceConfig, voiceId: v.id })}
-                        className={`flex items-center gap-2 text-left px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer ${
-                          voiceConfig.voiceId === v.id
-                            ? 'bg-blue-500/20 border border-blue-500 text-white'
-                            : 'bg-gray-800 border border-gray-700 text-gray-300 hover:border-gray-600'
-                        }`}>
-                        {v.previewUrl && (
-                          <button type="button" onClick={(e) => { e.stopPropagation(); handlePlayPreview(v); }}
-                            className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-colors ${
-                              playingVoiceId === v.id ? 'bg-blue-500 text-white' : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white'
-                            }`} title={playingVoiceId === v.id ? 'Stop' : 'Preview'}>
-                            {playingVoiceId === v.id ? (
-                              <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
-                            ) : (
-                              <svg className="w-3.5 h-3.5 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-                            )}
-                          </button>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <div className="font-medium truncate">{v.name}</div>
-                          <div className="text-xs text-gray-500">{[v.gender, v.accent, v.age].filter(Boolean).join(' / ')}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="text-xs text-gray-500">{voices.length} voices available</p>
-                </div>
-              ) : (
-                <p className="text-gray-500 text-sm">No voices available. ElevenLabs may not be configured.</p>
-              )}
-
-              {/* Voice settings */}
-              <div className="grid grid-cols-2 gap-4 pt-2">
-                <div>
-                  <label className="text-xs text-gray-400">Stability: {voiceConfig.stability.toFixed(1)}</label>
-                  <input type="range" min="0" max="1" step="0.1" value={voiceConfig.stability}
-                    onChange={(e) => setVoiceConfig({ ...voiceConfig, stability: Number(e.target.value) })}
-                    className="w-full accent-blue-500" />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-400">Similarity: {voiceConfig.similarityBoost.toFixed(1)}</label>
-                  <input type="range" min="0" max="1" step="0.1" value={voiceConfig.similarityBoost}
-                    onChange={(e) => setVoiceConfig({ ...voiceConfig, similarityBoost: Number(e.target.value) })}
-                    className="w-full accent-blue-500" />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-400">Speed: {voiceConfig.speed.toFixed(1)}x</label>
-                  <input type="range" min="0.5" max="2" step="0.1" value={voiceConfig.speed}
-                    onChange={(e) => setVoiceConfig({ ...voiceConfig, speed: Number(e.target.value) })}
-                    className="w-full accent-blue-500" />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-400">Style: {voiceConfig.style.toFixed(1)}</label>
-                  <input type="range" min="0" max="1" step="0.1" value={voiceConfig.style}
-                    onChange={(e) => setVoiceConfig({ ...voiceConfig, style: Number(e.target.value) })}
-                    className="w-full accent-blue-500" />
-                </div>
-              </div>
-            </div>
-
-            {/* B-Roll Options + Model Selection */}
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-              <h3 className="text-white font-semibold">B-Roll Video</h3>
-
-              <label className="flex items-center gap-3">
-                <input type="checkbox" checked={!skipBroll} onChange={(e) => setSkipBroll(!e.target.checked)}
-                  className="w-5 h-5 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500" />
-                <div>
-                  <div className="text-white text-sm font-medium">Generate AI B-Roll</div>
-                  <div className="text-xs text-gray-400">Create AI video clips to play over the voiceover</div>
-                </div>
-              </label>
-
-              {!skipBroll && (
-                <div className="pl-8 space-y-3">
-                  <label className="block text-xs text-gray-400 font-medium">Video Model</label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {BROLL_MODELS.map((m) => (
-                      <button key={m.id} onClick={() => setVideoModel(m.id)}
-                        className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-sm transition-colors text-left ${
-                          videoModel === m.id
-                            ? 'bg-blue-500/20 border border-blue-500 text-white'
-                            : 'bg-gray-800 border border-gray-700 text-gray-300 hover:border-gray-600'
-                        }`}>
-                        <div>
-                          <div className="font-medium">{m.label}</div>
-                          <div className="text-xs text-gray-500">{m.duration}s clips · {m.tokenCost} tokens/clip</div>
-                        </div>
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${
-                          videoModel === m.id ? 'bg-blue-500/30 text-blue-300' : 'bg-gray-700 text-gray-400'
-                        }`}>{m.badge}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Captions */}
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-              <h3 className="text-white font-semibold">Captions</h3>
-
-              <label className="flex items-center gap-3">
-                <input type="checkbox" checked={captionConfig.enabled}
-                  onChange={(e) => setCaptionConfig({ ...captionConfig, enabled: e.target.checked })}
-                  className="w-5 h-5 rounded bg-gray-700 border-gray-600 text-blue-500 focus:ring-blue-500" />
-                <div>
-                  <div className="text-white text-sm font-medium">Add Captions</div>
-                  <div className="text-xs text-gray-400">Word-by-word animated captions burned into the video</div>
-                </div>
-              </label>
-
-              {captionConfig.enabled && (
-                <div className="pl-8 space-y-3">
-                  <label className="block text-xs text-gray-400 font-medium">Caption Style</label>
-                  <div className="flex flex-wrap gap-2">
-                    {(captionTemplates.length > 0 ? captionTemplates : ['Hormozi 2', 'Beast', 'Sara', 'Ali', 'Kaizen', 'Matt', 'Jess', 'Jack', 'Nick', 'Laura', 'Hormozi 1', 'Dan', 'Devin', 'Maya', 'Karl', 'Iman', 'Noah']).map((t) => (
-                      <button key={t} onClick={() => setCaptionConfig({ ...captionConfig, template: t })}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                          captionConfig.template === t
-                            ? 'bg-blue-500/20 border border-blue-500 text-blue-400'
-                            : 'bg-gray-800 border border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-300'
-                        }`}>
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-xs text-gray-500">Powered by Submagic — requires cloud storage (S3/CDN) for processing.</p>
-                </div>
-              )}
-            </div>
-
-            {/* Cost summary */}
-            <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-white font-semibold">Token Cost</div>
-                  <div className="text-sm text-gray-400">
-                    {selectedCount} variant{selectedCount !== 1 ? 's' : ''} x {perVariantCost} tokens
-                    {!skipBroll ? ` (base + 3x ${selectedModel?.label || 'Veo 3.1 Fast'})` : ' (voiceover only)'}
-                  </div>
-                </div>
-                <div className="text-2xl font-bold text-blue-400">{totalTokenCost} tokens</div>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              {generateError && (
-                <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-4 py-3 rounded-lg flex items-start gap-2">
-                  <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
-                  <span>{generateError}</span>
-                </div>
-              )}
-
-              <div className="flex gap-3">
-                <button onClick={() => setStep(scriptMode === 'paste' ? 'script' : 'scripts')}
-                  className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
-                  Back
-                </button>
-                <button onClick={handleGenerate} disabled={generating || selectedCount === 0}
-                  className="px-8 py-2.5 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors">
-                  {generating ? (
-                    <span className="flex items-center gap-2">
-                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Starting...
-                    </span>
-                  ) : (
-                    `Generate ${selectedCount} Video${selectedCount !== 1 ? 's' : ''} (${totalTokenCost} tokens)`
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── Generate Step (Progress / Failure) ────────────────────── */}
-        {step === 'generate' && (
-          <div className="space-y-6 text-center py-10">
-            {generating ? (
-              <>
-                <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
-                <div>
-                  <h2 className="text-2xl font-bold text-white mb-2">Generating Videos</h2>
-                  <p className="text-gray-400 text-sm">This takes 5-15 minutes per variant. You can leave this page — the job runs in the background.</p>
-                </div>
-                <div className="max-w-md mx-auto">
-                  <div className="flex justify-between text-sm text-gray-400 mb-2">
-                    <span>Progress</span>
-                    <span>{progress}%</span>
-                  </div>
-                  <div className="w-full bg-gray-800 rounded-full h-3">
-                    <div className="bg-blue-500 h-3 rounded-full transition-all duration-500" style={{ width: `${progress}%` }} />
-                  </div>
-                </div>
-                <button onClick={handleCancel}
-                  className="px-6 py-2.5 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-600/40 font-medium rounded-lg transition-colors">
-                  Cancel
-                </button>
-              </>
-            ) : (
-              <>
-                <div className="w-16 h-16 flex items-center justify-center mx-auto">
-                  <svg className="w-12 h-12 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                  </svg>
-                </div>
-                <div>
-                  <h2 className="text-2xl font-bold text-white mb-2">
-                    {generateError?.includes('timed out') ? 'Still Processing' : 'Generation Failed'}
-                  </h2>
-                  <p className="text-gray-400 text-sm">
-                    {generateError?.includes('timed out')
-                      ? 'The job is still running in the background. Click below to check if it\'s finished.'
-                      : 'The video generation job could not complete.'}
-                  </p>
-                </div>
-                {generateError && !generateError.includes('timed out') && (
-                  <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-4 py-3 rounded-lg max-w-md mx-auto">{generateError}</div>
-                )}
-                <div className="flex gap-3 justify-center">
-                  <button onClick={() => { setStep('configure'); setGenerateError(null); setProgress(0); localStorage.removeItem('longform_job_id'); }}
-                    className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
-                    Back to Configure
-                  </button>
-                  {jobId && (
-                    <button onClick={async () => {
-                      setGenerating(true);
-                      setGenerateError(null);
-                      try {
-                        const res = await fetch(`/api/jobs/${jobId}?type=longform`);
-                        if (!res.ok) throw new Error('Could not reach job server');
-                        const data = await res.json();
-                        if (data.state === 'completed' && data.result) {
-                          const r = data.result as any;
-                          setResults(r.videos || []);
-                          setFailedCount(r.failed || 0);
-                          setTokensUsed(r.tokensUsed || 0);
-                          setStep('results');
-                          localStorage.removeItem('longform_job_id');
-                        } else if (data.state === 'failed') {
-                          setGenerateError(data.error || 'Generation failed');
-                          localStorage.removeItem('longform_job_id');
-                        } else {
-                          // Still running — resume polling
-                          setProgress(data.progress || 0);
-                          const abort = new AbortController();
-                          abortRef.current = abort;
-                          const { pollJob } = await import('@/lib/poll-job');
-                          const result = await pollJob(jobId, 'longform', {
-                            onProgress: (p) => setProgress(p),
-                            signal: abort.signal,
-                          });
-                          if (result.state === 'completed' && result.result) {
-                            const r = result.result as any;
-                            setResults(r.videos || []);
-                            setFailedCount(r.failed || 0);
-                            setTokensUsed(r.tokensUsed || 0);
-                            setStep('results');
-                            localStorage.removeItem('longform_job_id');
-                          } else if (result.state === 'failed') {
-                            setGenerateError(result.error || 'Generation failed');
-                            localStorage.removeItem('longform_job_id');
-                          }
-                        }
-                      } catch (err: any) {
-                        if (err.name !== 'AbortError') setGenerateError(err.message);
-                      } finally {
-                        setGenerating(false);
-                        abortRef.current = null;
-                      }
-                    }}
-                      className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors">
-                      Check Job Status
-                    </button>
-                  )}
-                  {!jobId && (
-                    <button onClick={() => { setGenerateError(null); setProgress(0); handleGenerate(); }}
-                      className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors">
-                      Try Again
-                    </button>
-                  )}
-                  {generateError && (generateError.includes('video models') || generateError.includes('No video clips') || generateError.includes('unavailable')) && !skipBroll && (
-                    <button onClick={() => {
-                      setSkipBroll(true);
-                      setGenerateError(null);
-                      setProgress(0);
-                      setJobId(null);
-                      localStorage.removeItem('longform_job_id');
-                      setStep('configure');
-                    }}
-                      className="px-6 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-medium rounded-lg transition-colors">
-                      Retry without B-roll
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* ── Results Step ────────────────────────────────────────────── */}
-        {step === 'results' && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-2xl font-bold text-white mb-1">
-                {results.length > 0 ? 'Videos Ready' : 'Generation Complete'}
-              </h2>
-              <p className="text-gray-400 text-sm">
-                {results.length} video{results.length !== 1 ? 's' : ''} produced
-                {failedCount > 0 ? ` (${failedCount} failed)` : ''}
-                {' / '}{tokensUsed} tokens used
-              </p>
-              {results.some(r => !r.captioned) && (
-                <p className="text-amber-400 text-xs mt-1">
-                  Edit scenes, then finalize to add Submagic captions.
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-4">
-              {results.map((r, i) => (
-                <div key={i} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-sm font-semibold text-blue-400 uppercase tracking-wider">{r.variant}</span>
-                    <div className="flex items-center gap-2 text-xs text-gray-500">
-                      {r.captioned
-                        ? <span className="px-2 py-0.5 bg-green-500/10 text-green-400 border border-green-500/30 rounded">Captioned</span>
-                        : <span className="px-2 py-0.5 bg-amber-500/10 text-amber-400 border border-amber-500/30 rounded">No Captions</span>
-                      }
-                      <span>{Math.round(r.durationSeconds)}s</span>
-                    </div>
-                  </div>
-                  <video src={normalizeVideoUrl(r.videoUrl)} controls className="w-full max-w-sm rounded-lg bg-black mx-auto" preload="metadata" />
-                  <div className="mt-3 flex gap-2 justify-center flex-wrap">
-                    <a href={normalizeVideoUrl(r.videoUrl)} download={`longform_${r.variant}.mp4`}
-                      className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors">
-                      Download
-                    </a>
-                    {r.scenes && r.scenes.length > 0 && r.voiceoverUrl && (
-                      <button onClick={() => handleEditScenes(i)}
-                        className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-sm font-medium rounded-lg transition-colors">
-                        {r.captioned ? 'Edit Scenes' : 'Edit & Add Captions'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex gap-3">
-              <button onClick={() => {
-                setStep('script');
-                setScripts([]); setSelectedScripts(new Set()); setResults([]);
-                setJobId(null); setProgress(0); setPastedScript('');
-                setHookMode('none'); setCustomHook(''); setAiHooks([]);
-                setSelectedHookIndex(null); setPastedCta('');
-              }} className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
-                Start New
-              </button>
-              <Link href="/" className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
-                Home
-              </Link>
-            </div>
-          </div>
-        )}
-
-        {/* ── Editor Step ─────────────────────────────────────────────── */}
-        {step === 'editor' && editingIndex !== null && (
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-2xl font-bold text-white mb-1">Edit Scenes</h2>
-              <p className="text-gray-400 text-sm">
-                {results[editingIndex]?.variant} — {editingScenes.length} scene{editingScenes.length !== 1 ? 's' : ''}.
-                Regenerate, replace, or remove clips, then finalize to add captions.
-              </p>
-              {Object.values(sceneRegenState).some(s => s.loading) && (
-                <p className="text-blue-400 text-xs mt-1 flex items-center gap-1">
-                  <span className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                  {Object.values(sceneRegenState).filter(s => s.loading).length} scene{Object.values(sceneRegenState).filter(s => s.loading).length !== 1 ? 's' : ''} regenerating...
-                </p>
-              )}
-            </div>
-
-            {generateError && (
-              <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-4 py-3 rounded-lg flex items-center justify-between">
-                <span className="text-sm">{generateError}</span>
-                <button onClick={() => setGenerateError(null)} className="text-red-400 hover:text-red-300 ml-3 shrink-0">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
-              </div>
-            )}
-
-            <div className="space-y-4">
-              {editingScenes.map((scene, si) => {
-                const regen = sceneRegenState[si];
-                const isLoading = regen?.loading;
-                const isEditing = regen?.editing && !regen?.loading;
-                const regenModel = regen ? BROLL_MODELS.find(m => m.id === regen.model) : null;
-
-                return (
-                <div key={si} className={`bg-gray-900 border rounded-xl p-4 transition-colors ${
-                  isLoading ? 'border-blue-500/50 bg-blue-500/5' : regen?.error ? 'border-red-500/50' : 'border-gray-800'
-                }`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-blue-400">Scene {si + 1}</span>
-                      {isLoading && (
-                        <span className="flex items-center gap-1 text-xs text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-full">
-                          <span className="w-2.5 h-2.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                          Generating with {regenModel?.label || 'AI'}...
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-xs text-gray-500">{scene.durationSeconds.toFixed(1)}s</span>
-                  </div>
-
-                  <div className="flex gap-4 flex-col sm:flex-row">
-                    {/* Video preview */}
-                    <div className="sm:w-48 shrink-0 relative">
-                      <video src={normalizeVideoUrl(scene.clipUrl)} controls className="w-full rounded-lg bg-black aspect-[9/16] object-cover" preload="metadata" />
-                      {isLoading && (
-                        <div className="absolute inset-0 bg-black/60 rounded-lg flex items-center justify-center">
-                          <div className="w-10 h-10 border-3 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Scene details + actions */}
-                    <div className="flex-1 space-y-3">
-                      <p className="text-xs text-gray-400 line-clamp-2">{scene.prompt}</p>
-
-                      {regen?.error && (
-                        <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-xs px-3 py-2 rounded-lg">
-                          {regen.error}
-                        </div>
-                      )}
-
-                      {isEditing ? (
-                        <div className="space-y-3">
-                          <textarea
-                            value={regen.prompt}
-                            onChange={(e) => updateRegenState(si, { prompt: e.target.value })}
-                            placeholder="Describe the scene you want..."
-                            rows={2}
-                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm placeholder-gray-500 focus:ring-1 focus:ring-blue-500 focus:border-transparent"
-                          />
-
-                          {/* Model picker */}
-                          <div>
-                            <label className="block text-xs text-gray-500 mb-1.5">Model</label>
-                            <div className="flex flex-wrap gap-1.5">
-                              {BROLL_MODELS.map((m) => (
-                                <button key={m.id} onClick={() => updateRegenState(si, { model: m.id })}
-                                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                                    regen.model === m.id
-                                      ? 'bg-blue-500/20 border border-blue-500 text-blue-400'
-                                      : 'bg-gray-800 border border-gray-700 text-gray-400 hover:border-gray-600'
-                                  }`}>
-                                  {m.label} <span className="text-gray-500">({m.tokenCost}t)</span>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-
-                          <div className="flex gap-2">
-                            <button onClick={() => handleRegenScene(si)}
-                              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors">
-                              Generate ({regenModel?.tokenCost || 5} tokens)
-                            </button>
-                            <button onClick={() => closeRegenEditor(si)}
-                              className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-medium rounded-lg transition-colors">
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      ) : !isLoading ? (
-                        <div className="flex gap-2 flex-wrap">
-                          <button onClick={() => openRegenEditor(si)}
-                            className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-xs font-medium rounded-lg transition-colors">
-                            Regenerate
-                          </button>
-                          <label className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-xs font-medium rounded-lg transition-colors cursor-pointer">
-                            Replace
-                            <input type="file" accept="video/*" className="hidden"
-                              onChange={(e) => { if (e.target.files?.[0]) handleReplaceScene(si, e.target.files[0]); }} />
-                          </label>
-                          {editingScenes.length > 1 && (
-                            <button onClick={() => handleDeleteScene(si)}
-                              className="px-3 py-1.5 bg-red-600/20 hover:bg-red-600/30 border border-red-600/40 text-red-400 text-xs font-medium rounded-lg transition-colors">
-                              Remove
-                            </button>
-                          )}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-                );
-              })}
-            </div>
-
-            {/* Finalize */}
-            {reassembling && (
-              <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-5 text-center space-y-3">
-                <div className="flex items-center justify-center gap-3">
-                  <span className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-white font-medium">
-                    {reassembleProgress < 40 ? 'Downloading scenes...' :
-                     reassembleProgress < 70 ? 'Stitching video...' :
-                     reassembleProgress < 90 ? 'Adding captions via Submagic...' :
-                     'Uploading final video...'}
-                  </span>
-                </div>
-                <div className="w-full bg-gray-800 rounded-full h-2 max-w-xs mx-auto">
-                  <div className="bg-blue-500 h-2 rounded-full transition-all duration-500" style={{ width: `${reassembleProgress}%` }} />
-                </div>
-                <p className="text-xs text-gray-500">{reassembleProgress}% complete</p>
-              </div>
-            )}
-
-            <div className="flex gap-3 items-center flex-wrap">
-              <button onClick={() => { setStep('results'); setEditingIndex(null); setGenerateError(null); }}
-                className="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
-                Back to Results
-              </button>
-              <button onClick={handleReassemble} disabled={reassembling || Object.values(sceneRegenState).some(s => s.loading)}
-                className="px-8 py-2.5 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors">
-                {captionConfig.enabled ? 'Finalize with Captions' : 'Finalize Video'}
-              </button>
-            </div>
-            {captionConfig.enabled && (
-              <p className="text-xs text-gray-500">
-                Caption style: <span className="text-gray-300">{captionConfig.template}</span> — powered by Submagic. Requires S3/cloud storage.
-              </p>
-            )}
-          </div>
-        )}
       </div>
-    </main>
+
+      <LongformWizardShell
+        currentStep={step}
+        completedSteps={completedSteps}
+        onStepClick={goToStep}
+      >
+        {step === 'prompt' && (
+          <PromptStep
+            prompt={prompt}
+            numScripts={numScripts}
+            language={language}
+            onPromptChange={setPrompt}
+            onNumScriptsChange={setNumScripts}
+            onLanguageChange={setLanguage}
+            onGenerate={handleGenerate}
+            isGenerating={isGenerating}
+          />
+        )}
+
+        {step === 'voice-edit' && (
+          <VoiceEditStep
+            scripts={scripts}
+            defaultVoiceConfig={voiceConfig}
+            onScriptsChange={setScripts}
+            onNext={() => {
+              markComplete('voice-edit');
+              setStep('build-scenes');
+            }}
+          />
+        )}
+
+        {step === 'build-scenes' && (
+          <BuildScenesStep
+            scripts={scripts}
+            onScriptsChange={setScripts}
+            onNext={() => {
+              markComplete('build-scenes');
+              setStep('music');
+            }}
+          />
+        )}
+
+        {step === 'music' && (
+          <MusicStep
+            music={music}
+            onMusicChange={setMusic}
+            onNext={() => {
+              markComplete('music');
+              setStep('captions');
+            }}
+          />
+        )}
+
+        {step === 'captions' && (
+          <CaptionsStep
+            captionConfig={captionConfig}
+            onConfigChange={setCaptionConfig}
+            onNext={() => {
+              markComplete('captions');
+              setStep('finalize');
+            }}
+          />
+        )}
+
+        {step === 'finalize' && (
+          <FinalizeStep
+            scripts={scripts}
+            music={music}
+            captionConfig={captionConfig}
+            aspectRatio={aspectRatio}
+            onAspectRatioChange={setAspectRatio}
+            results={results}
+            onResults={setResults}
+            onStartNew={handleStartNew}
+          />
+        )}
+      </LongformWizardShell>
+    </>
   );
 }

@@ -17,7 +17,7 @@ After any new feature or major change, always update `ARCHITECTURE.md`, `CLAUDE.
 - **Video processing**: FFmpeg via shell exec (server-side), @napi-rs/canvas for emoji-supporting overlay PNGs
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) for generating TOFU/MOFU/BOFU ad text
 - **AI video generation**: kie.ai REST API — 6 models: Seedance 1.5, Kling 2.6, Veo 3.1 Fast, Sora 2, Sora 2 Pro, Veo 3.1 Quality. Two API patterns: Veo `/veo/` and Market `/jobs/`. Automatic model fallback on capacity errors: veo3_fast → seedance-1.5-pro → kling-2.6 (implemented in `src/lib/kie-api.ts`).
-- **Longform video ads**: Pipeline: Brief → Script Gen (Claude) → Voiceover (ElevenLabs) → B-Roll (kie.ai) → Stitch (FFmpeg). Captions deferred — only applied during reassemble/finalize via Submagic (sole caption provider; built-in FFmpeg captioning removed). Per-scene regeneration with parallel processing and per-scene model selection. 5-step wizard at `/create/longform-video`. BullMQ longform queue (concurrency: 1). Env vars: `ELEVENLABS_API_KEY`, `SUBMAGIC_API_KEY`.
+- **Longform video ads**: 6-step wizard at `/create/longform-video`: Prompt → Voice & Edit → Build Scenes → Music → Captions → Finalize. Freeform prompt → scene-aware scripts (Claude, FREE). Per-script voice + voiceover (ElevenLabs, 2 tok). Per-scene video (AI/upload/library). Music (Jamendo). Captions (Submagic). Aspect ratio (9:16/16:9/1:1). Final assembly via BullMQ `longform-finalize` (FREE). Components in `src/components/longform/`. Pay-as-you-go tokens. Env vars: `ELEVENLABS_API_KEY`, `SUBMAGIC_API_KEY`.
 - **File handling**: Uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/` (symlinked to Railway Volume via `docker-entrypoint.sh`)
 - **File serving**: All file URLs use `/api/files?path=xxx` (Next.js standalone doesn't serve runtime files from `public/`). Use `fileUrl()` from `src/lib/file-url.ts` to generate URLs. Files streamed with Range header support.
 - **Cloud storage**: Optional S3/R2/Supabase support via `src/lib/storage.ts` (activated by `S3_BUCKET` env var). Supabase S3 compatibility (`forcePathStyle: true`, `S3_REGION` env var). CSP headers dynamically allow CDN origin. Google Drive export fetches from S3 URLs when local files unavailable.
@@ -93,7 +93,7 @@ src/
       video-overlay/
         page.tsx                  — Video text overlay editor: 4-step wizard
       longform-video/
-        page.tsx                  — Longform video editor: 5-step wizard
+        page.tsx                  — Longform video editor: 6-step wizard (orchestrator, ~200 lines)
       video-cutup/
         page.tsx                  — Video cut up: 3-step wizard (upload → review → save)
     welcome/

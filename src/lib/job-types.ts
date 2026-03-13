@@ -3,7 +3,7 @@
  */
 
 import type { TextOverlay, MusicTrack, UploadedVideo } from '@/lib/types';
-import type { LongformScript, VoiceoverConfig, CaptionConfig, LongformResultItem } from '@/lib/longform-types';
+import type { LongformScript, VoiceoverConfig, CaptionConfig, LongformResultItem, LongformScriptV2 } from '@/lib/longform-types';
 
 // ─── Render Job ──────────────────────────────────────────────────────────────
 
@@ -153,6 +153,29 @@ export interface LongformReassembleResult {
   captioned: boolean;
 }
 
+// ─── Longform Finalize Job (new wizard flow) ────────────────────────────────
+
+export interface LongformFinalizeData {
+  companyId: string;
+  userId: string;
+  variants: Array<{
+    scriptId: string;
+    variant: string;
+    voiceoverUrl: string;
+    scenes: Array<{ clipUrl: string; order: number }>;
+  }>;
+  music: { url: string; volume: number } | null;
+  captionConfig: CaptionConfig;
+  aspectRatio: '9:16' | '16:9' | '1:1';
+}
+
+export interface LongformFinalizeResult {
+  videos: LongformResultItem[];
+  failed: number;
+  tokensUsed: number;
+  warning?: string;
+}
+
 // ─── Job Status (returned by /api/jobs/[id]) ─────────────────────────────────
 
 export type JobType = 'render' | 'video-gen' | 'longform';
@@ -162,7 +185,7 @@ export interface JobStatus {
   type: JobType;
   state: 'waiting' | 'active' | 'completed' | 'failed';
   progress: number; // 0-100
-  result?: RenderJobResult | VideoGenJobResult | LongformJobResult;
+  result?: RenderJobResult | VideoGenJobResult | LongformJobResult | LongformFinalizeResult;
   error?: string;
   createdAt: number; // timestamp ms
 }

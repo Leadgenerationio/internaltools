@@ -34,14 +34,14 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 │  │ │ 1. Brief │→│ 2. Review │→│ 3. Media  │→│ 4. Render │    │     │
 │  │ └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘    │     │
 │  └──────┼──────────────┼──────────────┼──────────────┼─────────┘     │
-│  ┌── /create/longform-video ─────────────────────────────────┐      │
-│  │ ┌──────┐ ┌────────┐ ┌──────────┐ ┌───────┐ ┌──────────┐ │      │
-│  │ │Brief │→│Scripts │→│Voiceover │→│B-Roll │→│Stitch +  │ │      │
-│  │ │      │ │(Claude)│ │(11Labs)  │ │(kie)  │ │Stitch +  │ │      │
-│  │ │      │ │        │ │          │ │model  │ │Scene     │ │      │
-│  │ │      │ │        │ │          │ │select │ │Editor    │ │      │
-│  │ └──────┘ └────────┘ └──────────┘ └───────┘ └──────────┘ │      │
-│  └───────────────────────────────────────────────────────────┘      │
+│  ┌── /create/longform-video ─────────────────────────────────────────┐  │
+│  │ ┌──────┐ ┌───────┐ ┌───────┐ ┌─────┐ ┌────────┐ ┌────────┐    │  │
+│  │ │Prompt│→│Voice &│→│Build  │→│Music│→│Captions│→│Finalize│    │  │
+│  │ │(AI)  │ │Edit   │ │Scenes │ │     │ │(Submag)│ │+Resize │    │  │
+│  │ │      │ │(11Lab)│ │(AI/   │ │     │ │        │ │        │    │  │
+│  │ │      │ │       │ │Upload)│ │     │ │        │ │        │    │  │
+│  │ └──────┘ └───────┘ └───────┘ └─────┘ └────────┘ └────────┘    │  │
+│  └────────────────────────────────────────────────────────────────┘  │
 │  ┌── /create/video-cutup ──────────────────────────────────┐      │
 │  │ ┌──────┐ ┌────────────┐ ┌──────────┐                   │      │
 │  │ │Upload│→│Review Clips│→│  Done    │  (FREE, no tokens) │      │
@@ -126,7 +126,8 @@ Users are billed in tokens, not raw API costs. This abstracts away internal cost
   - Ad copy generation = **FREE** (0 tokens) — users can create and regenerate unlimited ad scripts
   - 1 finished ad video = **1 token** (using own uploaded background video)
   - 1 AI-generated video (kie.ai) = **3-25 tokens** depending on model (Seedance: 3, Sora 2: 3, Veo Fast: 5, Sora Pro: 5, Kling: 7, Veo Quality: 25)
-  - 1 longform video variant = **base 5 tokens** + (clipCount x model token cost) for b-roll. Model selection: Seedance 1.5 (3), Kling 2.6 (7), Veo 3.1 Fast (5), Sora 2 (3), Sora 2 Pro (5), Veo 3.1 Quality (25). Without b-roll = **5 tokens**.
+  - Longform (new wizard): pay-as-you-go — script gen **FREE**, voiceover **2 tokens/script**, scene AI gen **3-25 tokens/scene** (model-specific), uploaded/library scenes **FREE**, final assembly **FREE**
+  - Longform (legacy): 1 variant = **base 5 tokens** + (clipCount x model token cost) for b-roll. Without b-roll = **5 tokens**.
   - Longform script generation = **FREE** (0 tokens)
 - **Plan tiers**: FREE (40 tokens/mo), STARTER (500 tokens/mo, £29), PRO (2,500 tokens/mo, £99), ENTERPRISE (custom)
 - **Top-ups**: Paid plans can purchase additional token packages (Small/Medium/Large at plan-specific per-token rates)
@@ -208,7 +209,7 @@ src/
 │   │   ├── video-overlay/
 │   │   │   └── page.tsx              # Video text overlay editor: 4-step wizard (Brief→Review→Media→Render)
 │   │   └── longform-video/
-│   │       └── page.tsx              # Longform video editor: 5-step wizard (Brief→Scripts→Voiceover→B-Roll→Stitch)
+│   │       └── page.tsx              # Longform video editor: 6-step wizard (Prompt→Voice&Edit→BuildScenes→Music→Captions→Finalize)
 │   ├── welcome/
 │   │   └── page.tsx                  # Public landing page (hero, features, pricing)
 │   ├── login/
@@ -299,10 +300,13 @@ src/
 │       │   └── route.ts             # Save ads to project (POST — replace all)
 │       ├── jobs/[id]/route.ts         # Background job status polling (state, progress, result)
 │       ├── longform/
-│       │   ├── generate-scripts/route.ts # Claude API → longform video scripts (FREE)
+│       │   ├── generate-scripts/route.ts # Claude API → longform scripts (FREE). V2: freeform prompt → scene-aware scripts
 │       │   ├── voices/route.ts          # ElevenLabs voice listing (cached)
-│       │   ├── generate/route.ts        # Longform pipeline trigger → enqueues BullMQ longform job
-│       │   ├── regenerate-scene/route.ts # Regenerate a single scene clip (new prompt or upload replacement)
+│       │   ├── generate-voiceover/route.ts # ElevenLabs TTS per-script voiceover (2 tokens)
+│       │   ├── save-to-library/route.ts   # Save AI clip to media library (FREE)
+│       │   ├── finalize/route.ts          # Final assembly: clips + voiceover + music + captions → BullMQ job (FREE)
+│       │   ├── generate/route.ts        # Legacy: full longform pipeline trigger → BullMQ job
+│       │   ├── regenerate-scene/route.ts # Regenerate a single scene clip (model-specific tokens)
 │       │   └── reassemble/route.ts      # Re-stitch edited scenes into final longform video
 │       ├── generate-ads/route.ts     # Claude API → ad copy (+ cost tracking)
 │       ├── generate-video/route.ts   # kie.ai → AI videos — enqueues BullMQ job or falls back to sync
@@ -332,7 +336,17 @@ src/
 │   ├── GoogleDriveButton.tsx         # Export-to-Google-Drive button (shown in render results)
 │   ├── OnboardingChecklist.tsx       # 5-step onboarding checklist (accounts <7 days old)
 │   ├── TemplatePickerModal.tsx       # Template picker modal (system + company templates)
-│   └── SaveAsTemplateModal.tsx       # Save current brief as a reusable template
+│   ├── SaveAsTemplateModal.tsx       # Save current brief as a reusable template
+│   └── longform/                    # Longform wizard step components
+│       ├── LongformWizardShell.tsx   # Step bar + navigation shell
+│       ├── PromptStep.tsx            # Freeform prompt + script count
+│       ├── VoiceEditStep.tsx         # Per-script voice selection + text editing + voiceover gen
+│       ├── BuildScenesStep.tsx       # Scene timeline: AI generate / upload / library per scene
+│       ├── SceneSlot.tsx             # Individual scene card with source tabs
+│       ├── MusicStep.tsx             # Background music selection (wraps MusicSelector)
+│       ├── CaptionsStep.tsx          # Submagic caption template picker
+│       ├── FinalizeStep.tsx          # Aspect ratio + summary + produce + results
+│       └── VoicePreviewPlayer.tsx    # Audio playback widget
 ├── middleware.ts                     # Auth verification, JWT validation, rate limiting, service-to-service auth (Bearer AUTH_SECRET)
 ├── lib/
 │   ├── types.ts                      # All TypeScript interfaces + constants

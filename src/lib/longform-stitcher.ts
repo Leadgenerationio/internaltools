@@ -17,6 +17,12 @@ const TARGET_HEIGHT = 1920;
 const TARGET_FPS = 30;
 const FFMPEG_PRESET = 'medium';
 
+const ASPECT_RATIO_MAP: Record<string, [number, number]> = {
+  '9:16': [1080, 1920],
+  '16:9': [1920, 1080],
+  '1:1': [1080, 1080],
+};
+
 /**
  * Get duration of a media file in seconds.
  */
@@ -34,16 +40,20 @@ export async function getMediaDuration(filePath: string): Promise<number> {
 /**
  * Normalize a video clip to consistent resolution, fps, and codec.
  * Scales to fit within target resolution, pads with black if needed.
+ * @param aspectRatio - Target aspect ratio (default: '9:16')
  */
 export async function normalizeClip(
   inputPath: string,
   outputPath: string,
+  aspectRatio?: string,
 ): Promise<string> {
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
+  const [w, h] = ASPECT_RATIO_MAP[aspectRatio || '9:16'] || [TARGET_WIDTH, TARGET_HEIGHT];
+
   const filterStr = [
-    `scale=${TARGET_WIDTH}:${TARGET_HEIGHT}:force_original_aspect_ratio=decrease`,
-    `pad=${TARGET_WIDTH}:${TARGET_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black`,
+    `scale=${w}:${h}:force_original_aspect_ratio=decrease`,
+    `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black`,
     `fps=${TARGET_FPS}`,
     'format=yuv420p',
   ].join(',');
@@ -135,6 +145,95 @@ export async function mergeAudioVideo(
     '-t', String(audioDuration),
     outputPath,
   ]);
+
+  return outputPath;
+}
+
+/**
+ * Mix background music into a video that already has voiceover audio.
+ * Uses FFmpeg amix filter to blend the two audio tracks.
+ */
+export async function mixBackgroundMusic(params: {
+  videoPath: string;
+  musicPath: string;
+  outputPath: string;
+  musicVolume?: number; // 0-1, default 0.15
+  fadeOutDuration?: number; // seconds, default 3
+}): Promise<string> {
+  const { videoPath, musicPath, outputPath, musicVolume = 0.15, fadeOutDuration = 3 } = params;
+
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+
+  const videoDuration = await getMediaDuration(videoPath);
+
+  // Music: set volume, fade out at end, trim to video duration
+  const musicFilter = `[1:a]volume=${musicVolume},afade=t=out:st=${Math.max(0, videoDuration - fadeOutDuration)}:d=${fadeOutDuration},atrim=0:${videoDuration}[music]`;
+  const mixFilter = `[0:a][music]amix=inputs=2:duration=first:dropout_transition=2[out]`;
+
+  await execFileAsync('ffmpeg', [
+    '-y',
+    '-i', videoPath,
+    '-i', musicPath,
+    '-filter_complex', `${musicFilter};${mixFilter}`,
+    '-map', '0:v',
+    '-map', '[out]',
+    '-c:v', 'copy',
+    '-c:a', 'aac', '-b:a', '192k',
+    '-shortest',
+    outputPath,
+  ]);
+
+  return outputPath;
+}
+
+/**
+ * V2 assembly: combine scene clips + voiceover + optional music.
+ * Supports parameterized aspect ratio.
+ */
+export async function assembleAdV2(params: {
+  clips: string[];
+  voiceoverPath: string;
+  outputPath: string;
+  tempDir: string;
+  aspectRatio?: string;
+  musicPath?: string;
+  musicVolume?: number;
+}): Promise<string> {
+  const { clips, voiceoverPath, outputPath, tempDir, aspectRatio, musicPath, musicVolume } = params;
+
+  await fs.mkdir(tempDir, { recursive: true });
+
+  if (clips.length === 0) {
+    throw new Error('No clips to assemble');
+  }
+
+  // 1. Normalize all clips to target aspect ratio
+  const normalizedClips: string[] = [];
+  for (let i = 0; i < clips.length; i++) {
+    const normPath = path.join(tempDir, `norm_${i}.mp4`);
+    await normalizeClip(clips[i], normPath, aspectRatio);
+    normalizedClips.push(normPath);
+  }
+
+  // 2. Concatenate
+  const concatPath = path.join(tempDir, 'concatenated.mp4');
+  await concatenateClips(normalizedClips, concatPath, tempDir);
+
+  // 3. Merge voiceover
+  const withVoiceover = path.join(tempDir, 'with_voiceover.mp4');
+  await mergeAudioVideo(concatPath, voiceoverPath, withVoiceover);
+
+  // 4. Mix music if provided
+  if (musicPath) {
+    await mixBackgroundMusic({
+      videoPath: withVoiceover,
+      musicPath,
+      outputPath,
+      musicVolume,
+    });
+  } else {
+    await fs.copyFile(withVoiceover, outputPath);
+  }
 
   return outputPath;
 }

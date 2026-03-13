@@ -109,3 +109,36 @@ export interface LongformResultItem {
   scenes?: LongformScene[];    // individual scene clips (for editor)
   scriptText?: string;         // full script text (for re-captioning)
 }
+
+// ─── V2 Types (new wizard flow) ─────────────────────────────────────────────
+
+export interface LongformScriptV2 {
+  id: string;                    // crypto.randomUUID()
+  variant: string;               // "pain-point", "social-proof", etc.
+  fullText: string;              // complete script text
+  scenes: LongformSceneSlot[];   // ordered scene slots with text segments
+  voiceId?: string;              // per-script ElevenLabs voice ID
+  voiceConfig?: VoiceoverConfig; // per-script voice settings
+  voiceoverUrl?: string;         // generated voiceover URL
+  voiceoverDuration?: number;    // seconds
+}
+
+export interface LongformSceneSlot {
+  id: string;
+  order: number;
+  text: string;                  // portion of script for this scene
+  visualPrompt: string;          // AI-suggested or user-edited prompt
+  durationEstimate: number;      // estimated seconds
+  clipUrl?: string;
+  clipFilename?: string;
+  clipDuration?: number;
+  source: 'empty' | 'ai-generated' | 'uploaded' | 'library';
+}
+
+export type LongformWizardStep =
+  | 'prompt'
+  | 'voice-edit'
+  | 'build-scenes'
+  | 'music'
+  | 'captions'
+  | 'finalize';
