@@ -92,16 +92,21 @@ export default function SceneSlot({ scene, onUpdate, onSaveToLibrary }: Props) {
 
     try {
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('videos', file);
       const res = await fetch('/api/upload', { method: 'POST', body: formData });
-      if (!res.ok) throw new Error('Upload failed');
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: 'Upload failed' }));
+        throw new Error(errData.error || 'Upload failed');
+      }
       const data = await res.json();
+      const video = data.videos?.[0];
+      if (!video) throw new Error('No video returned');
 
       onUpdate({
         ...scene,
-        clipUrl: data.path || data.url,
-        clipFilename: data.filename,
-        clipDuration: data.duration || 0,
+        clipUrl: video.path,
+        clipFilename: video.filename,
+        clipDuration: video.duration || 0,
         source: 'uploaded',
       });
     } catch (err: any) {
