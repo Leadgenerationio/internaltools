@@ -145,6 +145,10 @@ async function processLongformJob(job: Job<LongformJobData>): Promise<LongformJo
     await fs.mkdir(OUTPUT_DIR, { recursive: true });
     await fs.mkdir(jobTempDir, { recursive: true });
 
+    if (!scripts?.length) {
+      throw new Error('No scripts provided — this job may have been routed to the wrong handler');
+    }
+
     const kieApiKey = process.env.KIE_API_KEY;
     const totalVariants = scripts.length;
 
@@ -764,7 +768,11 @@ export function startLongformWorker(): Worker | null {
     if (job.name === 'longform-finalize') {
       return processFinalize(job as Job<LongformFinalizeData>);
     }
-    return processLongformJob(job as Job<LongformJobData>);
+    // Legacy longform-video jobs (old wizard flow)
+    if (job.name === 'longform-video' || !job.name) {
+      return processLongformJob(job as Job<LongformJobData>);
+    }
+    throw new Error(`Unknown longform job type: ${job.name}`);
   }, {
     connection: connection as any,
     concurrency: 1,
