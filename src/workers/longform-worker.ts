@@ -458,22 +458,45 @@ async function downloadWithS3Fallback(url: string, label: string): Promise<Buffe
   }
 
   logger.info(`[Longform] Fetching ${label} from S3: ${storagePath}`);
-  const { S3Client, GetObjectCommand } = await import('@aws-sdk/client-s3');
-  const client = new S3Client({
-    endpoint,
-    region: process.env.S3_REGION || 'auto',
-    credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
-    forcePathStyle: true,
-  });
+  try {
+    const { S3Client, GetObjectCommand } = await import('@aws-sdk/client-s3');
+    const client = new S3Client({
+      endpoint,
+      region: process.env.S3_REGION || 'auto',
+      credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
+      forcePathStyle: true,
+    });
 
-  const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: storagePath }));
-  if (!response.Body) throw new Error(`${label}: S3 returned empty body`);
-
-  const chunks: Buffer[] = [];
-  for await (const chunk of response.Body as any) {
-    chunks.push(Buffer.from(chunk));
+    const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: storagePath }));
+    if (response.Body) {
+      const chunks: Buffer[] = [];
+      for await (const chunk of response.Body as any) {
+        chunks.push(Buffer.from(chunk));
+      }
+      const buf = Buffer.concat(chunks);
+      if (buf.length > 1000) return buf;
+    }
+  } catch (s3Err: any) {
+    logger.warn(`[Longform] S3 fallback failed for ${label}: ${s3Err.message}, trying API proxy`);
   }
-  return Buffer.concat(chunks);
+
+  // Final fallback: fetch via web app's /api/files proxy (file may be on web app's local disk)
+  const apiUrl = `${getAppBaseUrl()}/api/files?path=${encodeURIComponent(storagePath)}`;
+  logger.info(`[Longform] Trying API proxy for ${label}: ${apiUrl.slice(0, 120)}`);
+  try {
+    const proxyRes = await fetch(apiUrl, {
+      headers: process.env.AUTH_SECRET ? { 'Authorization': `Bearer ${process.env.AUTH_SECRET}` } : {},
+    });
+    if (proxyRes.ok) {
+      const buffer = Buffer.from(await proxyRes.arrayBuffer());
+      if (buffer.length > 1000) return buffer;
+    }
+    logger.warn(`[Longform] API proxy failed for ${label}: ${proxyRes.status}`);
+  } catch (proxyErr: any) {
+    logger.warn(`[Longform] API proxy error for ${label}: ${proxyErr.message}`);
+  }
+
+  throw new Error(`${label}: all download methods failed (direct URL, S3, API proxy)`);
 }
 
 // ─── Reassemble ─────────────────────────────────────────────────────────────
