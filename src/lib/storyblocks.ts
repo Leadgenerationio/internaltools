@@ -4,11 +4,13 @@
  * Uses HMAC-SHA256 auth with public/private key pair.
  * Env vars: STORYBLOCKS_PUBLIC_KEY, STORYBLOCKS_PRIVATE_KEY
  *
- * Auth: Every request needs APIKEY, EXPIRES, HMAC query params.
+ * Auth: Every request needs APIKEY, EXPIRES, HMAC query params,
+ * plus user_id and project_id for tracking.
  * HMAC = SHA256(resourcePath, key = privateKey + expiresTimestamp)
  *
- * API responses use `info` array for results and `totalSearchResults` for count.
- * Download URLs are nested under `info.url`.
+ * Response format:
+ *   { results: [...], total_results: number, search_identifiers: {...} }
+ *   Each result has: id, title, thumbnail_url, preview_urls: { _180p, _360p, _480p, _720p }, duration
  */
 
 import crypto from 'crypto';
@@ -47,7 +49,6 @@ export interface StoryblocksSearchResult {
   type: string;
   duration: number;
   thumbnail_url: string;
-  preview_url?: string;
   preview_urls?: Record<string, string>;
   keywords: string | string[];
 }
@@ -71,6 +72,8 @@ export async function searchVideos(
     page: String(page),
     num_results: String(numResults),
     content_type: 'footage',
+    user_id: 'admaker',
+    project_id: 'admaker',
   });
 
   const res = await fetch(`${BASE_URL}${resourcePath}?${params}`, {
@@ -84,10 +87,8 @@ export async function searchVideos(
 
   const data = await res.json();
 
-  // Normalize response — API may return results in `info` or `results` array,
-  // and total count in `totalSearchResults` or `totalResults`
-  const results = data.results || data.info || [];
-  const totalResults = data.totalResults ?? data.totalSearchResults ?? 0;
+  const results = data.results || [];
+  const totalResults = data.total_results ?? 0;
 
   return { results, totalResults };
 }
@@ -104,6 +105,8 @@ export async function getDownloadUrl(stockItemId: number): Promise<string> {
 
   const params = new URLSearchParams({
     ...auth,
+    user_id: 'admaker',
+    project_id: 'admaker',
   });
 
   const res = await fetch(`${BASE_URL}${resourcePath}?${params}`, {
@@ -117,8 +120,14 @@ export async function getDownloadUrl(stockItemId: number): Promise<string> {
 
   const data = await res.json();
 
-  // Download URL may be at data.url (v2) or data.info.url (v1-style)
-  const url = data.url || data.info?.url;
+  // Response format: { MP4: { _720p: "url", _1080p: "url" }, MOV: {...} }
+  // Prefer MP4 720p for best compatibility and reasonable size
+  const url = data.MP4?.['_720p']
+    || data.MP4?.['_1080p']
+    || data.MP4?.['_2160p']
+    || data.MOV?.['_1080p']
+    || data.url
+    || data.info?.url;
   if (!url) {
     throw new Error('Storyblocks returned no download URL');
   }

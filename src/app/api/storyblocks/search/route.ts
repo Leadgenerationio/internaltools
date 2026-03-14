@@ -27,15 +27,16 @@ export async function GET(request: NextRequest) {
   try {
     const data = await searchVideos(q, page, 20);
 
-    // Simplify for client — handle both v1 (preview_url string) and v2 (preview_urls object) formats
+    // Simplify for client — pick best preview URL from preview_urls object
     const results = (data.results || []).map((v: any) => ({
       id: v.id,
       title: v.title,
       duration: v.duration || 0,
       thumbnailUrl: v.thumbnail_url || '',
-      previewUrl: v.preview_url
-        || v.preview_urls?.['_360p'] || v.preview_urls?.['_480p'] || v.preview_urls?.['_720p']
-        || (typeof v.preview_urls === 'string' ? v.preview_urls : '')
+      previewUrl: v.preview_urls?.['_480p']
+        || v.preview_urls?.['_360p']
+        || v.preview_urls?.['_720p']
+        || v.preview_urls?.['_180p']
         || '',
     }));
 
