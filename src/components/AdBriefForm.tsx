@@ -189,7 +189,7 @@ export default function AdBriefForm({ onGenerate, generating, initialBrief }: Pr
             <Tooltip text="Instead of 10 short funnel ads, generate one long continuous script with 10-20 text segments. Great for explainer videos, tutorials, or storytelling ads." />
             <p className="text-xs text-gray-500 mt-0.5">
               {brief.isLongform
-                ? 'Will generate 1 long continuous script with 10-20 text segments'
+                ? 'Will generate 1 long script with 4-8 paragraph blocks — like a UGC ad script'
                 : 'Currently set to generate 10 short funnel ads (4 TOFU + 4 MOFU + 2 BOFU)'}
             </p>
           </div>
@@ -229,7 +229,7 @@ export default function AdBriefForm({ onGenerate, generating, initialBrief }: Pr
             {brief.isLongform ? 'Generating longform script...' : 'Generating ad copy...'}
           </span>
         ) : brief.isLongform ? (
-          'Generate Longform Script (10-20 segments)'
+          'Generate Longform Script'
         ) : (
           'Generate Ad Copy (4 TOFU + 4 MOFU + 2 BOFU)'
         )}

@@ -794,7 +794,7 @@ function HomeContent() {
           <div className="space-y-6">
             <InfoBanner variant="info" dismissible>
               {ads[0]?.funnelStage === 'longform'
-                ? `AI generated a longform script with ${ads[0]?.textBoxes.length || 0} text segments. Edit the text, then approve to continue.`
+                ? `AI generated a longform script with ${ads[0]?.textBoxes.length || 0} text blocks. Edit the text, split or add blocks, then approve to continue.`
                 : 'AI generated 10 ad variations across 3 funnel stages. Review each one, edit the text, then approve the ones you want to use.'}
             </InfoBanner>
             <FunnelReview

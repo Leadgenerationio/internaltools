@@ -65,24 +65,25 @@ Respond with ONLY valid JSON in this exact format (no markdown, no code fences):
 
 function buildLongformPrompt(brief: AdBrief): string {
   return `Generate a longform script for the following brief:\n\n${buildBriefContext(brief)}
-Generate ONE continuous longform script broken into 10-20 short text segments. These segments will appear one at a time over a video, building a narrative from hook to close.
+Generate ONE continuous longform video script broken into 4-8 text blocks. Each block is a PARAGRAPH of 2-4 sentences that will be displayed as a text overlay on a vertical video ad.
+
+All blocks will be visible on screen stacked on top of each other — like a full-screen text overlay with multiple paragraphs. Think of it like a long-form UGC ad script.
 
 Structure the script like this:
-1. HOOK — a bold opening line that grabs attention (1-2 segments)
-2. PROBLEM — identify the pain point or desire (2-3 segments)
-3. SOLUTION — introduce the product/service as the answer (2-3 segments)
-4. PROOF — social proof, stats, testimonials, results (2-3 segments)
-5. BENEFITS — key advantages, what makes it special (2-3 segments)
-6. CTA — clear call to action with urgency (1-2 segments)
+1. HOOK — bold opening that grabs attention and makes them stop scrolling (1 block, punchy and direct)
+2. PROBLEM/CONTEXT — explain the situation, pain point, or opportunity (1-2 blocks)
+3. SOLUTION — introduce the product/service as the answer, explain how it works (1-2 blocks)
+4. PROOF/BENEFITS — social proof, key benefits, what makes it special (1-2 blocks)
+5. CTA — clear call to action with urgency and next steps (1 block)
 
-Each segment should be SHORT (under 12 words). They appear over video one at a time, so each must make sense on its own while building the overall story.
+Each block should be 2-4 sentences. Write in a direct, conversational tone. Use ALL CAPS for emphasis on key words (like "FREE", "THOUSANDS", "ONLY", "MUST"). Make it feel urgent and personal.
 
 Respond with ONLY valid JSON in this exact format (no markdown, no code fences):
 {
   "ads": [
     {
       "funnelStage": "longform",
-      "textBoxes": ["Hook line 1", "Hook line 2", "Problem segment", "...", "CTA segment"]
+      "textBoxes": ["First paragraph block here. Multiple sentences.", "Second paragraph block...", "..."]
     }
   ]
 }`;
