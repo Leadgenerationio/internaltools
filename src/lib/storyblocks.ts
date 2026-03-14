@@ -3,6 +3,12 @@
  *
  * Uses HMAC-SHA256 auth with public/private key pair.
  * Env vars: STORYBLOCKS_PUBLIC_KEY, STORYBLOCKS_PRIVATE_KEY
+ *
+ * Auth: Every request needs APIKEY, EXPIRES, HMAC query params.
+ * HMAC = SHA256(resourcePath, key = privateKey + expiresTimestamp)
+ *
+ * API responses use `info` array for results and `totalSearchResults` for count.
+ * Download URLs are nested under `info.url`.
  */
 
 import crypto from 'crypto';
@@ -41,9 +47,9 @@ export interface StoryblocksSearchResult {
   type: string;
   duration: number;
   thumbnail_url: string;
-  preview_urls: Record<string, string>;
-  categories: string[];
-  keywords: string[];
+  preview_url?: string;
+  preview_urls?: Record<string, string>;
+  keywords: string | string[];
 }
 
 export interface StoryblocksSearchResponse {
@@ -73,17 +79,20 @@ export async function searchVideos(
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`Storyblocks search failed (${res.status}): ${body}`);
+    throw new Error(`Storyblocks search failed (${res.status}): ${body.slice(0, 200)}`);
   }
 
-  return res.json();
+  const data = await res.json();
+
+  // Normalize response — API may return results in `info` or `results` array,
+  // and total count in `totalSearchResults` or `totalResults`
+  const results = data.results || data.info || [];
+  const totalResults = data.totalResults ?? data.totalSearchResults ?? 0;
+
+  return { results, totalResults };
 }
 
 // ─── Download URL ────────────────────────────────────────────────────────────
-
-export interface StoryblocksDownloadResponse {
-  url: string;
-}
 
 /**
  * Get a signed download URL for a stock video.
@@ -103,9 +112,15 @@ export async function getDownloadUrl(stockItemId: number): Promise<string> {
 
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`Storyblocks download failed (${res.status}): ${body}`);
+    throw new Error(`Storyblocks download failed (${res.status}): ${body.slice(0, 200)}`);
   }
 
   const data = await res.json();
-  return data.url;
+
+  // Download URL may be at data.url (v2) or data.info.url (v1-style)
+  const url = data.url || data.info?.url;
+  if (!url) {
+    throw new Error('Storyblocks returned no download URL');
+  }
+  return url;
 }
