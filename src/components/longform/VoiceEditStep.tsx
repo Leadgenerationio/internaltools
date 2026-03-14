@@ -4,12 +4,14 @@ import { useState, useEffect, useCallback } from 'react';
 import type { LongformScriptV2, VoiceoverConfig } from '@/lib/longform-types';
 import VoicePreviewPlayer from './VoicePreviewPlayer';
 
-interface ElevenLabsVoice {
-  voice_id: string;
+interface Voice {
+  id: string;
   name: string;
   category: string;
-  labels: Record<string, string>;
-  preview_url: string;
+  previewUrl: string;
+  gender: string;
+  accent: string;
+  age: string;
 }
 
 interface Props {
@@ -20,7 +22,7 @@ interface Props {
 }
 
 export default function VoiceEditStep({ scripts, defaultVoiceConfig, onScriptsChange, onNext }: Props) {
-  const [voices, setVoices] = useState<ElevenLabsVoice[]>([]);
+  const [voices, setVoices] = useState<Voice[]>([]);
   const [loadingVoices, setLoadingVoices] = useState(true);
   const [activeTab, setActiveTab] = useState(0);
   const [generatingVo, setGeneratingVo] = useState<Record<string, boolean>>({});
@@ -129,10 +131,10 @@ export default function VoiceEditStep({ scripts, defaultVoiceConfig, onScriptsCh
             <div className="space-y-1 max-h-[400px] overflow-y-auto pr-1">
               {voices.map((v) => (
                 <div
-                  key={v.voice_id}
-                  onClick={() => updateScript(activeTab, { voiceId: v.voice_id })}
+                  key={v.id}
+                  onClick={() => updateScript(activeTab, { voiceId: v.id })}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
-                    selectedVoiceId === v.voice_id
+                    selectedVoiceId === v.id
                       ? 'bg-blue-600/20 border border-blue-600/50'
                       : 'bg-gray-800/50 hover:bg-gray-800 border border-transparent'
                   }`}
@@ -140,12 +142,12 @@ export default function VoiceEditStep({ scripts, defaultVoiceConfig, onScriptsCh
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium truncate">{v.name}</div>
                     <div className="text-xs text-gray-500">
-                      {v.labels?.gender} {v.labels?.accent && `\u00B7 ${v.labels.accent}`}
+                      {v.gender} {v.accent && `· ${v.accent}`}
                     </div>
                   </div>
-                  {v.preview_url && (
+                  {v.previewUrl && (
                     <div className="flex items-center gap-1 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                      <VoicePreviewPlayer src={v.preview_url} compact />
+                      <VoicePreviewPlayer src={v.previewUrl} compact />
                     </div>
                   )}
                 </div>
