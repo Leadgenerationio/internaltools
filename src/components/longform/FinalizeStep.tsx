@@ -37,9 +37,7 @@ export default function FinalizeStep({
   onAspectRatioChange, results, onResults, onStartNew,
 }: Props) {
   const [producing, setProducing] = useState(false);
-  const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const allScenesReady = scripts.every((s) =>
     s.scenes.every((sc) => sc.clipUrl) && s.voiceoverUrl
@@ -48,7 +46,6 @@ export default function FinalizeStep({
   const handleProduce = async () => {
     setProducing(true);
     setError(null);
-    setProgress(0);
 
     try {
       const res = await fetch('/api/longform/finalize', {
@@ -70,57 +67,17 @@ export default function FinalizeStep({
         }),
       });
 
+      const data = await res.json();
+
       if (!res.ok) {
-        const data = await res.json().catch(() => ({ error: 'Failed' }));
         throw new Error(data.error || `Failed (${res.status})`);
       }
 
-      // Read streaming NDJSON response for progress updates
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error('No response stream');
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const msg = JSON.parse(line);
-            if (msg.progress != null) setProgress(msg.progress);
-            if (msg.message) setStatusMessage(msg.message);
-            if (msg.error) throw new Error(msg.error);
-            if (msg.done) {
-              onResults(msg.videos || []);
-            }
-          } catch (parseErr: any) {
-            if (parseErr.message && !parseErr.message.includes('JSON')) {
-              throw parseErr; // Re-throw non-parse errors (like our msg.error throw)
-            }
-          }
-        }
-      }
-
-      // Process any remaining buffer
-      if (buffer.trim()) {
-        try {
-          const msg = JSON.parse(buffer);
-          if (msg.error) throw new Error(msg.error);
-          if (msg.done) onResults(msg.videos || []);
-        } catch { /* ignore parse errors on final chunk */ }
-      }
+      onResults(data.videos || []);
     } catch (err: any) {
       setError(err.message);
     } finally {
       setProducing(false);
-      setStatusMessage(null);
     }
   };
 
@@ -257,18 +214,15 @@ export default function FinalizeStep({
       {/* Progress */}
       {producing && (
         <div className="bg-gray-800/50 rounded-xl p-5 border border-gray-700/50 space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="w-5 h-5 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin flex-shrink-0" />
             <span className="text-sm font-medium">Producing videos...</span>
-            <span className="text-sm text-gray-400">{progress}%</span>
-          </div>
-          <div className="h-2 bg-gray-700 rounded-full">
-            <div
-              className="h-full bg-blue-500 rounded-full transition-all duration-500"
-              style={{ width: `${progress}%` }}
-            />
           </div>
           <p className="text-xs text-gray-500">
-            {statusMessage || `Downloading clips, normalizing video, merging voiceover${music ? ', mixing music' : ''}${captionConfig.enabled ? ', adding captions' : ''}...`}
+            Downloading clips, normalizing video, merging voiceover
+            {music ? ', mixing music' : ''}
+            {captionConfig.enabled ? ', adding captions' : ''}...
+            This may take 1-3 minutes.
           </p>
         </div>
       )}

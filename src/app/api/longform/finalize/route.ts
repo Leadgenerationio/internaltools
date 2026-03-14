@@ -194,145 +194,110 @@ export async function POST(request: NextRequest) {
     }, { status: 503 });
   }
 
-  // Process synchronously with streaming progress
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    async start(controller) {
-      const send = (data: Record<string, unknown>) => {
-        try {
-          controller.enqueue(encoder.encode(JSON.stringify(data) + '\n'));
-        } catch { /* stream may be closed */ }
-      };
+  // Process synchronously — returns plain JSON when done
+  const tempDir = path.join(TEMP_BASE, `finalize_${crypto.randomUUID()}`);
+  const results: LongformResultItem[] = [];
+  const failures: string[] = [];
 
-      const tempDir = path.join(TEMP_BASE, `finalize_${crypto.randomUUID()}`);
-      const results: LongformResultItem[] = [];
-      const failures: string[] = [];
+  try {
+    await fs.mkdir(tempDir, { recursive: true });
+
+    for (let vi = 0; vi < variants.length; vi++) {
+      const v = variants[vi];
+      const variantDir = path.join(tempDir, `v_${vi}`);
+      await fs.mkdir(variantDir, { recursive: true });
 
       try {
-        await fs.mkdir(tempDir, { recursive: true });
-        const totalVariants = variants.length;
+        // 1. Download voiceover
+        const voPath = path.join(variantDir, 'voiceover.mp3');
+        const voBuffer = await downloadFile(v.voiceoverUrl, `Voiceover (${v.variant})`);
+        await fs.writeFile(voPath, voBuffer);
 
-        for (let vi = 0; vi < variants.length; vi++) {
-          const v = variants[vi];
-          const variantDir = path.join(tempDir, `v_${vi}`);
-          await fs.mkdir(variantDir, { recursive: true });
+        // 2. Download scene clips
+        const sortedScenes = [...v.scenes].sort((a, b) => a.order - b.order);
+        const clipPaths: string[] = [];
+        for (let si = 0; si < sortedScenes.length; si++) {
+          const scene = sortedScenes[si];
+          const clipPath = path.join(variantDir, `clip_${si}.mp4`);
+          const buffer = await downloadFile(scene.clipUrl, `Scene ${si + 1} (${v.variant})`);
+          if (buffer.length < 1000) {
+            throw new Error(`Scene ${si + 1} download too small (${buffer.length} bytes)`);
+          }
+          await fs.writeFile(clipPath, buffer);
+          clipPaths.push(clipPath);
+        }
 
-          const baseProgress = (vi / totalVariants) * 100;
-          const variantWeight = 100 / totalVariants;
+        // 3. Download music
+        let musicPath: string | undefined;
+        if (music?.url) {
+          const mPath = path.join(variantDir, 'music.mp3');
+          const musicBuffer = await downloadFile(music.url, `Music (${v.variant})`);
+          await fs.writeFile(mPath, musicBuffer);
+          musicPath = mPath;
+        }
 
-          try {
-            // 1. Download voiceover
-            send({ progress: Math.round(baseProgress + variantWeight * 0.05), message: `Downloading voiceover (${v.variant})...` });
-            const voPath = path.join(variantDir, 'voiceover.mp3');
-            const voBuffer = await downloadFile(v.voiceoverUrl, `Voiceover (${v.variant})`);
-            await fs.writeFile(voPath, voBuffer);
+        // 4. Assemble: normalize → concat → voiceover → music
+        const rawPath = path.join(variantDir, 'assembled.mp4');
+        const stitchDir = path.join(variantDir, 'stitch');
 
-            // 2. Download scene clips
-            const sortedScenes = [...v.scenes].sort((a, b) => a.order - b.order);
-            const clipPaths: string[] = [];
-            for (let si = 0; si < sortedScenes.length; si++) {
-              const scene = sortedScenes[si];
-              send({ progress: Math.round(baseProgress + variantWeight * (0.1 + 0.25 * (si / sortedScenes.length))), message: `Downloading scene ${si + 1}/${sortedScenes.length} (${v.variant})...` });
-              const clipPath = path.join(variantDir, `clip_${si}.mp4`);
-              const buffer = await downloadFile(scene.clipUrl, `Scene ${si} (${v.variant})`);
-              if (buffer.length < 1000) {
-                throw new Error(`Scene ${si + 1} download too small (${buffer.length} bytes)`);
-              }
-              await fs.writeFile(clipPath, buffer);
-              clipPaths.push(clipPath);
-            }
+        await assembleAdV2({
+          clips: clipPaths,
+          voiceoverPath: voPath,
+          outputPath: rawPath,
+          tempDir: stitchDir,
+          aspectRatio: aspectRatio || '9:16',
+          musicPath,
+          musicVolume: music?.volume ?? 0.15,
+        });
 
-            // 3. Download music
-            let musicPath: string | undefined;
-            if (music?.url) {
-              send({ progress: Math.round(baseProgress + variantWeight * 0.4), message: `Downloading music (${v.variant})...` });
-              const mPath = path.join(variantDir, 'music.mp3');
-              const musicBuffer = await downloadFile(music.url, `Music (${v.variant})`);
-              await fs.writeFile(mPath, musicBuffer);
-              musicPath = mPath;
-            }
+        // 5. Captions via Submagic (optional)
+        let finalPath = rawPath;
+        let captioned = false;
 
-            // 4. Assemble: normalize → concat → voiceover → music
-            send({ progress: Math.round(baseProgress + variantWeight * 0.45), message: `Assembling video (${v.variant})...` });
-            const rawPath = path.join(variantDir, 'assembled.mp4');
-            const stitchDir = path.join(variantDir, 'stitch');
-
-            await assembleAdV2({
-              clips: clipPaths,
-              voiceoverPath: voPath,
-              outputPath: rawPath,
-              tempDir: stitchDir,
-              aspectRatio: aspectRatio || '9:16',
-              musicPath,
-              musicVolume: music?.volume ?? 0.15,
-            });
-
-            send({ progress: Math.round(baseProgress + variantWeight * 0.7), message: `Video assembled (${v.variant})` });
-
-            // 5. Captions via Submagic (optional)
-            let finalPath = rawPath;
-            let captioned = false;
-
-            if (captionConfig?.enabled && process.env.SUBMAGIC_API_KEY) {
-              send({ progress: Math.round(baseProgress + variantWeight * 0.75), message: `Adding captions (${v.variant})...` });
-              const publicUrl = await getPublicUrl(rawPath);
-              if (publicUrl) {
-                const captionDir = path.join(variantDir, 'captions');
-                await fs.mkdir(captionDir, { recursive: true });
-                const captionedPath = path.join(captionDir, 'captioned.mp4');
-                await captionVideo(publicUrl, captionedPath, captionConfig, `Longform - ${v.variant}`);
-                finalPath = captionedPath;
-                captioned = true;
-              }
-            }
-
-            send({ progress: Math.round(baseProgress + variantWeight * 0.9), message: `Uploading final video (${v.variant})...` });
-
-            // 6. Upload final video
-            const duration = await getMediaDuration(finalPath).catch(() => 30);
-            const outputFilename = `longform_final_${v.variant.replace(/[^a-zA-Z0-9_-]/g, '_')}_${crypto.randomUUID()}.mp4`;
-            await uploadOutput(finalPath, outputFilename);
-
-            results.push({
-              variant: v.variant,
-              videoUrl: fileUrl(`outputs/${outputFilename}`),
-              captioned,
-              durationSeconds: duration,
-              voiceoverUrl: v.voiceoverUrl,
-            });
-
-            send({ progress: Math.round(baseProgress + variantWeight), message: `Variant "${v.variant}" complete` });
-          } catch (err: any) {
-            failures.push(`${v.variant}: ${err.message}`);
-            send({ progress: Math.round(baseProgress + variantWeight), message: `Variant "${v.variant}" failed: ${err.message}` });
+        if (captionConfig?.enabled && process.env.SUBMAGIC_API_KEY) {
+          const publicUrl = await getPublicUrl(rawPath);
+          if (publicUrl) {
+            const captionDir = path.join(variantDir, 'captions');
+            await fs.mkdir(captionDir, { recursive: true });
+            const captionedPath = path.join(captionDir, 'captioned.mp4');
+            await captionVideo(publicUrl, captionedPath, captionConfig, `Longform - ${v.variant}`);
+            finalPath = captionedPath;
+            captioned = true;
           }
         }
 
-        if (results.length === 0) {
-          send({ error: failures[0] || 'All variants failed to finalize' });
-        } else {
-          send({
-            done: true,
-            videos: results,
-            failed: failures.length,
-            ...(failures.length > 0 && { warning: `${failures.length} of ${variants.length} variants failed` }),
-          });
-        }
-      } catch (err: any) {
-        send({ error: err.message || 'Finalize failed' });
-      } finally {
-        // Cleanup temp files
-        try { await fs.rm(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
-        controller.close();
-      }
-    },
-  });
+        // 6. Upload final video
+        const duration = await getMediaDuration(finalPath).catch(() => 30);
+        const outputFilename = `longform_final_${v.variant.replace(/[^a-zA-Z0-9_-]/g, '_')}_${crypto.randomUUID()}.mp4`;
+        await uploadOutput(finalPath, outputFilename);
 
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'application/x-ndjson',
-      'Cache-Control': 'no-cache',
-      'Transfer-Encoding': 'chunked',
-    },
-  });
+        results.push({
+          variant: v.variant,
+          videoUrl: fileUrl(`outputs/${outputFilename}`),
+          captioned,
+          durationSeconds: duration,
+          voiceoverUrl: v.voiceoverUrl,
+        });
+      } catch (err: any) {
+        failures.push(`${v.variant}: ${err.message}`);
+      }
+    }
+
+    if (results.length === 0) {
+      return NextResponse.json(
+        { error: failures[0] || 'All variants failed to finalize' },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json({
+      videos: results,
+      failed: failures.length,
+      ...(failures.length > 0 && { warning: `${failures.length} of ${variants.length} variants failed` }),
+    });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message || 'Finalize failed' }, { status: 500 });
+  } finally {
+    try { await fs.rm(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
 }
