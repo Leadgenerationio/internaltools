@@ -65,25 +65,25 @@ Respond with ONLY valid JSON in this exact format (no markdown, no code fences):
 
 function buildLongformPrompt(brief: AdBrief): string {
   return `Generate a longform script for the following brief:\n\n${buildBriefContext(brief)}
-Generate ONE continuous longform video script broken into 4-8 text blocks. Each block is a PARAGRAPH of 2-4 sentences that will be displayed as a text overlay on a vertical video ad.
+Generate ONE continuous longform video ad script as a SINGLE block of text. This will be displayed as text overlays on a vertical video ad (like a UGC/talking-head ad).
 
-All blocks will be visible on screen stacked on top of each other — like a full-screen text overlay with multiple paragraphs. Think of it like a long-form UGC ad script.
+The script should be structured like this:
+1. HOOK — bold opening that grabs attention and makes them stop scrolling
+2. PROBLEM/CONTEXT — explain the situation, pain point, or opportunity
+3. SOLUTION — introduce the product/service as the answer, explain how it works
+4. PROOF/BENEFITS — social proof, key benefits, what makes it special
+5. CTA — clear call to action with urgency and next steps
 
-Structure the script like this:
-1. HOOK — bold opening that grabs attention and makes them stop scrolling (1 block, punchy and direct)
-2. PROBLEM/CONTEXT — explain the situation, pain point, or opportunity (1-2 blocks)
-3. SOLUTION — introduce the product/service as the answer, explain how it works (1-2 blocks)
-4. PROOF/BENEFITS — social proof, key benefits, what makes it special (1-2 blocks)
-5. CTA — clear call to action with urgency and next steps (1 block)
+Write 8-15 sentences total. Write in a direct, conversational tone. Use ALL CAPS for emphasis on key words (like "FREE", "THOUSANDS", "ONLY", "MUST", "NEW"). Make it feel urgent and personal. Each sentence should be punchy and work as a standalone text overlay.
 
-Each block should be 2-4 sentences. Write in a direct, conversational tone. Use ALL CAPS for emphasis on key words (like "FREE", "THOUSANDS", "ONLY", "MUST"). Make it feel urgent and personal.
+The user will manually split this into separate text boxes for timing — just return everything as one single text block.
 
 Respond with ONLY valid JSON in this exact format (no markdown, no code fences):
 {
   "ads": [
     {
       "funnelStage": "longform",
-      "textBoxes": ["First paragraph block here. Multiple sentences.", "Second paragraph block...", "..."]
+      "textBoxes": ["The entire script as one single string. Sentence two. Sentence three. And so on until the end."]
     }
   ]
 }`;
