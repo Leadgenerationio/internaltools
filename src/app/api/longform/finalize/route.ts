@@ -1,20 +1,32 @@
 /**
  * POST /api/longform/finalize
  *
- * Assemble final longform videos from pre-built components:
- * voiceover audio + scene clips + music + captions + aspect ratio.
+ * Assemble final longform videos synchronously with streaming progress.
+ * Downloads clips + voiceover, runs FFmpeg assembly, optionally captions via Submagic.
  *
- * Enqueues a longform-finalize BullMQ job.
  * Assembly is FREE — all costs (voiceover, scene generation) already paid incrementally.
+ *
+ * Returns NDJSON stream:
+ *   {"progress": 10, "message": "Downloading clips..."}
+ *   {"progress": 70, "message": "Assembling video..."}
+ *   {"done": true, "videos": [...]}
+ *   or {"error": "something failed"}
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthContext } from '@/lib/api-auth';
-import { getLongformQueue, isQueueAvailable } from '@/lib/queue';
-import type { LongformFinalizeData } from '@/lib/job-types';
-import type { CaptionConfig } from '@/lib/longform-types';
+import { assembleAdV2, getMediaDuration } from '@/lib/longform-stitcher';
+import { captionVideo } from '@/lib/submagic';
+import { fileUrl } from '@/lib/file-url';
+import type { CaptionConfig, LongformResultItem } from '@/lib/longform-types';
+import fs from 'fs/promises';
+import path from 'path';
+import crypto from 'crypto';
 
-export const maxDuration = 30;
+export const maxDuration = 300; // 5 minutes for video processing
+
+const OUTPUT_DIR = path.join(process.cwd(), 'public', 'outputs');
+const TEMP_BASE = path.join(process.cwd(), 'public', 'outputs', 'longform_temp');
 
 interface RequestBody {
   variants: Array<{
@@ -28,14 +40,132 @@ interface RequestBody {
   aspectRatio: '9:16' | '16:9' | '1:1';
 }
 
+// ─── File download helpers ─────────────────────────────────────────────────
+
+function resolveLocalPath(url: string): string | null {
+  // /api/files?path=outputs/xxx.mp4 → public/outputs/xxx.mp4
+  if (url.includes('/api/files')) {
+    const match = url.match(/[?&]path=([^&]+)/);
+    if (match) {
+      const decoded = decodeURIComponent(match[1]);
+      return path.join(process.cwd(), 'public', decoded);
+    }
+  }
+  // Relative path starting with / (e.g. /uploads/xxx.mp4)
+  if (url.startsWith('/') && !url.startsWith('//')) {
+    return path.join(process.cwd(), 'public', url);
+  }
+  return null;
+}
+
+function extractStoragePath(url: string): string | null {
+  if (url.includes('/api/files')) {
+    const match = url.match(/[?&]path=([^&]+)/);
+    if (match) return decodeURIComponent(match[1]);
+  }
+  const bucketName = process.env.S3_BUCKET;
+  if (bucketName) {
+    const pattern = `/object/public/${bucketName}/`;
+    const idx = url.indexOf(pattern);
+    if (idx >= 0) return url.slice(idx + pattern.length);
+  }
+  const match = url.match(/(outputs\/[^\s?#]+|longform\/[^\s?#]+|uploads\/[^\s?#]+)/);
+  if (match) return match[1];
+  return null;
+}
+
+async function downloadFile(url: string, label: string): Promise<Buffer> {
+  // 1. Try local filesystem first (fastest, no network)
+  const localPath = resolveLocalPath(url);
+  if (localPath) {
+    try {
+      const buf = await fs.readFile(localPath);
+      if (buf.length > 100) return buf;
+    } catch {
+      // File not on local disk — fall through to fetch
+    }
+  }
+
+  // 2. Try direct HTTP fetch (CDN URLs, Supabase URLs, etc.)
+  const fetchUrl = url.startsWith('/') ? `http://localhost:${process.env.PORT || 3000}${url}` : url;
+  try {
+    const res = await fetch(fetchUrl, {
+      headers: process.env.AUTH_SECRET ? { 'Authorization': `Bearer ${process.env.AUTH_SECRET}` } : {},
+    });
+    if (res.ok) {
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length > 100) return buf;
+    }
+  } catch {
+    // Fall through to S3
+  }
+
+  // 3. Try S3 direct download
+  const storagePath = extractStoragePath(url);
+  if (storagePath) {
+    const { S3_BUCKET: bucket, S3_ENDPOINT: endpoint, S3_ACCESS_KEY_ID: accessKey, S3_SECRET_ACCESS_KEY: secretKey } = process.env;
+    if (bucket && endpoint && accessKey && secretKey) {
+      try {
+        const { S3Client, GetObjectCommand } = await import('@aws-sdk/client-s3');
+        const client = new S3Client({
+          endpoint,
+          region: process.env.S3_REGION || 'auto',
+          credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
+          forcePathStyle: true,
+        });
+        const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: storagePath }));
+        if (response.Body) {
+          const chunks: Buffer[] = [];
+          for await (const chunk of response.Body as any) {
+            chunks.push(Buffer.from(chunk));
+          }
+          const buf = Buffer.concat(chunks);
+          if (buf.length > 100) return buf;
+        }
+      } catch { /* fall through */ }
+    }
+  }
+
+  throw new Error(`${label}: all download methods failed`);
+}
+
+// ─── Get a public URL for Submagic captioning ──────────────────────────────
+
+async function getPublicUrl(localPath: string): Promise<string | null> {
+  try {
+    const { uploadFile } = await import('@/lib/storage');
+    const storagePath = `longform/${path.basename(localPath)}`;
+    const publicUrl = await uploadFile(localPath, storagePath);
+    return publicUrl || null;
+  } catch {
+    return null;
+  }
+}
+
+// ─── Upload final output ─────────────────────────────────────────────────────
+
+async function uploadOutput(localPath: string, filename: string): Promise<void> {
+  // Prefer S3
+  try {
+    const { isCloudStorage, uploadFile } = await import('@/lib/storage');
+    if (isCloudStorage) {
+      const tmpCopy = localPath + '.upload.tmp';
+      await fs.copyFile(localPath, tmpCopy);
+      await uploadFile(tmpCopy, `outputs/${filename}`);
+      return;
+    }
+  } catch { /* fall through */ }
+
+  // Local: copy to outputs dir
+  await fs.mkdir(OUTPUT_DIR, { recursive: true });
+  await fs.copyFile(localPath, path.join(OUTPUT_DIR, filename));
+}
+
+// ─── Main route ──────────────────────────────────────────────────────────────
+
 export async function POST(request: NextRequest) {
   const authResult = await getAuthContext();
   if (authResult.error) return authResult.error;
-  const { companyId, userId } = authResult.auth;
-
-  if (!isQueueAvailable()) {
-    return NextResponse.json({ error: 'Background processing required (Redis not configured)' }, { status: 503 });
-  }
 
   const body: RequestBody = await request.json();
   const { variants, music, captionConfig, aspectRatio } = body;
@@ -44,7 +174,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'At least one variant is required' }, { status: 400 });
   }
 
-  // Validate each variant has voiceover and at least one scene
   for (const v of variants) {
     if (!v.voiceoverUrl) {
       return NextResponse.json({ error: `Variant "${v.variant}" is missing voiceover` }, { status: 400 });
@@ -65,24 +194,145 @@ export async function POST(request: NextRequest) {
     }, { status: 503 });
   }
 
-  const queue = getLongformQueue();
-  if (!queue) {
-    return NextResponse.json({ error: 'Job queue not available' }, { status: 503 });
-  }
+  // Process synchronously with streaming progress
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (data: Record<string, unknown>) => {
+        try {
+          controller.enqueue(encoder.encode(JSON.stringify(data) + '\n'));
+        } catch { /* stream may be closed */ }
+      };
 
-  const jobData: LongformFinalizeData = {
-    companyId,
-    userId,
-    variants,
-    music,
-    captionConfig,
-    aspectRatio: aspectRatio || '9:16',
-  };
+      const tempDir = path.join(TEMP_BASE, `finalize_${crypto.randomUUID()}`);
+      const results: LongformResultItem[] = [];
+      const failures: string[] = [];
 
-  const job = await queue.add('longform-finalize', jobData);
+      try {
+        await fs.mkdir(tempDir, { recursive: true });
+        const totalVariants = variants.length;
 
-  return NextResponse.json({
-    jobId: job.id,
-    type: 'longform',
+        for (let vi = 0; vi < variants.length; vi++) {
+          const v = variants[vi];
+          const variantDir = path.join(tempDir, `v_${vi}`);
+          await fs.mkdir(variantDir, { recursive: true });
+
+          const baseProgress = (vi / totalVariants) * 100;
+          const variantWeight = 100 / totalVariants;
+
+          try {
+            // 1. Download voiceover
+            send({ progress: Math.round(baseProgress + variantWeight * 0.05), message: `Downloading voiceover (${v.variant})...` });
+            const voPath = path.join(variantDir, 'voiceover.mp3');
+            const voBuffer = await downloadFile(v.voiceoverUrl, `Voiceover (${v.variant})`);
+            await fs.writeFile(voPath, voBuffer);
+
+            // 2. Download scene clips
+            const sortedScenes = [...v.scenes].sort((a, b) => a.order - b.order);
+            const clipPaths: string[] = [];
+            for (let si = 0; si < sortedScenes.length; si++) {
+              const scene = sortedScenes[si];
+              send({ progress: Math.round(baseProgress + variantWeight * (0.1 + 0.25 * (si / sortedScenes.length))), message: `Downloading scene ${si + 1}/${sortedScenes.length} (${v.variant})...` });
+              const clipPath = path.join(variantDir, `clip_${si}.mp4`);
+              const buffer = await downloadFile(scene.clipUrl, `Scene ${si} (${v.variant})`);
+              if (buffer.length < 1000) {
+                throw new Error(`Scene ${si + 1} download too small (${buffer.length} bytes)`);
+              }
+              await fs.writeFile(clipPath, buffer);
+              clipPaths.push(clipPath);
+            }
+
+            // 3. Download music
+            let musicPath: string | undefined;
+            if (music?.url) {
+              send({ progress: Math.round(baseProgress + variantWeight * 0.4), message: `Downloading music (${v.variant})...` });
+              const mPath = path.join(variantDir, 'music.mp3');
+              const musicBuffer = await downloadFile(music.url, `Music (${v.variant})`);
+              await fs.writeFile(mPath, musicBuffer);
+              musicPath = mPath;
+            }
+
+            // 4. Assemble: normalize → concat → voiceover → music
+            send({ progress: Math.round(baseProgress + variantWeight * 0.45), message: `Assembling video (${v.variant})...` });
+            const rawPath = path.join(variantDir, 'assembled.mp4');
+            const stitchDir = path.join(variantDir, 'stitch');
+
+            await assembleAdV2({
+              clips: clipPaths,
+              voiceoverPath: voPath,
+              outputPath: rawPath,
+              tempDir: stitchDir,
+              aspectRatio: aspectRatio || '9:16',
+              musicPath,
+              musicVolume: music?.volume ?? 0.15,
+            });
+
+            send({ progress: Math.round(baseProgress + variantWeight * 0.7), message: `Video assembled (${v.variant})` });
+
+            // 5. Captions via Submagic (optional)
+            let finalPath = rawPath;
+            let captioned = false;
+
+            if (captionConfig?.enabled && process.env.SUBMAGIC_API_KEY) {
+              send({ progress: Math.round(baseProgress + variantWeight * 0.75), message: `Adding captions (${v.variant})...` });
+              const publicUrl = await getPublicUrl(rawPath);
+              if (publicUrl) {
+                const captionDir = path.join(variantDir, 'captions');
+                await fs.mkdir(captionDir, { recursive: true });
+                const captionedPath = path.join(captionDir, 'captioned.mp4');
+                await captionVideo(publicUrl, captionedPath, captionConfig, `Longform - ${v.variant}`);
+                finalPath = captionedPath;
+                captioned = true;
+              }
+            }
+
+            send({ progress: Math.round(baseProgress + variantWeight * 0.9), message: `Uploading final video (${v.variant})...` });
+
+            // 6. Upload final video
+            const duration = await getMediaDuration(finalPath).catch(() => 30);
+            const outputFilename = `longform_final_${v.variant.replace(/[^a-zA-Z0-9_-]/g, '_')}_${crypto.randomUUID()}.mp4`;
+            await uploadOutput(finalPath, outputFilename);
+
+            results.push({
+              variant: v.variant,
+              videoUrl: fileUrl(`outputs/${outputFilename}`),
+              captioned,
+              durationSeconds: duration,
+              voiceoverUrl: v.voiceoverUrl,
+            });
+
+            send({ progress: Math.round(baseProgress + variantWeight), message: `Variant "${v.variant}" complete` });
+          } catch (err: any) {
+            failures.push(`${v.variant}: ${err.message}`);
+            send({ progress: Math.round(baseProgress + variantWeight), message: `Variant "${v.variant}" failed: ${err.message}` });
+          }
+        }
+
+        if (results.length === 0) {
+          send({ error: failures[0] || 'All variants failed to finalize' });
+        } else {
+          send({
+            done: true,
+            videos: results,
+            failed: failures.length,
+            ...(failures.length > 0 && { warning: `${failures.length} of ${variants.length} variants failed` }),
+          });
+        }
+      } catch (err: any) {
+        send({ error: err.message || 'Finalize failed' });
+      } finally {
+        // Cleanup temp files
+        try { await fs.rm(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'application/x-ndjson',
+      'Cache-Control': 'no-cache',
+      'Transfer-Encoding': 'chunked',
+    },
   });
 }

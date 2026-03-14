@@ -39,7 +39,7 @@ export default function FinalizeStep({
   const [producing, setProducing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [jobId, setJobId] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const allScenesReady = scripts.every((s) =>
     s.scenes.every((sc) => sc.clipUrl) && s.voiceoverUrl
@@ -75,33 +75,52 @@ export default function FinalizeStep({
         throw new Error(data.error || `Failed (${res.status})`);
       }
 
-      const data = await res.json();
-      const jid = data.jobId;
-      setJobId(jid);
+      // Read streaming NDJSON response for progress updates
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error('No response stream');
 
-      // Store in localStorage for page refresh recovery
-      localStorage.setItem('longform_job_id', jid);
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-      // Poll for completion
-      const { pollJob } = await import('@/lib/poll-job');
-      const result = await pollJob(jid, 'longform', {
-        onProgress: (p: number) => setProgress(p),
-      });
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      localStorage.removeItem('longform_job_id');
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
-      if (result.state === 'failed') {
-        throw new Error(result.error || 'Production failed');
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.progress != null) setProgress(msg.progress);
+            if (msg.message) setStatusMessage(msg.message);
+            if (msg.error) throw new Error(msg.error);
+            if (msg.done) {
+              onResults(msg.videos || []);
+            }
+          } catch (parseErr: any) {
+            if (parseErr.message && !parseErr.message.includes('JSON')) {
+              throw parseErr; // Re-throw non-parse errors (like our msg.error throw)
+            }
+          }
+        }
       }
 
-      const jobResult = result.result as any;
-      onResults(jobResult.videos || []);
+      // Process any remaining buffer
+      if (buffer.trim()) {
+        try {
+          const msg = JSON.parse(buffer);
+          if (msg.error) throw new Error(msg.error);
+          if (msg.done) onResults(msg.videos || []);
+        } catch { /* ignore parse errors on final chunk */ }
+      }
     } catch (err: any) {
-      localStorage.removeItem('longform_job_id');
       setError(err.message);
     } finally {
       setProducing(false);
-      setJobId(null);
+      setStatusMessage(null);
     }
   };
 
@@ -249,9 +268,7 @@ export default function FinalizeStep({
             />
           </div>
           <p className="text-xs text-gray-500">
-            Downloading clips, normalizing video, merging voiceover
-            {music ? ', mixing music' : ''}
-            {captionConfig.enabled ? ', adding captions' : ''}...
+            {statusMessage || `Downloading clips, normalizing video, merging voiceover${music ? ', mixing music' : ''}${captionConfig.enabled ? ', adding captions' : ''}...`}
           </p>
         </div>
       )}
