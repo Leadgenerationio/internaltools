@@ -131,17 +131,54 @@ async function downloadFile(url: string, label: string): Promise<Buffer> {
         if (buf.length > 100) return buf;
         errors.push(`http: too small (${buf.length}b)`);
       } else {
-        errors.push(`http: ${res.status}`);
+        const body = await res.text().catch(() => '');
+        errors.push(`http: ${res.status} ${body.slice(0, 100)}`);
       }
     } catch (e: any) {
       errors.push(`http: ${e.message}`);
     }
   }
 
-  // 4. Last resort: HTTP self-fetch via /api/files (works if server can call itself)
-  if (url.startsWith('/')) {
+  // 3b. For Supabase/CDN URLs, extract the storage path and try local disk
+  if (!localPath && (url.includes('/object/public/') || url.includes('/outputs/') || url.includes('/uploads/') || url.includes('/longform/'))) {
+    const pathFromUrl = extractStoragePath(url);
+    if (pathFromUrl) {
+      const altLocalPath = path.join(process.cwd(), 'public', pathFromUrl);
+      try {
+        const buf = await fs.readFile(altLocalPath);
+        if (buf.length > 100) return buf;
+        errors.push(`alt-local: too small (${buf.length}b)`);
+      } catch (e: any) {
+        errors.push(`alt-local[${pathFromUrl}]: ${e.code || e.message}`);
+      }
+    }
+  }
+
+  // 4. Try Supabase authenticated download (service_role key can access even non-public files)
+  if (storagePath && process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    const bucket = process.env.S3_BUCKET || 'media';
+    const downloadUrl = `${process.env.SUPABASE_URL}/storage/v1/object/${bucket}/${storagePath}`;
+    try {
+      const res = await fetch(downloadUrl, {
+        headers: { 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}` },
+      });
+      if (res.ok) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > 100) return buf;
+        errors.push(`supabase-auth: too small (${buf.length}b)`);
+      } else {
+        errors.push(`supabase-auth: ${res.status}`);
+      }
+    } catch (e: any) {
+      errors.push(`supabase-auth: ${e.message}`);
+    }
+  }
+
+  // 5. Last resort: HTTP self-fetch via /api/files (works if server can call itself)
+  if (url.startsWith('/') || storagePath) {
     const port = process.env.PORT || '3000';
-    const selfUrl = `http://localhost:${port}${url}`;
+    const selfPath = url.startsWith('/') ? url : `/api/files?path=${encodeURIComponent(storagePath!)}`;
+    const selfUrl = `http://localhost:${port}${selfPath}`;
     try {
       const res = await fetch(selfUrl, {
         headers: process.env.AUTH_SECRET ? { 'Authorization': `Bearer ${process.env.AUTH_SECRET}` } : {},
