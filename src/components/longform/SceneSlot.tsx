@@ -303,6 +303,13 @@ export default function SceneSlot({ scene, onUpdate, onSaveToLibrary }: Props) {
                       >
                         {f.thumbnailUrl ? (
                           <img src={normalizeVideoUrl(f.thumbnailUrl)} alt="" className="w-full aspect-video object-cover" />
+                        ) : f.publicUrl ? (
+                          <video
+                            src={normalizeVideoUrl(f.publicUrl)}
+                            className="w-full aspect-video object-cover bg-gray-800"
+                            preload="metadata"
+                            muted
+                          />
                         ) : (
                           <div className="w-full aspect-video bg-gray-800 flex items-center justify-center text-xs text-gray-500">No preview</div>
                         )}

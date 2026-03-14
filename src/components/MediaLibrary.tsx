@@ -122,6 +122,13 @@ export default function MediaLibrary({ videos, onUpload }: Props) {
                 alt={file.originalName || 'Video'}
                 className="w-full h-24 object-cover"
               />
+            ) : file.publicUrl ? (
+              <video
+                src={file.publicUrl}
+                className="w-full h-24 object-cover bg-gray-700"
+                preload="metadata"
+                muted
+              />
             ) : (
               <div className="w-full h-24 bg-gray-700 flex items-center justify-center">
                 <svg className="w-8 h-8 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
