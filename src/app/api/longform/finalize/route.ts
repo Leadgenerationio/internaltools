@@ -75,32 +75,21 @@ function extractStoragePath(url: string): string | null {
 }
 
 async function downloadFile(url: string, label: string): Promise<Buffer> {
+  const errors: string[] = [];
+
   // 1. Try local filesystem first (fastest, no network)
   const localPath = resolveLocalPath(url);
   if (localPath) {
     try {
       const buf = await fs.readFile(localPath);
       if (buf.length > 100) return buf;
-    } catch {
-      // File not on local disk — fall through to fetch
+      errors.push(`local: file too small (${buf.length}b)`);
+    } catch (e: any) {
+      errors.push(`local: ${e.code || e.message}`);
     }
   }
 
-  // 2. Try direct HTTP fetch (CDN URLs, Supabase URLs, etc.)
-  const fetchUrl = url.startsWith('/') ? `http://localhost:${process.env.PORT || 3000}${url}` : url;
-  try {
-    const res = await fetch(fetchUrl, {
-      headers: process.env.AUTH_SECRET ? { 'Authorization': `Bearer ${process.env.AUTH_SECRET}` } : {},
-    });
-    if (res.ok) {
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length > 100) return buf;
-    }
-  } catch {
-    // Fall through to S3
-  }
-
-  // 3. Try S3 direct download
+  // 2. Try S3 direct download (more reliable than HTTP self-fetch on Railway)
   const storagePath = extractStoragePath(url);
   if (storagePath) {
     const { S3_BUCKET: bucket, S3_ENDPOINT: endpoint, S3_ACCESS_KEY_ID: accessKey, S3_SECRET_ACCESS_KEY: secretKey } = process.env;
@@ -121,12 +110,55 @@ async function downloadFile(url: string, label: string): Promise<Buffer> {
           }
           const buf = Buffer.concat(chunks);
           if (buf.length > 100) return buf;
+          errors.push(`s3: file too small (${buf.length}b)`);
+        } else {
+          errors.push('s3: no body');
         }
-      } catch { /* fall through */ }
+      } catch (e: any) {
+        errors.push(`s3[${storagePath}]: ${e.message}`);
+      }
+    } else {
+      errors.push('s3: not configured');
     }
   }
 
-  throw new Error(`${label}: all download methods failed`);
+  // 3. Try direct HTTP fetch (CDN URLs, full Supabase URLs, external URLs)
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > 100) return buf;
+        errors.push(`http: too small (${buf.length}b)`);
+      } else {
+        errors.push(`http: ${res.status}`);
+      }
+    } catch (e: any) {
+      errors.push(`http: ${e.message}`);
+    }
+  }
+
+  // 4. Last resort: HTTP self-fetch via /api/files (works if server can call itself)
+  if (url.startsWith('/')) {
+    const port = process.env.PORT || '3000';
+    const selfUrl = `http://localhost:${port}${url}`;
+    try {
+      const res = await fetch(selfUrl, {
+        headers: process.env.AUTH_SECRET ? { 'Authorization': `Bearer ${process.env.AUTH_SECRET}` } : {},
+      });
+      if (res.ok) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > 100) return buf;
+        errors.push(`self-fetch: too small (${buf.length}b)`);
+      } else {
+        errors.push(`self-fetch: ${res.status}`);
+      }
+    } catch (e: any) {
+      errors.push(`self-fetch: ${e.message}`);
+    }
+  }
+
+  throw new Error(`${label}: all download methods failed [url=${url.slice(0, 100)}] [${errors.join(', ')}]`);
 }
 
 // ─── Get a public URL for Submagic captioning ──────────────────────────────
