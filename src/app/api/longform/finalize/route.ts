@@ -74,6 +74,17 @@ function extractStoragePath(url: string): string | null {
   return null;
 }
 
+/** Fetch with a 30-second timeout */
+async function fetchWithTimeout(fetchUrl: string, opts: RequestInit = {}, timeoutMs = 30_000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(fetchUrl, { ...opts, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function downloadFile(url: string, label: string): Promise<Buffer> {
   const errors: string[] = [];
 
@@ -89,8 +100,20 @@ async function downloadFile(url: string, label: string): Promise<Buffer> {
     }
   }
 
-  // 2. Try S3 direct download (more reliable than HTTP self-fetch on Railway)
+  // 2. For Supabase/CDN URLs, extract storage path and try local disk
   const storagePath = extractStoragePath(url);
+  if (storagePath && !localPath) {
+    const altLocalPath = path.join(process.cwd(), 'public', storagePath);
+    try {
+      const buf = await fs.readFile(altLocalPath);
+      if (buf.length > 100) return buf;
+      errors.push(`alt-local: too small (${buf.length}b)`);
+    } catch (e: any) {
+      errors.push(`alt-local[${storagePath}]: ${e.code || e.message}`);
+    }
+  }
+
+  // 3. Try S3 direct download
   if (storagePath) {
     const { S3_BUCKET: bucket, S3_ENDPOINT: endpoint, S3_ACCESS_KEY_ID: accessKey, S3_SECRET_ACCESS_KEY: secretKey } = process.env;
     if (bucket && endpoint && accessKey && secretKey) {
@@ -122,10 +145,10 @@ async function downloadFile(url: string, label: string): Promise<Buffer> {
     }
   }
 
-  // 3. Try direct HTTP fetch (CDN URLs, full Supabase URLs, external URLs)
+  // 4. Try direct HTTP fetch with timeout (CDN URLs, Supabase URLs)
   if (url.startsWith('http://') || url.startsWith('https://')) {
     try {
-      const res = await fetch(url);
+      const res = await fetchWithTimeout(url);
       if (res.ok) {
         const buf = Buffer.from(await res.arrayBuffer());
         if (buf.length > 100) return buf;
@@ -135,67 +158,11 @@ async function downloadFile(url: string, label: string): Promise<Buffer> {
         errors.push(`http: ${res.status} ${body.slice(0, 100)}`);
       }
     } catch (e: any) {
-      errors.push(`http: ${e.message}`);
+      errors.push(`http: ${e.name === 'AbortError' ? 'timeout' : e.message}`);
     }
   }
 
-  // 3b. For Supabase/CDN URLs, extract the storage path and try local disk
-  if (!localPath && (url.includes('/object/public/') || url.includes('/outputs/') || url.includes('/uploads/') || url.includes('/longform/'))) {
-    const pathFromUrl = extractStoragePath(url);
-    if (pathFromUrl) {
-      const altLocalPath = path.join(process.cwd(), 'public', pathFromUrl);
-      try {
-        const buf = await fs.readFile(altLocalPath);
-        if (buf.length > 100) return buf;
-        errors.push(`alt-local: too small (${buf.length}b)`);
-      } catch (e: any) {
-        errors.push(`alt-local[${pathFromUrl}]: ${e.code || e.message}`);
-      }
-    }
-  }
-
-  // 4. Try Supabase authenticated download (service_role key can access even non-public files)
-  if (storagePath && process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    const bucket = process.env.S3_BUCKET || 'media';
-    const downloadUrl = `${process.env.SUPABASE_URL}/storage/v1/object/${bucket}/${storagePath}`;
-    try {
-      const res = await fetch(downloadUrl, {
-        headers: { 'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}` },
-      });
-      if (res.ok) {
-        const buf = Buffer.from(await res.arrayBuffer());
-        if (buf.length > 100) return buf;
-        errors.push(`supabase-auth: too small (${buf.length}b)`);
-      } else {
-        errors.push(`supabase-auth: ${res.status}`);
-      }
-    } catch (e: any) {
-      errors.push(`supabase-auth: ${e.message}`);
-    }
-  }
-
-  // 5. Last resort: HTTP self-fetch via /api/files (works if server can call itself)
-  if (url.startsWith('/') || storagePath) {
-    const port = process.env.PORT || '3000';
-    const selfPath = url.startsWith('/') ? url : `/api/files?path=${encodeURIComponent(storagePath!)}`;
-    const selfUrl = `http://localhost:${port}${selfPath}`;
-    try {
-      const res = await fetch(selfUrl, {
-        headers: process.env.AUTH_SECRET ? { 'Authorization': `Bearer ${process.env.AUTH_SECRET}` } : {},
-      });
-      if (res.ok) {
-        const buf = Buffer.from(await res.arrayBuffer());
-        if (buf.length > 100) return buf;
-        errors.push(`self-fetch: too small (${buf.length}b)`);
-      } else {
-        errors.push(`self-fetch: ${res.status}`);
-      }
-    } catch (e: any) {
-      errors.push(`self-fetch: ${e.message}`);
-    }
-  }
-
-  throw new Error(`${label}: all download methods failed [url=${url.slice(0, 100)}] [${errors.join(', ')}]`);
+  throw new Error(`${label}: all download methods failed [url=${url.slice(0, 120)}] [${errors.join(', ')}]`);
 }
 
 // ─── Get a public URL for Submagic captioning ──────────────────────────────
@@ -264,11 +231,18 @@ export async function POST(request: NextRequest) {
   }
 
   // Process synchronously — returns plain JSON when done
-  const tempDir = path.join(TEMP_BASE, `finalize_${crypto.randomUUID()}`);
-  const results: LongformResultItem[] = [];
-  const failures: string[] = [];
+  // Global 4-minute timeout to prevent infinite hangs
+  const GLOBAL_TIMEOUT_MS = 4 * 60 * 1000;
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('Finalize timed out after 4 minutes')), GLOBAL_TIMEOUT_MS)
+  );
 
-  try {
+  const tempDir = path.join(TEMP_BASE, `finalize_${crypto.randomUUID()}`);
+
+  const processVariants = async () => {
+    const results: LongformResultItem[] = [];
+    const failures: string[] = [];
+
     await fs.mkdir(tempDir, { recursive: true });
 
     for (let vi = 0; vi < variants.length; vi++) {
@@ -353,17 +327,20 @@ export async function POST(request: NextRequest) {
     }
 
     if (results.length === 0) {
-      return NextResponse.json(
-        { error: failures[0] || 'All variants failed to finalize' },
-        { status: 500 },
-      );
+      throw new Error(failures[0] || 'All variants failed to finalize');
     }
 
-    return NextResponse.json({
+    return {
       videos: results,
       failed: failures.length,
       ...(failures.length > 0 && { warning: `${failures.length} of ${variants.length} variants failed` }),
-    });
+    };
+  };
+
+  // Race processing against timeout
+  try {
+    const result = await Promise.race([processVariants(), timeoutPromise]);
+    return NextResponse.json(result);
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Finalize failed' }, { status: 500 });
   } finally {
