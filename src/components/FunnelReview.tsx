@@ -49,12 +49,14 @@ const FUNNEL_TOOLTIPS: Record<FunnelStage, string> = {
   tofu: 'Top of Funnel — Awareness ads that hook attention and spark curiosity. These are for people who have never heard of you.',
   mofu: 'Middle of Funnel — Trust-building ads with social proof and education. These warm up people who are already interested.',
   bofu: 'Bottom of Funnel — Conversion ads with urgency, offers, and strong CTAs. These close the deal.',
+  longform: 'Longform Script — One continuous narrative with many text segments that build a complete story over your video.',
 };
 
 export default function FunnelReview({ ads, onUpdateAds, onRegenerateAd, regeneratingId }: Props) {
-  const [activeTab, setActiveTab] = useState<FunnelStage>('tofu');
+  const isLongform = ads.length > 0 && ads[0].funnelStage === 'longform';
+  const [activeTab, setActiveTab] = useState<FunnelStage>(isLongform ? 'longform' : 'tofu');
 
-  const stageAds = ads.filter((a) => a.funnelStage === activeTab);
+  const stageAds = isLongform ? ads : ads.filter((a) => a.funnelStage === activeTab);
   const approvedCount = ads.filter((a) => a.approved).length;
 
   const toggleApproval = (adId: string) => {
@@ -99,38 +101,51 @@ export default function FunnelReview({ ads, onUpdateAds, onRegenerateAd, regener
         </button>
       </div>
 
-      {/* Funnel stage tabs */}
-      <div className="flex gap-1 bg-gray-800 rounded-xl p-1">
-        {TABS.map((stage) => {
-          const count = ads.filter((a) => a.funnelStage === stage).length;
-          const approved = ads.filter((a) => a.funnelStage === stage && a.approved).length;
-          return (
-            <button
-              key={stage}
-              onClick={() => setActiveTab(stage)}
-              className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                activeTab === stage
-                  ? 'bg-gray-700 text-white shadow'
-                  : 'text-gray-400 hover:text-gray-300'
-              }`}
-            >
-              <span className="inline-flex items-center">
-                {FUNNEL_LABELS[stage]}
-                <Tooltip text={FUNNEL_TOOLTIPS[stage]} position="bottom" />
-              </span>
-              <span className="ml-2 text-xs opacity-60">
-                {approved}/{count}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+      {/* Funnel stage tabs — hidden in longform mode */}
+      {!isLongform && (
+        <>
+          <div className="flex gap-1 bg-gray-800 rounded-xl p-1">
+            {TABS.map((stage) => {
+              const count = ads.filter((a) => a.funnelStage === stage).length;
+              const approved = ads.filter((a) => a.funnelStage === stage && a.approved).length;
+              return (
+                <button
+                  key={stage}
+                  onClick={() => setActiveTab(stage)}
+                  className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    activeTab === stage
+                      ? 'bg-gray-700 text-white shadow'
+                      : 'text-gray-400 hover:text-gray-300'
+                  }`}
+                >
+                  <span className="inline-flex items-center">
+                    {FUNNEL_LABELS[stage]}
+                    <Tooltip text={FUNNEL_TOOLTIPS[stage]} position="bottom" />
+                  </span>
+                  <span className="ml-2 text-xs opacity-60">
+                    {approved}/{count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
 
-      {/* Stage description */}
-      <p className="text-sm text-gray-500">{FUNNEL_DESCRIPTIONS[activeTab]}</p>
+          {/* Stage description */}
+          <p className="text-sm text-gray-500">{FUNNEL_DESCRIPTIONS[activeTab]}</p>
+        </>
+      )}
+
+      {/* Longform description */}
+      {isLongform && (
+        <div className="p-3 bg-purple-950/30 border border-purple-800/50 rounded-xl">
+          <p className="text-sm text-purple-300">
+            Longform Script — one continuous script with {ads[0]?.textBoxes.length || 0} text segments. Edit each segment below, then approve to continue.
+          </p>
+        </div>
+      )}
 
       {/* Ad cards grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className={`grid gap-4 ${isLongform ? 'grid-cols-1 max-w-2xl mx-auto' : 'grid-cols-1 md:grid-cols-2'}`}>
         {stageAds.map((ad) => (
           <div
             key={ad.id}

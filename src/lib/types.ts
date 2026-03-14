@@ -71,6 +71,7 @@ export interface AdBrief {
   additionalContext: string;
   addEmojis: boolean;
   language: string;
+  isLongform?: boolean;
 }
 
 export const AD_LANGUAGES = [
@@ -96,24 +97,27 @@ export const AD_LANGUAGES = [
   'Russian',
 ] as const;
 
-export type FunnelStage = 'tofu' | 'mofu' | 'bofu';
+export type FunnelStage = 'tofu' | 'mofu' | 'bofu' | 'longform';
 
 export const FUNNEL_LABELS: Record<FunnelStage, string> = {
   tofu: 'Top of Funnel',
   mofu: 'Middle of Funnel',
   bofu: 'Bottom of Funnel',
+  longform: 'Longform Script',
 };
 
 export const FUNNEL_SHORT_LABELS: Record<FunnelStage, string> = {
   tofu: 'TOF',
   mofu: 'MOF',
   bofu: 'BOF',
+  longform: 'LF',
 };
 
 export const FUNNEL_DESCRIPTIONS: Record<FunnelStage, string> = {
   tofu: 'Awareness — hook attention, spark curiosity',
   mofu: 'Consideration — build trust, educate, show value',
   bofu: 'Conversion — drive action, create urgency',
+  longform: 'One continuous script with multiple text segments that play over your video',
 };
 
 export interface GeneratedAd {

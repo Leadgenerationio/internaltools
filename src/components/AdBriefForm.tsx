@@ -20,6 +20,7 @@ const EMPTY_BRIEF: AdBrief = {
   additionalContext: '',
   addEmojis: true,
   language: 'English',
+  isLongform: false,
 };
 
 export default function AdBriefForm({ onGenerate, generating, initialBrief }: Props) {
@@ -168,6 +169,33 @@ export default function AdBriefForm({ onGenerate, generating, initialBrief }: Pr
         </div>
       </div>
 
+      {/* Longform script toggle */}
+      <div className="p-4 bg-gray-800/50 rounded-xl border border-gray-700/50">
+        <label className="flex items-center gap-3 cursor-pointer group">
+          <div className="relative">
+            <input
+              type="checkbox"
+              checked={brief.isLongform || false}
+              onChange={(e) => setBrief((prev) => ({ ...prev, isLongform: e.target.checked }))}
+              className="sr-only peer"
+            />
+            <div className="w-10 h-6 bg-gray-700 rounded-full peer-checked:bg-purple-600 transition-colors" />
+            <div className="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4" />
+          </div>
+          <div>
+            <span className="text-sm text-gray-300 group-hover:text-white transition-colors font-medium">
+              Longform Script Mode
+            </span>
+            <Tooltip text="Instead of 10 short funnel ads, generate one long continuous script with 10-20 text segments. Great for explainer videos, tutorials, or storytelling ads." />
+            <p className="text-xs text-gray-500 mt-0.5">
+              {brief.isLongform
+                ? 'Will generate 1 long continuous script with 10-20 text segments'
+                : 'Currently set to generate 10 short funnel ads (4 TOFU + 4 MOFU + 2 BOFU)'}
+            </p>
+          </div>
+        </label>
+      </div>
+
       {/* Emoji toggle */}
       <label className="flex items-center gap-3 cursor-pointer group">
         <div className="relative">
@@ -198,8 +226,10 @@ export default function AdBriefForm({ onGenerate, generating, initialBrief }: Pr
         {generating ? (
           <span className="flex items-center justify-center gap-2">
             <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            Generating ad copy...
+            {brief.isLongform ? 'Generating longform script...' : 'Generating ad copy...'}
           </span>
+        ) : brief.isLongform ? (
+          'Generate Longform Script (10-20 segments)'
         ) : (
           'Generate Ad Copy (4 TOFU + 4 MOFU + 2 BOFU)'
         )}

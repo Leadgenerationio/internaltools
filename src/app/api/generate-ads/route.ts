@@ -63,6 +63,31 @@ Respond with ONLY valid JSON in this exact format (no markdown, no code fences):
 }`;
 }
 
+function buildLongformPrompt(brief: AdBrief): string {
+  return `Generate a longform script for the following brief:\n\n${buildBriefContext(brief)}
+Generate ONE continuous longform script broken into 10-20 short text segments. These segments will appear one at a time over a video, building a narrative from hook to close.
+
+Structure the script like this:
+1. HOOK — a bold opening line that grabs attention (1-2 segments)
+2. PROBLEM — identify the pain point or desire (2-3 segments)
+3. SOLUTION — introduce the product/service as the answer (2-3 segments)
+4. PROOF — social proof, stats, testimonials, results (2-3 segments)
+5. BENEFITS — key advantages, what makes it special (2-3 segments)
+6. CTA — clear call to action with urgency (1-2 segments)
+
+Each segment should be SHORT (under 12 words). They appear over video one at a time, so each must make sense on its own while building the overall story.
+
+Respond with ONLY valid JSON in this exact format (no markdown, no code fences):
+{
+  "ads": [
+    {
+      "funnelStage": "longform",
+      "textBoxes": ["Hook line 1", "Hook line 2", "Problem segment", "...", "CTA segment"]
+    }
+  ]
+}`;
+}
+
 function buildSingleAdPrompt(brief: AdBrief, stage: FunnelStage): string {
   const stageLabel = stage === 'tofu' ? 'TOFU (Top of Funnel — awareness, hook cold audiences)'
     : stage === 'mofu' ? 'MOFU (Middle of Funnel — build trust, educate)'
@@ -173,11 +198,17 @@ export async function POST(request: NextRequest) {
     const startTime = Date.now();
     let result;
     if (regenerateStage) {
-      const validStages: FunnelStage[] = ['tofu', 'mofu', 'bofu'];
+      const validStages: FunnelStage[] = ['tofu', 'mofu', 'bofu', 'longform'];
       if (!validStages.includes(regenerateStage)) {
         return NextResponse.json({ error: 'Invalid funnel stage' }, { status: 400 });
       }
-      result = await callClaude(buildSingleAdPrompt(brief, regenerateStage));
+      if (regenerateStage === 'longform') {
+        result = await callClaude(buildLongformPrompt(brief));
+      } else {
+        result = await callClaude(buildSingleAdPrompt(brief, regenerateStage));
+      }
+    } else if (brief.isLongform) {
+      result = await callClaude(buildLongformPrompt(brief));
     } else {
       result = await callClaude(buildUserPrompt(brief));
     }

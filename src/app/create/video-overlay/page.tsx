@@ -36,10 +36,15 @@ function formatDownloadName(adLabel: string, originalName: string): string {
     'Top of Funnel': 'TOF',
     'Middle of Funnel': 'MOF',
     'Bottom of Funnel': 'BOF',
+    'Longform Script': 'LF',
   };
 
   let shortLabel = adLabel.replace(/[^a-zA-Z0-9 #-]/g, '');
   for (const [full, short] of Object.entries(stageMap)) {
+    if (adLabel === full) {
+      shortLabel = short;
+      break;
+    }
     const match = adLabel.match(new RegExp(`^${full}\\s*#?(\\d+)$`));
     if (match) {
       shortLabel = `${short} - ${match[1]}`;
@@ -93,15 +98,8 @@ function HomeContent() {
   const router = useRouter();
   const projectIdParam = searchParams.get('projectId');
 
-  // Track whether a project has been loaded into the editor
-  const [projectLoaded, setProjectLoaded] = useState(false);
-
-  // Redirect to projects page if no projectId and no project loaded
-  useEffect(() => {
-    if (!projectIdParam && !projectLoaded) {
-      router.replace('/');
-    }
-  }, [projectIdParam, projectLoaded, router]);
+  // Ref to prevent double-loading the same project (immune to re-renders)
+  const projectLoadedRef = useRef(false);
 
   // Step management
   const [step, setStep] = useState<AppStep>('brief');
@@ -154,19 +152,19 @@ function HomeContent() {
   // Persist state to localStorage so user doesn't lose progress between refreshes
   const [isRestored, setIsRestored] = useState(false);
 
-  // Load project from DB when projectId is in the URL (e.g. opening from projects page or using a template)
+  // Load project from DB when projectId is in the URL
   useEffect(() => {
     if (!projectIdParam) return;
-
-    let cancelled = false;
+    if (projectLoadedRef.current) return; // Already loaded — don't re-fetch
+    projectLoadedRef.current = true;
 
     (async () => {
       try {
         const res = await fetch(`/api/projects/${projectIdParam}`);
-        if (!res.ok || cancelled) return;
+        if (!res.ok) return;
         const data = await res.json();
         const p = data.project;
-        if (!p || cancelled) return;
+        if (!p) return;
 
         // Populate brief (add defaults for fields that may be missing from older templates)
         if (p.brief) {
@@ -246,19 +244,16 @@ function HomeContent() {
 
         // Track project ID for auto-save
         setActiveProjectId(projectIdParam);
-        setProjectLoaded(true);
 
-        // Clean the URL so a refresh doesn't re-fetch
-        router.replace('/', { scroll: false });
+        // Clean the URL without triggering React re-renders/effects
+        window.history.replaceState(null, '', '/create/video-overlay');
       } catch {
         // Failed to load project — fall through to localStorage
       } finally {
-        if (!cancelled) setIsRestored(true);
+        setIsRestored(true);
       }
     })();
-
-    return () => { cancelled = true; };
-  }, [projectIdParam, router]);
+  }, [projectIdParam]);
 
   // Restore from localStorage when no projectId in URL
   useEffect(() => {
@@ -442,10 +437,17 @@ function HomeContent() {
       );
 
       // Label per stage
-      const stageCounts: Record<string, number> = {};
-      for (const ad of generated) {
-        stageCounts[ad.funnelStage] = (stageCounts[ad.funnelStage] || 0) + 1;
-        ad.variationLabel = `${FUNNEL_LABELS[ad.funnelStage]} #${stageCounts[ad.funnelStage]}`;
+      const isLongform = newBrief.isLongform;
+      if (isLongform) {
+        for (const ad of generated) {
+          ad.variationLabel = 'Longform Script';
+        }
+      } else {
+        const stageCounts: Record<string, number> = {};
+        for (const ad of generated) {
+          stageCounts[ad.funnelStage] = (stageCounts[ad.funnelStage] || 0) + 1;
+          ad.variationLabel = `${FUNNEL_LABELS[ad.funnelStage]} #${stageCounts[ad.funnelStage]}`;
+        }
       }
 
       setAds(generated);
@@ -467,10 +469,13 @@ function HomeContent() {
     setRegeneratingId(adId);
 
     try {
+      const payload = ad.funnelStage === 'longform'
+        ? { brief: { ...brief, isLongform: true }, regenerateStage: 'longform' as FunnelStage }
+        : { brief, regenerateStage: ad.funnelStage };
       const res = await fetch('/api/generate-ads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ brief, regenerateStage: ad.funnelStage }),
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json();
@@ -695,8 +700,8 @@ function HomeContent() {
 
   // === Step navigation ===
 
-  // Show nothing while redirecting to projects page
-  if (!projectIdParam && !projectLoaded) {
+  // Show loading while data is being restored/loaded
+  if (!isRestored) {
     return (
       <main className="min-h-screen bg-gray-950 flex items-center justify-center">
         <p className="text-gray-400">Loading...</p>
@@ -788,7 +793,9 @@ function HomeContent() {
         {step === 'review' && (
           <div className="space-y-6">
             <InfoBanner variant="info" dismissible>
-              AI generated 10 ad variations across 3 funnel stages. Review each one, edit the text, then approve the ones you want to use.
+              {ads[0]?.funnelStage === 'longform'
+                ? `AI generated a longform script with ${ads[0]?.textBoxes.length || 0} text segments. Edit the text, then approve to continue.`
+                : 'AI generated 10 ad variations across 3 funnel stages. Review each one, edit the text, then approve the ones you want to use.'}
             </InfoBanner>
             <FunnelReview
               ads={ads}
