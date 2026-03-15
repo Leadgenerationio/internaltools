@@ -153,6 +153,14 @@ async function processRenderJob(job: Job<RenderJobData>): Promise<RenderJobResul
       }
     }
 
+    // If ALL items failed, throw so the job state becomes 'failed' with error message.
+    // This ensures the client shows the specific error reason (via result.error).
+    if (results.length === 0 && errors.length > 0) {
+      // Refund already handled above
+      const reasons = errors.map(e => `${e.videoName}: ${e.error}`).join('; ');
+      throw new Error(`All renders failed — ${reasons}`);
+    }
+
     // Check token alerts after render
     checkTokenAlerts(companyId);
 
