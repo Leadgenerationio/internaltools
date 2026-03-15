@@ -17,7 +17,7 @@ After any new feature or major change, always update `ARCHITECTURE.md`, `CLAUDE.
 - **Video processing**: FFmpeg via shell exec (server-side), @napi-rs/canvas for emoji-supporting overlay PNGs
 - **AI ad copy**: Anthropic SDK (Claude Sonnet) for generating TOFU/MOFU/BOFU ad text
 - **AI video generation**: kie.ai REST API — 6 models: Seedance 1.5, Kling 2.6, Veo 3.1 Fast, Sora 2, Sora 2 Pro, Veo 3.1 Quality. Two API patterns: Veo `/veo/` and Market `/jobs/`. Automatic model fallback on capacity errors: veo3_fast → seedance-1.5-pro → kling-2.6 (implemented in `src/lib/kie-api.ts`).
-- **Longform video ads**: 6-step wizard at `/create/longform-video`: Prompt → Voice & Edit → Build Scenes → Music → Captions → Finalize. Freeform prompt → scene-aware scripts (Claude, FREE). Per-script voice + voiceover (ElevenLabs, 2 tok). Per-scene video (AI/upload/library). Music (Jamendo). Captions (Submagic). Aspect ratio (9:16/16:9/1:1). Final assembly via BullMQ `longform-finalize` (FREE). Components in `src/components/longform/`. Pay-as-you-go tokens. Env vars: `ELEVENLABS_API_KEY`, `SUBMAGIC_API_KEY`.
+- **Longform video ads**: 6-step wizard at `/create/longform-video`: Prompt → Voice & Edit → Build Scenes → Music → Captions → Finalize. Freeform prompt → scene-aware scripts (Claude, FREE). Per-script voice + voiceover (ElevenLabs, 2 tok). Per-scene video (AI/upload/library). Music (Jamendo). Captions (Submagic). Aspect ratio (9:16/16:9/1:1). Final assembly via BullMQ `longform-finalize` (FREE, one variant per request to prevent timeout). Components in `src/components/longform/`. Pay-as-you-go tokens. Env vars: `ELEVENLABS_API_KEY`, `SUBMAGIC_API_KEY`.
 - **File handling**: Uploads in `public/uploads/`, music in `public/music/`, outputs in `public/outputs/` (symlinked to Railway Volume via `docker-entrypoint.sh`)
 - **File serving**: All file URLs use `/api/files?path=xxx` (Next.js standalone doesn't serve runtime files from `public/`). Use `fileUrl()` from `src/lib/file-url.ts` to generate URLs. Files streamed with Range header support.
 - **Cloud storage**: Optional S3/R2/Supabase support via `src/lib/storage.ts` (activated by `S3_BUCKET` env var). Supabase S3 compatibility (`forcePathStyle: true`, `S3_REGION` env var). CSP headers dynamically allow CDN origin. Google Drive export fetches from S3 URLs when local files unavailable.
@@ -53,6 +53,8 @@ After any new feature or major change, always update `ARCHITECTURE.md`, `CLAUDE.
 4. **B-Roll** — Optional kie.ai b-roll generation to accompany voiceover segments. Per-scene model selection. Parallel scene regeneration supported.
 5. **Stitch** — FFmpeg assembles video (no captions at this stage). Captions applied only during reassemble/finalize via Submagic. Background job via BullMQ (concurrency: 1).
 
+FinalizeStep sends one variant per request (not all at once) to prevent timeout with 3+ variants. Per-variant progress shown in the UI. Partial results preserved if a later variant fails.
+
 ## App Flow — Video Cut Up (3 Steps)
 
 1. **Upload** — User uploads a video. Adjusts scene detection sensitivity slider.
@@ -67,6 +69,7 @@ API: `/api/video-cutup/analyze` (scene detection), `/api/video-cutup/split` (ext
 - Overlays are rendered to PNG using @napi-rs/canvas (NOT FFmpeg drawtext) to support emoji
 - PNGs are composited onto video using FFmpeg's `overlay` filter with `enable='between(t,start,end)'`
 - Overlays stack vertically from top, each appearing at a staggered time (user-configurable)
+- Auto-scales font size for long text: if text wraps beyond 12 lines, font shrinks (minimum 50% of base size). Hard-capped at 20 lines with truncation. Canvas height capped at 50% of video height.
 - Once a box appears, it stays visible until the video ends
 - Style is configurable: preset picker (White Box, Dark Box, Gradient, Minimal) + custom colours, font, opacity
 
@@ -214,7 +217,7 @@ src/
   lib/
     types.ts                      — TypeScript interfaces, presets, funnel types
     ffmpeg-renderer.ts            — Core FFmpeg rendering (overlay, audio, trim, quality)
-    overlay-renderer.ts           — Canvas-based PNG generation with emoji
+    overlay-renderer.ts           — Canvas-based PNG generation with emoji (auto-scales font for long text, caps at 20 lines)
     get-video-info.ts             — ffprobe metadata extraction + FFmpeg check
     storage.ts                    — Cloud storage abstraction (local FS / S3 / R2 / Supabase S3)
     logger.ts                     — Winston logger setup
