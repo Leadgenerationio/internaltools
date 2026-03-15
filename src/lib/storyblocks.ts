@@ -62,6 +62,7 @@ export async function searchVideos(
   keywords: string,
   page = 1,
   numResults = 20,
+  orientation?: 'portrait' | 'landscape' | 'square',
 ): Promise<StoryblocksSearchResponse> {
   const resourcePath = '/api/v2/videos/search';
   const auth = generateAuth(resourcePath);
@@ -74,6 +75,7 @@ export async function searchVideos(
     content_type: 'footage',
     user_id: 'admaker',
     project_id: 'admaker',
+    ...(orientation && { orientation }),
   });
 
   const res = await fetch(`${BASE_URL}${resourcePath}?${params}`, {

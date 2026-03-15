@@ -15,6 +15,7 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const q = searchParams.get('q')?.trim();
   const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+  const orientation = searchParams.get('orientation') as 'portrait' | 'landscape' | 'square' | null;
 
   if (!q) {
     return NextResponse.json({ error: 'q parameter is required' }, { status: 400 });
@@ -25,7 +26,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const data = await searchVideos(q, page, 20);
+    const data = await searchVideos(q, page, 20, orientation || undefined);
 
     // Simplify for client — pick best preview URL from preview_urls object
     const results = (data.results || []).map((v: any) => ({

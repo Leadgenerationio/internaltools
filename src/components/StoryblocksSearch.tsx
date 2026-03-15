@@ -25,9 +25,11 @@ interface Props {
   }) => void;
   /** Compact mode for inline use (e.g. scene slots) */
   compact?: boolean;
+  /** Filter by orientation: portrait (9:16), landscape (16:9), or square (1:1) */
+  orientation?: 'portrait' | 'landscape' | 'square';
 }
 
-export default function StoryblocksSearch({ onSelect, compact }: Props) {
+export default function StoryblocksSearch({ onSelect, compact, orientation }: Props) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<StockVideo[]>([]);
   const [totalResults, setTotalResults] = useState(0);
@@ -45,7 +47,8 @@ export default function StoryblocksSearch({ onSelect, compact }: Props) {
     setError(null);
 
     try {
-      const res = await fetch(`/api/storyblocks/search?q=${encodeURIComponent(q.trim())}&page=${p}`);
+      const url = `/api/storyblocks/search?q=${encodeURIComponent(q.trim())}&page=${p}${orientation ? `&orientation=${orientation}` : ''}`;
+      const res = await fetch(url);
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Search failed' }));
         throw new Error(data.error || `Search failed (${res.status})`);
@@ -59,7 +62,7 @@ export default function StoryblocksSearch({ onSelect, compact }: Props) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [orientation]);
 
   // Debounced search on typing
   const handleQueryChange = (value: string) => {

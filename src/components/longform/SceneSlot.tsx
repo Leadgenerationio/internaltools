@@ -324,6 +324,7 @@ export default function SceneSlot({ scene, onUpdate, onSaveToLibrary }: Props) {
             {tab === 'stock' && (
               <StoryblocksSearch
                 compact
+                orientation="portrait"
                 onSelect={(video) => {
                   onUpdate({
                     ...scene,
