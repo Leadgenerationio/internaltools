@@ -60,7 +60,7 @@ export default function UploadProcessStep({ uploadedVideo, onProcessed }: Props)
       }
 
       const data = await res.json();
-      const uploaded = data.uploads?.[0] || data;
+      const uploaded = data.videos?.[0] || data.uploads?.[0] || data;
       const vid: UploadedVideo = {
         path: uploaded.path,
         originalName: uploaded.originalName || file.name,
