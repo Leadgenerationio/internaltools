@@ -41,9 +41,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
   }
 
-  // Try BullMQ background job
-  const queue = getLongformQueue();
-  if (queue) {
+  // Process synchronously — the uploaded video is on the web app's filesystem,
+  // not accessible from the worker service (separate Railway volume).
+  // BullMQ would fail with "No such file or directory".
+  // Always process synchronously — uploaded video is on web app filesystem,
+  // not accessible from the BullMQ worker service (separate Railway volume).
+  const useQueue = false;
+  if (useQueue) {
+    const queue = getLongformQueue()!;
     const jobData = {
       companyId: authResult.auth.companyId,
       userId: authResult.auth.userId,
