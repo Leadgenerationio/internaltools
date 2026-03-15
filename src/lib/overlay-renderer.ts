@@ -265,35 +265,70 @@ export async function renderOverlayToPng(
   }
 
   const scale = videoWidth / PREVIEW_WIDTH;
-  const fontSize = Math.round(style.fontSize * PREVIEW_FONT_SCALE * scale);
-  const padX = Math.round(style.paddingX * PREVIEW_GEOM_SCALE * scale);
-  const padY = Math.round(style.paddingY * PREVIEW_GEOM_SCALE * scale);
-  const borderRadius = Math.round(style.borderRadius * PREVIEW_GEOM_SCALE * scale);
-  const wrapperPad = Math.round(PREVIEW_WRAPPER_PAD * scale);
-  const maxBoxWidth = Math.round((videoWidth * style.maxWidth) / 100) - wrapperPad * 2;
-  const lineHeight = fontSize * PREVIEW_LINE_HEIGHT;
-  const textAreaWidth = maxBoxWidth - padX * 2;
 
-  const font = buildFont(fontSize, style.fontWeight);
+  // Max overlay height: 50% of video height (safe zone is ~50%)
+  const MAX_BOX_HEIGHT = Math.round(videoHeight * 0.5);
+  // Max lines before we start auto-scaling font size down
+  const MAX_LINES_TARGET = 12;
+
+  // Auto-scale font if text is too long — try progressively smaller fonts
+  let fontSize = Math.round(style.fontSize * PREVIEW_FONT_SCALE * scale);
+  const minFontSize = Math.round(fontSize * 0.5); // don't go below 50% of original
+  let padX = Math.round(style.paddingX * PREVIEW_GEOM_SCALE * scale);
+  let padY = Math.round(style.paddingY * PREVIEW_GEOM_SCALE * scale);
+  let borderRadius = Math.round(style.borderRadius * PREVIEW_GEOM_SCALE * scale);
+  const wrapperPad = Math.round(PREVIEW_WRAPPER_PAD * scale);
+  let maxBoxWidth = Math.round((videoWidth * style.maxWidth) / 100) - wrapperPad * 2;
+  let lineHeight = fontSize * PREVIEW_LINE_HEIGHT;
+  let textAreaWidth = maxBoxWidth - padX * 2;
+  let font = buildFont(fontSize, style.fontWeight);
 
   // Emoji image sizing
-  const emojiSize = Math.round(fontSize * 1.2);
-  const emojiGap = Math.round(fontSize * 0.25);
-  const emojiReserved = emojiImg ? emojiSize + emojiGap : 0;
+  let emojiSize = Math.round(fontSize * 1.2);
+  let emojiGap = Math.round(fontSize * 0.25);
+  let emojiReserved = emojiImg ? emojiSize + emojiGap : 0;
 
   // If we have a Twemoji image, wrap only the remaining text (no emoji character).
   // First line is narrower to make room for the emoji image.
   // If emoji fetch failed, fall back to full rawText (emoji renders as monochrome glyph).
   const textToWrap = (emojiImg && textAfterEmoji !== null) ? textAfterEmoji : rawText;
 
-  // Measure and wrap
-  const measureCanvas = createCanvas(maxBoxWidth, 1);
-  const measureCtx = measureCanvas.getContext('2d');
+  // Measure and wrap — with auto-scaling for long text
+  let measureCanvas = createCanvas(maxBoxWidth, 1);
+  let measureCtx = measureCanvas.getContext('2d');
   measureCtx.font = font;
 
-  // Wrap with first-line indent for emoji
-  const firstLineMax = emojiImg ? textAreaWidth - emojiReserved : textAreaWidth;
-  const lines = wrapTextWithIndent(measureCtx, textToWrap, textAreaWidth, firstLineMax);
+  let firstLineMax = emojiImg ? textAreaWidth - emojiReserved : textAreaWidth;
+  let lines = wrapTextWithIndent(measureCtx, textToWrap, textAreaWidth, firstLineMax);
+
+  // Auto-scale: if text wraps to too many lines, reduce font size until it fits
+  const origFontSize = Math.round(style.fontSize * PREVIEW_FONT_SCALE * scale);
+  while (lines.length > MAX_LINES_TARGET && fontSize > minFontSize) {
+    fontSize = Math.max(minFontSize, fontSize - 2);
+    const fontRatio = fontSize / origFontSize;
+    lineHeight = fontSize * PREVIEW_LINE_HEIGHT;
+    padX = Math.round(style.paddingX * PREVIEW_GEOM_SCALE * scale * fontRatio);
+    padY = Math.round(style.paddingY * PREVIEW_GEOM_SCALE * scale * fontRatio);
+    borderRadius = Math.round(style.borderRadius * PREVIEW_GEOM_SCALE * scale * fontRatio);
+    textAreaWidth = maxBoxWidth - padX * 2;
+    font = buildFont(fontSize, style.fontWeight);
+    emojiSize = Math.round(fontSize * 1.2);
+    emojiGap = Math.round(fontSize * 0.25);
+    emojiReserved = emojiImg ? emojiSize + emojiGap : 0;
+    firstLineMax = emojiImg ? textAreaWidth - emojiReserved : textAreaWidth;
+
+    measureCanvas = createCanvas(maxBoxWidth, 1);
+    measureCtx = measureCanvas.getContext('2d');
+    measureCtx.font = font;
+    lines = wrapTextWithIndent(measureCtx, textToWrap, textAreaWidth, firstLineMax);
+  }
+
+  // Hard cap: truncate lines if still too many (after max font reduction)
+  const MAX_LINES_HARD = 20;
+  if (lines.length > MAX_LINES_HARD) {
+    lines = lines.slice(0, MAX_LINES_HARD);
+    lines[MAX_LINES_HARD - 1] = lines[MAX_LINES_HARD - 1].replace(/\s*$/, '...');
+  }
 
   // Find widest line for fit-content box sizing
   let maxLineWidth = 0;
@@ -303,9 +338,14 @@ export async function renderOverlayToPng(
     if (w > maxLineWidth) maxLineWidth = w;
   }
   const boxWidth = Math.min(Math.ceil(maxLineWidth) + padX * 2, maxBoxWidth);
-  const boxHeight = Math.round(lines.length * lineHeight + padY * 2);
+  let boxHeight = Math.round(lines.length * lineHeight + padY * 2);
 
-  console.log(`[overlay] "${rawText.slice(0, 50)}${rawText.length > 50 ? '...' : ''}" → ${lines.length} lines, box ${boxWidth}×${boxHeight}, emoji: ${emojiImg ? 'twemoji' : textAfterEmoji !== null ? 'monochrome' : 'none'}`);
+  // Final safety: cap box height to prevent canvas/FFmpeg issues
+  if (boxHeight > MAX_BOX_HEIGHT) {
+    boxHeight = MAX_BOX_HEIGHT;
+  }
+
+  console.log(`[overlay] "${rawText.slice(0, 50)}${rawText.length > 50 ? '...' : ''}" → ${lines.length} lines, box ${boxWidth}×${boxHeight}, fontSize=${fontSize}, emoji: ${emojiImg ? 'twemoji' : textAfterEmoji !== null ? 'monochrome' : 'none'}`);
 
   const canvas = createCanvas(boxWidth, boxHeight);
   const ctx = canvas.getContext('2d');

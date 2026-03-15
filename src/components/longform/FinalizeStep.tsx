@@ -38,6 +38,8 @@ export default function FinalizeStep({
 }: Props) {
   const [producing, setProducing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [progressMsg, setProgressMsg] = useState('');
+  const [currentVariant, setCurrentVariant] = useState(0);
 
   const allScenesReady = scripts.every((s) =>
     s.scenes.every((sc) => sc.clipUrl) && s.voiceoverUrl
@@ -46,39 +48,65 @@ export default function FinalizeStep({
   const handleProduce = async () => {
     setProducing(true);
     setError(null);
+    setCurrentVariant(0);
+    setProgressMsg('');
 
-    try {
-      const res = await fetch('/api/longform/finalize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          variants: scripts.map((s) => ({
-            scriptId: s.id,
-            variant: s.variant,
-            voiceoverUrl: s.voiceoverUrl,
-            scenes: s.scenes.map((sc) => ({
-              clipUrl: sc.clipUrl,
-              order: sc.order,
-            })),
-          })),
-          music: music ? { url: music.file, volume: music.volume } : null,
-          captionConfig,
-          aspectRatio,
-        }),
-      });
+    const allResults: LongformResultItem[] = [];
+    const failures: string[] = [];
 
-      const data = await res.json();
+    // Process one variant at a time to avoid timeout
+    for (let i = 0; i < scripts.length; i++) {
+      const s = scripts[i];
+      setCurrentVariant(i + 1);
+      setProgressMsg(`Producing variant ${i + 1} of ${scripts.length}: ${s.variant}...`);
 
-      if (!res.ok) {
-        throw new Error(data.error || `Failed (${res.status})`);
+      try {
+        const res = await fetch('/api/longform/finalize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            variants: [{
+              scriptId: s.id,
+              variant: s.variant,
+              voiceoverUrl: s.voiceoverUrl,
+              scenes: s.scenes.map((sc) => ({
+                clipUrl: sc.clipUrl,
+                order: sc.order,
+              })),
+            }],
+            music: music ? { url: music.file, volume: music.volume } : null,
+            captionConfig,
+            aspectRatio,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          failures.push(`${s.variant}: ${data.error || `Failed (${res.status})`}`);
+          continue;
+        }
+
+        if (data.videos?.length) {
+          allResults.push(...data.videos);
+        }
+      } catch (err: any) {
+        failures.push(`${s.variant}: ${err.message}`);
       }
-
-      onResults(data.videos || []);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setProducing(false);
     }
+
+    if (allResults.length > 0) {
+      onResults(allResults);
+    }
+
+    if (failures.length > 0 && allResults.length === 0) {
+      setError(`All variants failed:\n${failures.join('\n')}`);
+    } else if (failures.length > 0) {
+      setError(`${failures.length} variant${failures.length > 1 ? 's' : ''} failed: ${failures.join(', ')}`);
+    }
+
+    setProducing(false);
+    setProgressMsg('');
   };
 
   const handleDownload = async (url: string, variant: string) => {
@@ -216,13 +244,27 @@ export default function FinalizeStep({
         <div className="bg-gray-800/50 rounded-xl p-5 border border-gray-700/50 space-y-3">
           <div className="flex items-center gap-3">
             <span className="w-5 h-5 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin flex-shrink-0" />
-            <span className="text-sm font-medium">Producing videos...</span>
+            <span className="text-sm font-medium">{progressMsg || 'Producing videos...'}</span>
           </div>
+          {/* Per-variant progress bar */}
+          {scripts.length > 1 && (
+            <div className="space-y-1.5">
+              <div className="w-full bg-gray-700 rounded-full h-2">
+                <div
+                  className="bg-blue-500 h-2 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.round(((currentVariant - 1) / scripts.length) * 100)}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-500 text-right">
+                {currentVariant - 1} / {scripts.length} complete
+              </p>
+            </div>
+          )}
           <p className="text-xs text-gray-500">
-            Downloading clips, normalizing video, merging voiceover
-            {music ? ', mixing music' : ''}
-            {captionConfig.enabled ? ', adding captions' : ''}...
-            This may take 1-3 minutes.
+            Each variant is produced separately to prevent timeouts.
+            {music ? ' Mixing music.' : ''}
+            {captionConfig.enabled ? ' Adding captions.' : ''}
+            {' '}This may take 1-3 minutes per variant.
           </p>
         </div>
       )}
