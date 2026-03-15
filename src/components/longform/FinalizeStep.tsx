@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import type { LongformScriptV2, CaptionConfig, LongformResultItem } from '@/lib/longform-types';
 import type { MusicTrack } from '@/lib/types';
 
@@ -39,7 +39,8 @@ export default function FinalizeStep({
   const [producing, setProducing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progressMsg, setProgressMsg] = useState('');
-  const [currentVariant, setCurrentVariant] = useState(0);
+  const [progressPct, setProgressPct] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   const allScenesReady = scripts.every((s) =>
     s.scenes.every((sc) => sc.clipUrl) && s.voiceoverUrl
@@ -48,22 +49,28 @@ export default function FinalizeStep({
   const handleProduce = async () => {
     setProducing(true);
     setError(null);
-    setCurrentVariant(0);
-    setProgressMsg('');
+    setProgressMsg('Starting...');
+    setProgressPct(0);
+
+    const abort = new AbortController();
+    abortRef.current = abort;
 
     const allResults: LongformResultItem[] = [];
     const failures: string[] = [];
 
-    // Process one variant at a time to avoid timeout
+    // Process one variant at a time — each gets its own background job
     for (let i = 0; i < scripts.length; i++) {
+      if (abort.signal.aborted) break;
+
       const s = scripts[i];
-      setCurrentVariant(i + 1);
-      setProgressMsg(`Producing variant ${i + 1} of ${scripts.length}: ${s.variant}...`);
+      const variantLabel = `${s.variant} (${i + 1}/${scripts.length})`;
+      setProgressMsg(`Submitting ${variantLabel}...`);
 
       try {
         const res = await fetch('/api/longform/finalize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: abort.signal,
           body: JSON.stringify({
             variants: [{
               scriptId: s.id,
@@ -80,17 +87,53 @@ export default function FinalizeStep({
           }),
         });
 
-        const data = await res.json();
+        let data: any;
+        try {
+          data = await res.json();
+        } catch {
+          failures.push(`${s.variant}: Server error (${res.status})`);
+          continue;
+        }
 
         if (!res.ok) {
           failures.push(`${s.variant}: ${data.error || `Failed (${res.status})`}`);
           continue;
         }
 
+        // Background job path — poll for completion
+        if (data.jobId) {
+          setProgressMsg(`Producing ${variantLabel}...`);
+
+          const { pollJob } = await import('@/lib/poll-job');
+          const result = await pollJob(data.jobId, 'longform', {
+            signal: abort.signal,
+            onProgress: (progress) => {
+              // Map variant-level progress to overall progress
+              const baseProgress = (i / scripts.length) * 100;
+              const variantWeight = 100 / scripts.length;
+              const overallProgress = baseProgress + (progress / 100) * variantWeight;
+              setProgressPct(Math.round(overallProgress));
+              setProgressMsg(`Producing ${variantLabel}... ${progress}%`);
+            },
+          });
+
+          if (result.state === 'failed') {
+            failures.push(`${s.variant}: ${result.error || 'Job failed'}`);
+          } else if (result.result?.videos?.length) {
+            allResults.push(...result.result.videos);
+          }
+
+          setProgressPct(Math.round(((i + 1) / scripts.length) * 100));
+          continue;
+        }
+
+        // Synchronous fallback (no Redis) — results returned directly
         if (data.videos?.length) {
           allResults.push(...data.videos);
         }
+        setProgressPct(Math.round(((i + 1) / scripts.length) * 100));
       } catch (err: any) {
+        if (err.name === 'AbortError') break;
         failures.push(`${s.variant}: ${err.message}`);
       }
     }
@@ -107,6 +150,14 @@ export default function FinalizeStep({
 
     setProducing(false);
     setProgressMsg('');
+    abortRef.current = null;
+  };
+
+  const handleCancel = () => {
+    abortRef.current?.abort();
+    setProducing(false);
+    setProgressMsg('');
+    setError('Cancelled');
   };
 
   const handleDownload = async (url: string, variant: string) => {
@@ -246,31 +297,34 @@ export default function FinalizeStep({
             <span className="w-5 h-5 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin flex-shrink-0" />
             <span className="text-sm font-medium">{progressMsg || 'Producing videos...'}</span>
           </div>
-          {/* Per-variant progress bar */}
-          {scripts.length > 1 && (
-            <div className="space-y-1.5">
-              <div className="w-full bg-gray-700 rounded-full h-2">
-                <div
-                  className="bg-blue-500 h-2 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.round(((currentVariant - 1) / scripts.length) * 100)}%` }}
-                />
-              </div>
-              <p className="text-xs text-gray-500 text-right">
-                {currentVariant - 1} / {scripts.length} complete
-              </p>
+          {/* Progress bar */}
+          <div className="space-y-1.5">
+            <div className="w-full bg-gray-700 rounded-full h-2">
+              <div
+                className="bg-blue-500 h-2 rounded-full transition-all duration-500"
+                style={{ width: `${progressPct}%` }}
+              />
             </div>
-          )}
-          <p className="text-xs text-gray-500">
-            Each variant is produced separately to prevent timeouts.
-            {music ? ' Mixing music.' : ''}
-            {captionConfig.enabled ? ' Adding captions.' : ''}
-            {' '}This may take 1-3 minutes per variant.
-          </p>
+            <p className="text-xs text-gray-500 text-right">{progressPct}%</p>
+          </div>
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-gray-500">
+              Processing in background — survives page refresh.
+              {music ? ' Mixing music.' : ''}
+              {captionConfig.enabled ? ' Adding captions.' : ''}
+            </p>
+            <button
+              onClick={handleCancel}
+              className="text-xs text-red-400 hover:text-red-300 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 
       {error && (
-        <div className="bg-red-900/30 border border-red-700 rounded-lg px-4 py-3 text-red-300 text-sm">
+        <div className="bg-red-900/30 border border-red-700 rounded-lg px-4 py-3 text-red-300 text-sm whitespace-pre-line">
           {error}
         </div>
       )}

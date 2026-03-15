@@ -1,32 +1,21 @@
 /**
  * POST /api/longform/finalize
  *
- * Assemble final longform videos synchronously with streaming progress.
- * Downloads clips + voiceover, runs FFmpeg assembly, optionally captions via Submagic.
+ * Enqueues a BullMQ background job to assemble final longform videos.
+ * Returns { jobId } immediately — client polls /api/jobs/[id]?type=longform.
  *
  * Assembly is FREE — all costs (voiceover, scene generation) already paid incrementally.
  *
- * Returns NDJSON stream:
- *   {"progress": 10, "message": "Downloading clips..."}
- *   {"progress": 70, "message": "Assembling video..."}
- *   {"done": true, "videos": [...]}
- *   or {"error": "something failed"}
+ * Falls back to synchronous processing when Redis/BullMQ is unavailable.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthContext } from '@/lib/api-auth';
-import { assembleAdV2, getMediaDuration } from '@/lib/longform-stitcher';
-import { captionVideo } from '@/lib/submagic';
-import { fileUrl } from '@/lib/file-url';
+import { getLongformQueue, isQueueAvailable } from '@/lib/queue';
+import type { LongformFinalizeData } from '@/lib/job-types';
 import type { CaptionConfig, LongformResultItem } from '@/lib/longform-types';
-import fs from 'fs/promises';
-import path from 'path';
-import crypto from 'crypto';
 
-export const maxDuration = 300; // 5 minutes for video processing
-
-const OUTPUT_DIR = path.join(process.cwd(), 'public', 'outputs');
-const TEMP_BASE = path.join(process.cwd(), 'public', 'outputs', 'longform_temp');
+export const maxDuration = 300; // 5 minutes for sync fallback
 
 interface RequestBody {
   variants: Array<{
@@ -39,165 +28,6 @@ interface RequestBody {
   captionConfig: CaptionConfig;
   aspectRatio: '9:16' | '16:9' | '1:1';
 }
-
-// ─── File download helpers ─────────────────────────────────────────────────
-
-function resolveLocalPath(url: string): string | null {
-  // /api/files?path=outputs/xxx.mp4 → public/outputs/xxx.mp4
-  if (url.includes('/api/files')) {
-    const match = url.match(/[?&]path=([^&]+)/);
-    if (match) {
-      const decoded = decodeURIComponent(match[1]);
-      return path.join(process.cwd(), 'public', decoded);
-    }
-  }
-  // Relative path starting with / (e.g. /uploads/xxx.mp4)
-  if (url.startsWith('/') && !url.startsWith('//')) {
-    return path.join(process.cwd(), 'public', url);
-  }
-  return null;
-}
-
-function extractStoragePath(url: string): string | null {
-  if (url.includes('/api/files')) {
-    const match = url.match(/[?&]path=([^&]+)/);
-    if (match) return decodeURIComponent(match[1]);
-  }
-  const bucketName = process.env.S3_BUCKET;
-  if (bucketName) {
-    const pattern = `/object/public/${bucketName}/`;
-    const idx = url.indexOf(pattern);
-    if (idx >= 0) return url.slice(idx + pattern.length);
-  }
-  const match = url.match(/(outputs\/[^\s?#]+|longform\/[^\s?#]+|uploads\/[^\s?#]+)/);
-  if (match) return match[1];
-  return null;
-}
-
-/** Fetch with a 30-second timeout */
-async function fetchWithTimeout(fetchUrl: string, opts: RequestInit = {}, timeoutMs = 30_000): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(fetchUrl, { ...opts, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function downloadFile(url: string, label: string): Promise<Buffer> {
-  const errors: string[] = [];
-
-  // 1. Try local filesystem first (fastest, no network)
-  const localPath = resolveLocalPath(url);
-  if (localPath) {
-    try {
-      const buf = await fs.readFile(localPath);
-      if (buf.length > 100) return buf;
-      errors.push(`local: file too small (${buf.length}b)`);
-    } catch (e: any) {
-      errors.push(`local: ${e.code || e.message}`);
-    }
-  }
-
-  // 2. For Supabase/CDN URLs, extract storage path and try local disk
-  const storagePath = extractStoragePath(url);
-  if (storagePath && !localPath) {
-    const altLocalPath = path.join(process.cwd(), 'public', storagePath);
-    try {
-      const buf = await fs.readFile(altLocalPath);
-      if (buf.length > 100) return buf;
-      errors.push(`alt-local: too small (${buf.length}b)`);
-    } catch (e: any) {
-      errors.push(`alt-local[${storagePath}]: ${e.code || e.message}`);
-    }
-  }
-
-  // 3. Try S3 direct download
-  if (storagePath) {
-    const { S3_BUCKET: bucket, S3_ENDPOINT: endpoint, S3_ACCESS_KEY_ID: accessKey, S3_SECRET_ACCESS_KEY: secretKey } = process.env;
-    if (bucket && endpoint && accessKey && secretKey) {
-      try {
-        const { S3Client, GetObjectCommand } = await import('@aws-sdk/client-s3');
-        const client = new S3Client({
-          endpoint,
-          region: process.env.S3_REGION || 'auto',
-          credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
-          forcePathStyle: true,
-        });
-        const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: storagePath }));
-        if (response.Body) {
-          const chunks: Buffer[] = [];
-          for await (const chunk of response.Body as any) {
-            chunks.push(Buffer.from(chunk));
-          }
-          const buf = Buffer.concat(chunks);
-          if (buf.length > 100) return buf;
-          errors.push(`s3: file too small (${buf.length}b)`);
-        } else {
-          errors.push('s3: no body');
-        }
-      } catch (e: any) {
-        errors.push(`s3[${storagePath}]: ${e.message}`);
-      }
-    } else {
-      errors.push('s3: not configured');
-    }
-  }
-
-  // 4. Try direct HTTP fetch with timeout (CDN URLs, Supabase URLs)
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    try {
-      const res = await fetchWithTimeout(url);
-      if (res.ok) {
-        const buf = Buffer.from(await res.arrayBuffer());
-        if (buf.length > 100) return buf;
-        errors.push(`http: too small (${buf.length}b)`);
-      } else {
-        const body = await res.text().catch(() => '');
-        errors.push(`http: ${res.status} ${body.slice(0, 100)}`);
-      }
-    } catch (e: any) {
-      errors.push(`http: ${e.name === 'AbortError' ? 'timeout' : e.message}`);
-    }
-  }
-
-  throw new Error(`${label}: all download methods failed [url=${url.slice(0, 120)}] [${errors.join(', ')}]`);
-}
-
-// ─── Get a public URL for Submagic captioning ──────────────────────────────
-
-async function getPublicUrl(localPath: string): Promise<string | null> {
-  try {
-    const { uploadFile } = await import('@/lib/storage');
-    const storagePath = `longform/${path.basename(localPath)}`;
-    const publicUrl = await uploadFile(localPath, storagePath);
-    return publicUrl || null;
-  } catch {
-    return null;
-  }
-}
-
-// ─── Upload final output ─────────────────────────────────────────────────────
-
-async function uploadOutput(localPath: string, filename: string): Promise<void> {
-  // Prefer S3
-  try {
-    const { isCloudStorage, uploadFile } = await import('@/lib/storage');
-    if (isCloudStorage) {
-      const tmpCopy = localPath + '.upload.tmp';
-      await fs.copyFile(localPath, tmpCopy);
-      await uploadFile(tmpCopy, `outputs/${filename}`);
-      return;
-    }
-  } catch { /* fall through */ }
-
-  // Local: copy to outputs dir
-  await fs.mkdir(OUTPUT_DIR, { recursive: true });
-  await fs.copyFile(localPath, path.join(OUTPUT_DIR, filename));
-}
-
-// ─── Main route ──────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
   const authResult = await getAuthContext();
@@ -230,14 +60,46 @@ export async function POST(request: NextRequest) {
     }, { status: 503 });
   }
 
-  // Process synchronously — returns plain JSON when done
-  // Global 4-minute timeout to prevent infinite hangs
+  // ─── Background job path (preferred) ──────────────────────────────────────
+
+  const queue = getLongformQueue();
+  if (queue) {
+    const jobData: LongformFinalizeData = {
+      companyId: authResult.auth.companyId,
+      userId: authResult.auth.userId,
+      variants,
+      music,
+      captionConfig,
+      aspectRatio,
+    };
+
+    const job = await queue.add('longform-finalize', jobData, {
+      attempts: 1, // no retries for finalize (FFmpeg is idempotent but files may be gone)
+      removeOnComplete: { age: 3600 }, // keep result for 1 hour
+      removeOnFail: { age: 3600 },
+    });
+
+    return NextResponse.json({ jobId: job.id });
+  }
+
+  // ─── Synchronous fallback (no Redis) ──────────────────────────────────────
+
+  const path = await import('path');
+  const fs = await import('fs/promises');
+  const crypto = await import('crypto');
+  const { assembleAdV2, getMediaDuration } = await import('@/lib/longform-stitcher');
+  const { captionVideo } = await import('@/lib/submagic');
+  const { fileUrl } = await import('@/lib/file-url');
+
+  const OUTPUT_DIR = path.join(process.cwd(), 'public', 'outputs');
+  const TEMP_BASE = path.join(process.cwd(), 'public', 'outputs', 'longform_temp');
+  const tempDir = path.join(TEMP_BASE, `finalize_${crypto.randomUUID()}`);
+
+  // 4-minute timeout for sync path
   const GLOBAL_TIMEOUT_MS = 4 * 60 * 1000;
   const timeoutPromise = new Promise<never>((_, reject) =>
     setTimeout(() => reject(new Error('Finalize timed out after 4 minutes')), GLOBAL_TIMEOUT_MS)
   );
-
-  const tempDir = path.join(TEMP_BASE, `finalize_${crypto.randomUUID()}`);
 
   const processVariants = async () => {
     const results: LongformResultItem[] = [];
@@ -251,12 +113,12 @@ export async function POST(request: NextRequest) {
       await fs.mkdir(variantDir, { recursive: true });
 
       try {
-        // 1. Download voiceover
+        // Download voiceover
         const voPath = path.join(variantDir, 'voiceover.mp3');
         const voBuffer = await downloadFile(v.voiceoverUrl, `Voiceover (${v.variant})`);
         await fs.writeFile(voPath, voBuffer);
 
-        // 2. Download scene clips
+        // Download scene clips
         const sortedScenes = [...v.scenes].sort((a, b) => a.order - b.order);
         const clipPaths: string[] = [];
         for (let si = 0; si < sortedScenes.length; si++) {
@@ -270,7 +132,7 @@ export async function POST(request: NextRequest) {
           clipPaths.push(clipPath);
         }
 
-        // 3. Download music
+        // Download music
         let musicPath: string | undefined;
         if (music?.url) {
           const mPath = path.join(variantDir, 'music.mp3');
@@ -279,10 +141,9 @@ export async function POST(request: NextRequest) {
           musicPath = mPath;
         }
 
-        // 4. Assemble: normalize → concat → voiceover → music
+        // Assemble
         const rawPath = path.join(variantDir, 'assembled.mp4');
         const stitchDir = path.join(variantDir, 'stitch');
-
         await assembleAdV2({
           clips: clipPaths,
           voiceoverPath: voPath,
@@ -293,10 +154,9 @@ export async function POST(request: NextRequest) {
           musicVolume: music?.volume ?? 0.15,
         });
 
-        // 5. Captions via Submagic (optional)
+        // Captions
         let finalPath = rawPath;
         let captioned = false;
-
         if (captionConfig?.enabled && process.env.SUBMAGIC_API_KEY) {
           const publicUrl = await getPublicUrl(rawPath);
           if (publicUrl) {
@@ -309,10 +169,10 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // 6. Upload final video
+        // Upload
         const duration = await getMediaDuration(finalPath).catch(() => 30);
         const outputFilename = `longform_final_${v.variant.replace(/[^a-zA-Z0-9_-]/g, '_')}_${crypto.randomUUID()}.mp4`;
-        await uploadOutput(finalPath, outputFilename);
+        await uploadOutput(finalPath, outputFilename, OUTPUT_DIR);
 
         results.push({
           variant: v.variant,
@@ -337,7 +197,6 @@ export async function POST(request: NextRequest) {
     };
   };
 
-  // Race processing against timeout
   try {
     const result = await Promise.race([processVariants(), timeoutPromise]);
     return NextResponse.json(result);
@@ -346,4 +205,153 @@ export async function POST(request: NextRequest) {
   } finally {
     try { await fs.rm(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
+}
+
+// ─── Sync fallback helpers (only used when Redis unavailable) ─────────────
+
+function resolveLocalPath(url: string): string | null {
+  const path = require('path');
+  if (url.includes('/api/files')) {
+    const match = url.match(/[?&]path=([^&]+)/);
+    if (match) {
+      return path.join(process.cwd(), 'public', decodeURIComponent(match[1]));
+    }
+  }
+  if (url.startsWith('/') && !url.startsWith('//')) {
+    return path.join(process.cwd(), 'public', url);
+  }
+  return null;
+}
+
+function extractStoragePath(url: string): string | null {
+  if (url.includes('/api/files')) {
+    const match = url.match(/[?&]path=([^&]+)/);
+    if (match) return decodeURIComponent(match[1]);
+  }
+  const bucketName = process.env.S3_BUCKET;
+  if (bucketName) {
+    const pattern = `/object/public/${bucketName}/`;
+    const idx = url.indexOf(pattern);
+    if (idx >= 0) return url.slice(idx + pattern.length);
+  }
+  const match = url.match(/(outputs\/[^\s?#]+|longform\/[^\s?#]+|uploads\/[^\s?#]+)/);
+  if (match) return match[1];
+  return null;
+}
+
+async function fetchWithTimeout(fetchUrl: string, opts: RequestInit = {}, timeoutMs = 30_000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(fetchUrl, { ...opts, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function downloadFile(url: string, label: string): Promise<Buffer> {
+  const path = require('path');
+  const fs = require('fs/promises');
+  const errors: string[] = [];
+
+  const localPath = resolveLocalPath(url);
+  if (localPath) {
+    try {
+      const buf = await fs.readFile(localPath);
+      if (buf.length > 100) return buf;
+      errors.push(`local: file too small (${buf.length}b)`);
+    } catch (e: any) {
+      errors.push(`local: ${e.code || e.message}`);
+    }
+  }
+
+  const storagePath = extractStoragePath(url);
+  if (storagePath && !localPath) {
+    const altLocalPath = path.join(process.cwd(), 'public', storagePath);
+    try {
+      const buf = await fs.readFile(altLocalPath);
+      if (buf.length > 100) return buf;
+      errors.push(`alt-local: too small (${buf.length}b)`);
+    } catch (e: any) {
+      errors.push(`alt-local[${storagePath}]: ${e.code || e.message}`);
+    }
+  }
+
+  if (storagePath) {
+    const { S3_BUCKET: bucket, S3_ENDPOINT: endpoint, S3_ACCESS_KEY_ID: accessKey, S3_SECRET_ACCESS_KEY: secretKey } = process.env;
+    if (bucket && endpoint && accessKey && secretKey) {
+      try {
+        const { S3Client, GetObjectCommand } = await import('@aws-sdk/client-s3');
+        const client = new S3Client({
+          endpoint,
+          region: process.env.S3_REGION || 'auto',
+          credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
+          forcePathStyle: true,
+        });
+        const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: storagePath }));
+        if (response.Body) {
+          const chunks: Buffer[] = [];
+          for await (const chunk of response.Body as any) {
+            chunks.push(Buffer.from(chunk));
+          }
+          const buf = Buffer.concat(chunks);
+          if (buf.length > 100) return buf;
+          errors.push(`s3: file too small (${buf.length}b)`);
+        } else {
+          errors.push('s3: no body');
+        }
+      } catch (e: any) {
+        errors.push(`s3[${storagePath}]: ${e.message}`);
+      }
+    } else {
+      errors.push('s3: not configured');
+    }
+  }
+
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    try {
+      const res = await fetchWithTimeout(url);
+      if (res.ok) {
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length > 100) return buf;
+        errors.push(`http: too small (${buf.length}b)`);
+      } else {
+        const body = await res.text().catch(() => '');
+        errors.push(`http: ${res.status} ${body.slice(0, 100)}`);
+      }
+    } catch (e: any) {
+      errors.push(`http: ${e.name === 'AbortError' ? 'timeout' : e.message}`);
+    }
+  }
+
+  throw new Error(`${label}: all download methods failed [url=${url.slice(0, 120)}] [${errors.join(', ')}]`);
+}
+
+async function getPublicUrl(localPath: string): Promise<string | null> {
+  try {
+    const { uploadFile } = await import('@/lib/storage');
+    const path = require('path');
+    const storagePath = `longform/${path.basename(localPath)}`;
+    const publicUrl = await uploadFile(localPath, storagePath);
+    return publicUrl || null;
+  } catch {
+    return null;
+  }
+}
+
+async function uploadOutput(localPath: string, filename: string, outputDir: string): Promise<void> {
+  const path = require('path');
+  const fs = require('fs/promises');
+  try {
+    const { isCloudStorage, uploadFile } = await import('@/lib/storage');
+    if (isCloudStorage) {
+      const tmpCopy = localPath + '.upload.tmp';
+      await fs.copyFile(localPath, tmpCopy);
+      await uploadFile(tmpCopy, `outputs/${filename}`);
+      return;
+    }
+  } catch { /* fall through */ }
+
+  await fs.mkdir(outputDir, { recursive: true });
+  await fs.copyFile(localPath, path.join(outputDir, filename));
 }
