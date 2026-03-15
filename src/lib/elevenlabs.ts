@@ -1,8 +1,8 @@
 /**
- * ElevenLabs TTS client.
+ * ElevenLabs TTS + STT client.
  *
- * Converts text to speech using the ElevenLabs API.
- * Used by the longform video pipeline for voiceover generation.
+ * TTS: Converts text to speech for longform voiceover generation.
+ * STT: Transcribes audio to text with word-level timestamps (Scribe v2).
  *
  * Env: ELEVENLABS_API_KEY
  */
@@ -147,4 +147,51 @@ export async function generateScriptVoiceover(
     ctaAudio: paths.cta,
     fullAudio: fullPath,
   };
+}
+
+// ─── Speech-to-Text (STT) ─────────────────────────────────────────────────
+
+export interface STTWord {
+  text: string;
+  start: number;
+  end: number;
+  type: 'word' | 'spacing' | 'audio_event';
+}
+
+export interface STTResult {
+  text: string;
+  language_code: string;
+  words: STTWord[];
+}
+
+/**
+ * Transcribe an audio file using ElevenLabs Scribe v2.
+ * Returns full text + word-level timestamps.
+ */
+export async function transcribeAudio(audioPath: string): Promise<STTResult> {
+  const fsMod = await import('fs');
+
+  const formData = new FormData();
+  const fileBuffer = fsMod.readFileSync(audioPath);
+  const blob = new Blob([fileBuffer], { type: 'audio/mpeg' });
+  formData.append('file', blob, 'audio.mp3');
+  formData.append('model_id', 'scribe_v2');
+
+  const res = await fetch(`${BASE_URL}/speech-to-text`, {
+    method: 'POST',
+    headers: {
+      'xi-api-key': getApiKey(),
+    },
+    body: formData,
+  });
+
+  if (res.status === 429) throw new Error('ElevenLabs rate limit exceeded (429)');
+  if (res.status === 401) throw new Error('ElevenLabs API key invalid (401)');
+  if (res.status === 402) throw new Error('ElevenLabs insufficient credits (402)');
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`ElevenLabs STT failed (${res.status}): ${body}`);
+  }
+
+  return res.json();
 }

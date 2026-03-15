@@ -183,6 +183,24 @@ export interface LongformFinalizeResult {
   warning?: string;
 }
 
+// ─── Longform From Video Finalize Job ────────────────────────────────────────
+
+export interface LongformFromVideoFinalizeData {
+  companyId: string;
+  userId: string;
+  originalVideoPath: string;
+  extractedAudioUrl: string;
+  scenes: Array<{ start: number; end: number; clipUrl?: string }>;
+  music: { url: string; volume: number } | null;
+  captionConfig: CaptionConfig;
+  aspectRatio: '9:16' | '16:9' | '1:1';
+}
+
+export interface LongformFromVideoFinalizeResult {
+  videos: LongformResultItem[];
+  failed: number;
+}
+
 // ─── Job Status (returned by /api/jobs/[id]) ─────────────────────────────────
 
 export type JobType = 'render' | 'video-gen' | 'longform';

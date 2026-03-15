@@ -38,6 +38,47 @@ export async function getMediaDuration(filePath: string): Promise<number> {
 }
 
 /**
+ * Extract the audio track from a video file as MP3.
+ */
+export async function extractAudio(
+  videoPath: string,
+  outputPath: string,
+): Promise<string> {
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+
+  await execFileAsync('ffmpeg', [
+    '-y', '-i', videoPath,
+    '-vn', '-acodec', 'libmp3lame', '-q:a', '4',
+    outputPath,
+  ]);
+
+  return outputPath;
+}
+
+/**
+ * Extract a video segment by time range (stream copy — fast, no re-encode).
+ */
+export async function extractSegment(
+  videoPath: string,
+  start: number,
+  duration: number,
+  outputPath: string,
+): Promise<string> {
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+
+  await execFileAsync('ffmpeg', [
+    '-y', '-ss', String(start),
+    '-i', videoPath,
+    '-t', String(duration),
+    '-c', 'copy',
+    '-avoid_negative_ts', 'make_zero',
+    outputPath,
+  ]);
+
+  return outputPath;
+}
+
+/**
  * Normalize a video clip to consistent resolution, fps, and codec.
  * Scales to fit within target resolution, pads with black if needed.
  * @param aspectRatio - Target aspect ratio (default: '9:16')

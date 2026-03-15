@@ -43,6 +43,19 @@ const AD_MODELS: AdModel[] = [
     tag: 'New',
   },
   {
+    id: 'longform-from-video',
+    name: 'Longform From Video Made Already',
+    description: 'Upload your video with audio, add b-roll, captions & music. Original audio is preserved — perfect for enhancing talking-head content.',
+    href: '/create/longform-from-video',
+    icon: (
+      <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
+      </svg>
+    ),
+    available: true,
+    tag: 'New',
+  },
+  {
     id: 'video-cutup',
     name: 'Video Cut Up',
     description: 'Upload a video, auto-detect scenes, and save the clips you want to your media library. Free — no tokens needed.',

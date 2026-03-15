@@ -33,6 +33,7 @@ import type {
   LongformSceneRegenData, LongformSceneRegenResult,
   LongformReassembleData, LongformReassembleResult,
   LongformFinalizeData, LongformFinalizeResult,
+  LongformFromVideoFinalizeData, LongformFromVideoFinalizeResult,
 } from '@/lib/job-types';
 import type { LongformResultItem, LongformScene } from '@/lib/longform-types';
 
@@ -742,6 +743,114 @@ async function processFinalize(job: Job<LongformFinalizeData>): Promise<Longform
   }
 }
 
+// ─── Longform From Video Finalize ─────────────────────────────────────────
+
+async function processFromVideoFinalize(job: Job<LongformFromVideoFinalizeData>): Promise<LongformFromVideoFinalizeResult> {
+  const { originalVideoPath, extractedAudioUrl, scenes, music, captionConfig, aspectRatio } = job.data;
+  const tempDir = path.join(TEMP_BASE, `lfv_finalize_${job.id || crypto.randomUUID()}`);
+
+  try {
+    await fs.mkdir(tempDir, { recursive: true });
+    const PUBLIC_DIR = path.join(process.cwd(), 'public');
+
+    // Resolve original video and audio paths
+    const { extractPublicPath } = await import('@/lib/path-utils');
+    const originalLocalPath = path.join(PUBLIC_DIR, extractPublicPath(originalVideoPath));
+    const audioLocalPath = path.join(PUBLIC_DIR, extractPublicPath(extractedAudioUrl));
+
+    await job.updateProgress(5);
+
+    // Build clips: b-roll or original segments
+    const clipPaths: string[] = [];
+    for (let i = 0; i < scenes.length; i++) {
+      const scene = scenes[i];
+      const duration = scene.end - scene.start;
+
+      if (scene.clipUrl) {
+        // B-roll — download/resolve
+        const brollPath = path.join(PUBLIC_DIR, extractPublicPath(scene.clipUrl));
+        try {
+          await fs.access(brollPath);
+          clipPaths.push(brollPath);
+        } catch {
+          // Try downloading
+          const dlPath = path.join(tempDir, `broll_${i}.mp4`);
+          const buf = await downloadWithS3Fallback(scene.clipUrl, `B-roll scene ${i}`);
+          await fs.writeFile(dlPath, buf);
+          clipPaths.push(dlPath);
+        }
+      } else {
+        // Extract original segment
+        const { extractSegment } = await import('@/lib/longform-stitcher');
+        const segPath = path.join(tempDir, `seg_${i}.mp4`);
+        await extractSegment(originalLocalPath, scene.start, duration, segPath);
+        clipPaths.push(segPath);
+      }
+
+      await job.updateProgress(5 + Math.round((40 * (i + 1)) / scenes.length));
+    }
+
+    // Download music if provided
+    let musicPath: string | undefined;
+    if (music?.url) {
+      const mPath = path.join(tempDir, 'music.mp3');
+      const musicBuf = await downloadWithS3Fallback(music.url, 'Music');
+      await fs.writeFile(mPath, musicBuf);
+      musicPath = mPath;
+    }
+
+    await job.updateProgress(50);
+
+    // Assemble: normalize → concat → merge audio → mix music
+    const rawPath = path.join(tempDir, 'assembled.mp4');
+    await assembleAdV2({
+      clips: clipPaths,
+      voiceoverPath: audioLocalPath,
+      outputPath: rawPath,
+      tempDir: path.join(tempDir, 'stitch'),
+      aspectRatio,
+      musicPath,
+      musicVolume: music?.volume ?? 0.15,
+    });
+
+    await job.updateProgress(75);
+
+    // Captions via Submagic (optional)
+    let finalPath = rawPath;
+    let captioned = false;
+    if (captionConfig?.enabled && process.env.SUBMAGIC_API_KEY) {
+      const publicUrl = await getPublicUrl(rawPath);
+      if (publicUrl) {
+        const captionedPath = path.join(tempDir, 'captioned.mp4');
+        await captionVideo(publicUrl, captionedPath, captionConfig, 'Longform From Video');
+        finalPath = captionedPath;
+        captioned = true;
+      }
+    }
+
+    await job.updateProgress(90);
+
+    // Upload final video
+    const duration = await getMediaDuration(finalPath).catch(() => 30);
+    const outputFilename = `lfv_final_${crypto.randomUUID()}.mp4`;
+    await uploadToApp(finalPath, outputFilename);
+
+    await job.updateProgress(100);
+
+    return {
+      videos: [{
+        variant: 'from-video',
+        videoUrl: fileUrl(`outputs/${outputFilename}`),
+        captioned,
+        durationSeconds: duration,
+      }],
+      failed: 0,
+    };
+  } finally {
+    try { await fs.rm(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+}
+
 function getAppBaseUrl(): string {
   const appUrl = process.env.APP_INTERNAL_URL || process.env.RAILWAY_SERVICE_INTERNALTOOLS_URL;
   if (appUrl) return appUrl.startsWith('http') ? appUrl : `http://${appUrl}`;
@@ -767,6 +876,9 @@ export function startLongformWorker(): Worker | null {
     }
     if (job.name === 'longform-finalize') {
       return processFinalize(job as Job<LongformFinalizeData>);
+    }
+    if (job.name === 'longform-from-video-finalize') {
+      return processFromVideoFinalize(job as Job<LongformFromVideoFinalizeData>);
     }
     // Legacy longform-video jobs (old wizard flow)
     if (job.name === 'longform-video' || !job.name) {
