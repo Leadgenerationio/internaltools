@@ -178,9 +178,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Try to enqueue as background job (returns immediately)
-    const queue = getRenderQueue();
-    logger.info(`[Render] Queue available: ${!!queue}`);
+    // For small batches (≤2 items), render synchronously for immediate error feedback.
+    // BullMQ worker may not surface errors properly through the polling chain.
+    const queue = outputCount > 2 ? getRenderQueue() : null;
+    logger.info(`[Render] Queue available: ${!!getRenderQueue()}, using sync: ${!queue} (${outputCount} items)`);
     if (queue) {
       const jobData: RenderJobData = {
         companyId: authResult.auth.companyId,
