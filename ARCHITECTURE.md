@@ -94,7 +94,7 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 | AI copy generation | Anthropic SDK (Claude Sonnet) | TOFU/MOFU/BOFU ad scripts |
 | AI video generation | kie.ai REST API (Seedance 1.5, Kling 2.6, Veo 3.1 Fast/Quality, Sora 2/Pro) | Optional AI background videos + longform b-roll (user-selectable model with dynamic token pricing). Automatic model fallback on capacity/overload errors: veo3_fast → seedance-1.5-pro → kling-2.6 (`src/lib/kie-api.ts`) |
 | Voiceover | ElevenLabs TTS API | Text-to-speech for longform video scripts |
-| Captioning | Submagic API | Auto-captions for longform video — applied during reassemble/finalize step only (deferred captioning), not during initial generation |
+| Captioning | Submagic API | Auto-captions for longform video — applied during reassemble/finalize step only (deferred captioning), not during initial generation. Triggers POST /projects/{id}/export when status=completed but no downloadUrl, streams downloads (3-min timeout), checks directUrl fallback. |
 | Background jobs | BullMQ + Redis (ioredis) | Async render + video gen + longform pipeline, survives page refresh |
 | Token billing | Prisma transactions | Atomic token deduction/credit, append-only ledger, budget alerts |
 | Payments | Stripe (Checkout + Customer Portal) | Subscriptions, one-time token top-ups, webhook handling |
@@ -345,13 +345,13 @@ src/
 │       ├── SceneSlot.tsx             # Individual scene card with source tabs
 │       ├── MusicStep.tsx             # Background music selection (wraps MusicSelector)
 │       ├── CaptionsStep.tsx          # Submagic caption template picker
-│       ├── FinalizeStep.tsx          # Aspect ratio + summary + produce + results
+│       ├── FinalizeStep.tsx          # Aspect ratio + summary + produce (one variant at a time) + results
 │       └── VoicePreviewPlayer.tsx    # Audio playback widget
 ├── middleware.ts                     # Auth verification, JWT validation, rate limiting, service-to-service auth (Bearer AUTH_SECRET)
 ├── lib/
 │   ├── types.ts                      # All TypeScript interfaces + constants
 │   ├── ffmpeg-renderer.ts            # FFmpeg render pipeline (draft/final quality, trim)
-│   ├── overlay-renderer.ts           # Canvas → PNG overlay generation
+│   ├── overlay-renderer.ts           # Canvas → PNG overlay generation (auto-scales font for long text, caps at 20 lines)
 │   ├── get-video-info.ts             # ffprobe metadata + FFmpeg check
 │   ├── storage.ts                    # Cloud storage abstraction (local FS / S3 / R2 / Supabase, streaming uploads, forcePathStyle for S3-compat)
 │   ├── logger.ts                     # Winston logger config
@@ -380,7 +380,8 @@ src/
 │   ├── longform-types.ts             # Types for the longform video pipeline (LongformScene, LongformSceneRegenData, LongformReassembleData)
 │   ├── kie-api.ts                    # Shared kie.ai API helpers (submit, poll, download, model fallback — used by video-gen + longform)
 │   ├── elevenlabs.ts                 # ElevenLabs TTS client (text-to-speech)
-│   ├── submagic.ts                   # Submagic captioning client (sole caption provider for longform video)
+│   ├── submagic.ts                   # Submagic captioning client (sole caption provider for longform video). Triggers export when status=completed but no downloadUrl, streams downloads via Readable.fromWeb + pipeline (3-min timeout), checks directUrl fallback.
+│   ├── path-utils.ts                 # Shared utility: extractPublicPath() converts any URL format (CDN, S3, Supabase, /api/files, relative) to a public-relative file path. Consolidates 4 previously duplicated implementations.
 │   └── longform-stitcher.ts          # FFmpeg video assembly for longform output (loops b-roll via -stream_loop -1 to match voiceover duration)
 ├── workers/
 │   ├── index.ts                      # Worker entry point (starts all BullMQ workers)
@@ -399,20 +400,26 @@ src/
 ```
 1. Sort overlays by startTime
 2. For each overlay:
-   a. Render text to PNG via @napi-rs/canvas (supports emoji)
-   b. Use PREVIEW_* scale constants (matching VideoPreview.tsx CSS) to size
+   a. Validate canvas dimensions (>0 and <=4096px) before creating canvas
+   b. Render text to PNG via @napi-rs/canvas (supports emoji)
+   c. Use PREVIEW_* scale constants (matching VideoPreview.tsx CSS) to size
       text, padding, border-radius, gaps, and fit-content box width
-   c. Auto-scale font size for long text: if wrapped text exceeds 12 lines,
+   d. Auto-scale font size for long text: if wrapped text exceeds 12 lines,
       font size scales down (to a minimum of 50% of the base size). Text is
       hard-capped at 20 lines with truncation ("..."). Canvas height is capped
       at 50% of the video height to prevent overlays from dominating the frame.
-   d. Calculate vertical stacking position (starting Y = 10% of output width)
+   e. Calculate vertical stacking position (starting Y = 10% of output width)
 3. Build FFmpeg command:
    a. Scale/crop input video to 1080×1920 (9:16)
    b. Chain overlay filters with enable='between(t,start,end)'
    c. If music: mix audio tracks with fade in/out
 4. Execute FFmpeg, return output path
-5. Clean up temporary overlay PNGs
+5. Validate output file exists and size > 1000 bytes
+6. Clean up temporary overlay PNGs
+
+Per-item error reporting: Both sync and worker render responses include an `errors[]` array
+with specific error details per failed item. The UI displays these to the user instead of
+generic failure messages.
 ```
 
 ### Why Canvas PNGs instead of FFmpeg drawtext?

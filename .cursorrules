@@ -216,8 +216,8 @@ src/
     SaveAsTemplateModal.tsx       — Save brief as reusable template
   lib/
     types.ts                      — TypeScript interfaces, presets, funnel types
-    ffmpeg-renderer.ts            — Core FFmpeg rendering (overlay, audio, trim, quality)
-    overlay-renderer.ts           — Canvas-based PNG generation with emoji (auto-scales font for long text, caps at 20 lines)
+    ffmpeg-renderer.ts            — Core FFmpeg rendering (overlay, audio, trim, quality). Validates output exists and >1000 bytes. Per-item error details in errors[] array.
+    overlay-renderer.ts           — Canvas-based PNG generation with emoji (auto-scales font for long text, caps at 20 lines). Validates canvas dimensions (>0, <=4096px).
     get-video-info.ts             — ffprobe metadata extraction + FFmpeg check
     storage.ts                    — Cloud storage abstraction (local FS / S3 / R2 / Supabase S3)
     logger.ts                     — Winston logger setup
@@ -246,7 +246,8 @@ src/
     kie-api.ts                    — kie.ai REST client with automatic model fallback (veo3_fast → seedance-1.5-pro → kling-2.6)
     longform-types.ts             — Types for the longform video pipeline
     elevenlabs.ts                 — ElevenLabs TTS client (text-to-speech)
-    submagic.ts                   — Submagic captioning client (auto-captions)
+    submagic.ts                   — Submagic captioning client (auto-captions, streaming download, export trigger, directUrl fallback)
+    path-utils.ts                 — Shared extractPublicPath(): converts any URL format (CDN, S3, /api/files, relative) to public-relative path
     longform-stitcher.ts          — FFmpeg video assembly for longform output
     scene-detect.ts               — FFmpeg scene detection + video splitting (video cut up)
   workers/
