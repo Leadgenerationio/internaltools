@@ -17,6 +17,16 @@ import crypto from 'crypto';
 
 export const maxDuration = 300;
 
+/** Resolve a relative URL to absolute for server-side fetch */
+function resolveUrl(url: string): string {
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  // For relative URLs, use the app's own URL
+  const base = process.env.APP_URL || process.env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : 'http://localhost:3000';
+  return `${base.replace(/\/+$/, '')}${url.startsWith('/') ? '' : '/'}${url}`;
+}
+
 interface RequestBody {
   originalVideoPath: string;
   extractedAudioUrl: string;
@@ -106,7 +116,7 @@ export async function POST(request: NextRequest) {
         } catch {
           // Try downloading if it's a URL
           const clipPath = path.join(tempDir, `broll_${i}.mp4`);
-          const res = await fetch(scene.clipUrl);
+          const res = await fetch(resolveUrl(scene.clipUrl));
           if (res.ok && res.body) {
             const { Readable } = await import('stream');
             const { pipeline } = await import('stream/promises');
