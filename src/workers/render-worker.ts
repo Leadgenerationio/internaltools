@@ -18,21 +18,13 @@ import { checkTokenAlerts } from '@/lib/spend-alerts';
 import { sendRenderCompleteEmail, sendRenderFailedEmail } from '@/lib/email';
 import { createNotification } from '@/lib/notifications';
 import { prisma } from '@/lib/prisma';
-import type { RenderJobData, RenderJobResult, RenderResultItem } from '@/lib/job-types';
+import type { RenderJobData, RenderJobResult, RenderResultItem, RenderErrorItem } from '@/lib/job-types';
 import type { MusicTrack } from '@/lib/types';
+import { extractPublicPath } from '@/lib/path-utils';
 
 const OUTPUT_DIR = path.join(process.cwd(), 'public', 'outputs');
 const PUBLIC_DIR = path.join(process.cwd(), 'public');
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
-
-/** Extract the public-relative path from a URL */
-function extractPublicPath(url: string): string {
-  if (url.startsWith('/api/files')) {
-    const urlObj = new URL(url, 'http://localhost');
-    return urlObj.searchParams.get('path') || '';
-  }
-  return url.startsWith('/') ? url.slice(1) : url;
-}
 
 function isPathSafe(resolvedPath: string, allowedDir: string): boolean {
   return path.normalize(resolvedPath).startsWith(path.normalize(allowedDir));
@@ -60,6 +52,7 @@ async function processRenderJob(job: Job<RenderJobData>): Promise<RenderJobResul
   const { items, music, quality, companyId, userId, tokenCost } = job.data;
   const totalItems = items.length;
   const results: RenderResultItem[] = [];
+  const errors: RenderErrorItem[] = [];
   let failed = 0;
   let tokensRefunded = 0;
 
@@ -94,7 +87,9 @@ async function processRenderJob(job: Job<RenderJobData>): Promise<RenderJobResul
         const inputPath = path.join(PUBLIC_DIR, cleanPath);
 
         if (!isPathSafe(inputPath, UPLOAD_DIR) || !fs.existsSync(inputPath)) {
-          console.error(`[Render Worker] Video not found: ${cleanPath}`);
+          const errMsg = `Video file not found: ${cleanPath}`;
+          console.error(`[Render Worker] ${errMsg}`);
+          errors.push({ adLabel, videoName: video.originalName, error: errMsg });
           failed++;
           await job.updateProgress(Math.round(((i + 1) / totalItems) * 100));
           continue;
@@ -135,6 +130,7 @@ async function processRenderJob(job: Job<RenderJobData>): Promise<RenderJobResul
         }
       } catch (err: any) {
         console.error(`[Render Worker] Item ${i + 1} failed:`, err.message);
+        errors.push({ adLabel, videoName: video.originalName, error: err.message });
         failed++;
       }
 
@@ -200,7 +196,7 @@ async function processRenderJob(job: Job<RenderJobData>): Promise<RenderJobResul
       );
     }
 
-    return { results, failed, tokensUsed: tokenCost };
+    return { results, failed, errors, tokensUsed: tokenCost };
   } catch (err: any) {
     // Refund remaining tokens on unexpected failure (e.g., mkdirSync, early crash)
     const remaining = tokenCost - tokensRefunded;

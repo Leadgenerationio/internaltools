@@ -231,6 +231,16 @@ export async function renderVideo(options: RenderOptions): Promise<string> {
     const { stdout, stderr } = await execFileAsync('ffmpeg', args, { maxBuffer: 1024 * 1024 * 10 });
     console.log('FFmpeg stdout:', stdout);
     if (stderr) console.log('FFmpeg stderr:', stderr);
+
+    // Validate output file was created and is not empty/corrupt
+    if (!fs.existsSync(outputPath)) {
+      throw new Error('FFmpeg completed but output file was not created');
+    }
+    const outputStat = fs.statSync(outputPath);
+    if (outputStat.size < 1000) {
+      throw new Error(`FFmpeg output is too small (${outputStat.size} bytes) — likely corrupted`);
+    }
+
     return outputPath;
   } finally {
     // Clean up temp overlay PNGs — validate path is within allowed dirs

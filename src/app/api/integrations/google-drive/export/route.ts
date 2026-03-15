@@ -9,6 +9,7 @@ import {
 import path from 'path';
 import fs from 'fs';
 import { Readable } from 'stream';
+import { extractPublicPath } from '@/lib/path-utils';
 
 const PUBLIC_DIR = path.join(process.cwd(), 'public');
 
@@ -36,19 +37,6 @@ function isAllowedExternalUrl(url: string): boolean {
   } catch {
     return false;
   }
-}
-
-/** Extract the public-relative file path from a URL (handles /api/files?path=xxx and /xxx) */
-function extractPublicPath(url: string): string {
-  if (url.startsWith('/api/files')) {
-    try {
-      const urlObj = new URL(url, 'http://localhost');
-      return urlObj.searchParams.get('path') || '';
-    } catch {
-      return '';
-    }
-  }
-  return url.startsWith('/') ? url.slice(1) : url;
 }
 
 /** Get MIME type from file extension or URL */

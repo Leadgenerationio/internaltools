@@ -16,8 +16,9 @@ import { sendRenderCompleteEmail } from '@/lib/email';
 import { createNotification } from '@/lib/notifications';
 import { prisma } from '@/lib/prisma';
 import { getRenderQueue } from '@/lib/queue';
-import type { RenderJobData } from '@/lib/job-types';
+import type { RenderJobData, RenderErrorItem } from '@/lib/job-types';
 import type { TextOverlay, MusicTrack, UploadedVideo } from '@/lib/types';
+import { extractPublicPath } from '@/lib/path-utils';
 
 const UPLOAD_DIR = path.join(process.cwd(), 'public', 'uploads');
 const OUTPUT_DIR = path.join(process.cwd(), 'public', 'outputs');
@@ -58,15 +59,6 @@ function cleanOldOutputs(maxAgeMs = 4 * 60 * 60 * 1000): void {
 function isPathSafe(resolvedPath: string, allowedDir: string): boolean {
   const normalized = path.normalize(resolvedPath);
   return normalized.startsWith(path.normalize(allowedDir));
-}
-
-/** Extract the public-relative path from a URL (handles both /api/files?path=xxx and /xxx) */
-function extractPublicPath(url: string): string {
-  if (url.startsWith('/api/files')) {
-    const urlObj = new URL(url, 'http://localhost');
-    return urlObj.searchParams.get('path') || '';
-  }
-  return url.startsWith('/') ? url.slice(1) : url;
 }
 
 export const maxDuration = 300; // 5 min for batch renders
@@ -229,6 +221,7 @@ export async function POST(request: NextRequest) {
 
     const usingCloud = isCloudStorage;
     const results: { videoId: string; originalName: string; adLabel: string; outputUrl: string }[] = [];
+    const errors: RenderErrorItem[] = [];
     let failed = 0;
 
     for (const item of renderItems) {
@@ -265,6 +258,7 @@ export async function POST(request: NextRequest) {
         }
       } catch (err: any) {
         logger.error(`[Render] Item failed: ${err.message}`, { stack: err.stack });
+        errors.push({ adLabel: item.adLabel, videoName: v.originalName, error: err.message });
         failed++;
       }
     }
@@ -285,7 +279,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (results.length === 0) {
-      throw new Error('All renders failed');
+      const reasons = errors.map(e => e.error).join('; ');
+      throw new Error(`All renders failed: ${reasons}`);
     }
 
     // Check token alerts after successful render
@@ -317,7 +312,7 @@ export async function POST(request: NextRequest) {
       '/'
     );
 
-    return NextResponse.json({ results, failed, tokensUsed: tokenCost });
+    return NextResponse.json({ results, failed, errors, tokensUsed: tokenCost });
   } catch (error: any) {
     logger.error(`[Render] Fatal error: ${error.message}`, { stack: error.stack });
 

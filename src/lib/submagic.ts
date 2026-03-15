@@ -9,6 +9,9 @@
  * Important: Submagic requires a publicly accessible video URL.
  * The video must be uploaded to S3/CDN first. If no cloud storage
  * is configured, captioning is skipped and the raw video is returned.
+ *
+ * API docs: https://docs.submagic.co
+ * Flow: create project → poll until completed → export (if needed) → download
  */
 
 import type { CaptionConfig } from '@/lib/longform-types';
@@ -16,6 +19,7 @@ import type { CaptionConfig } from '@/lib/longform-types';
 const BASE_URL = 'https://api.submagic.co/v1';
 const POLL_INTERVAL_MS = 10_000;
 const MAX_POLL_TIME_MS = 5 * 60 * 1000; // 5 minutes
+const DOWNLOAD_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes max for download
 
 function getApiKey(): string {
   const key = process.env.SUBMAGIC_API_KEY;
@@ -49,6 +53,7 @@ interface SubmagicProject {
   id: string;
   status: string;
   downloadUrl?: string;
+  directUrl?: string;
 }
 
 /**
@@ -87,10 +92,35 @@ export async function createProject(
 }
 
 /**
+ * Trigger the export step for a completed Submagic project.
+ * Some flows require this before downloadUrl is populated.
+ */
+export async function exportProject(projectId: string): Promise<SubmagicProject> {
+  const res = await fetch(`${BASE_URL}/projects/${projectId}/export`, {
+    method: 'POST',
+    headers: headers(),
+  });
+
+  // Export endpoint may not exist for all plan types — treat 404 as non-fatal
+  if (res.status === 404) {
+    console.warn(`[submagic] Export endpoint returned 404 for project ${projectId} — may not be needed`);
+    return { id: projectId, status: 'completed' };
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Submagic export failed (${res.status}): ${body}`);
+  }
+
+  return res.json();
+}
+
+/**
  * Poll a Submagic project until completion.
+ * If status=completed but no downloadUrl, tries calling export once.
  */
 export async function waitForProject(projectId: string): Promise<SubmagicProject> {
   const start = Date.now();
+  let exportTriggered = false;
 
   while (Date.now() - start < MAX_POLL_TIME_MS) {
     const res = await fetch(`${BASE_URL}/projects/${projectId}`, {
@@ -104,8 +134,21 @@ export async function waitForProject(projectId: string): Promise<SubmagicProject
 
     const project: SubmagicProject = await res.json();
 
-    if (project.status === 'completed') {
+    if (project.status === 'completed' && (project.downloadUrl || project.directUrl)) {
       return project;
+    }
+
+    // If completed but no download URL, trigger export (once)
+    if (project.status === 'completed' && !project.downloadUrl && !project.directUrl && !exportTriggered) {
+      try {
+        const exported = await exportProject(projectId);
+        exportTriggered = true;
+        if (exported.downloadUrl || exported.directUrl) return exported;
+        // If still no URL, continue polling — export may be async
+      } catch (err: any) {
+        console.warn(`[submagic] Export call failed: ${err.message}, continuing to poll`);
+        exportTriggered = true; // don't retry
+      }
     }
 
     if (project.status === 'failed') {
@@ -119,26 +162,48 @@ export async function waitForProject(projectId: string): Promise<SubmagicProject
 }
 
 /**
- * Download the captioned video to disk.
+ * Download the captioned video to disk using streaming (no full-buffer OOM risk).
  */
 export async function downloadResult(
   downloadUrl: string,
   outputPath: string,
 ): Promise<void> {
-  const fs = await import('fs/promises');
-  const path = await import('path');
+  const fsMod = await import('fs');
+  const fsp = await import('fs/promises');
+  const pathMod = await import('path');
+  const { pipeline } = await import('stream/promises');
+  const { Readable } = await import('stream');
 
-  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await fsp.mkdir(pathMod.dirname(outputPath), { recursive: true });
 
-  const res = await fetch(downloadUrl, { redirect: 'follow' });
-  if (!res.ok) throw new Error(`Submagic download failed (${res.status})`);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
 
-  const buffer = Buffer.from(await res.arrayBuffer());
-  await fs.writeFile(outputPath, buffer);
+  try {
+    const res = await fetch(downloadUrl, {
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`Submagic download failed (${res.status})`);
+    if (!res.body) throw new Error('Submagic download returned empty body');
+
+    // Stream to disk instead of buffering entire video in memory
+    const nodeStream = Readable.fromWeb(res.body as any);
+    const writeStream = fsMod.createWriteStream(outputPath);
+    await pipeline(nodeStream, writeStream);
+
+    // Validate the downloaded file
+    const stat = await fsp.stat(outputPath);
+    if (stat.size < 1000) {
+      throw new Error(`Downloaded captioned video is too small (${stat.size} bytes)`);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
- * Full caption pipeline: create project → poll → download.
+ * Full caption pipeline: create project → poll → export if needed → download.
  */
 export async function captionVideo(
   videoUrl: string,
@@ -150,10 +215,11 @@ export async function captionVideo(
   const project = await createProject(videoUrl, config, title, dictionary);
   const result = await waitForProject(project.id);
 
-  if (!result.downloadUrl) {
+  const url = result.downloadUrl || result.directUrl;
+  if (!url) {
     throw new Error('Submagic returned no download URL');
   }
 
-  await downloadResult(result.downloadUrl, outputPath);
+  await downloadResult(url, outputPath);
   return outputPath;
 }

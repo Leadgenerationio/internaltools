@@ -283,6 +283,11 @@ export async function renderOverlayToPng(
   let textAreaWidth = maxBoxWidth - padX * 2;
   let font = buildFont(fontSize, style.fontWeight);
 
+  // Validate dimensions before proceeding
+  if (textAreaWidth <= 0) {
+    throw new Error(`Text area width is ${textAreaWidth}px — maxWidth (${style.maxWidth}%) too small for video ${videoWidth}x${videoHeight}`);
+  }
+
   // Emoji image sizing
   let emojiSize = Math.round(fontSize * 1.2);
   let emojiGap = Math.round(fontSize * 0.25);
@@ -343,6 +348,15 @@ export async function renderOverlayToPng(
   // Final safety: cap box height to prevent canvas/FFmpeg issues
   if (boxHeight > MAX_BOX_HEIGHT) {
     boxHeight = MAX_BOX_HEIGHT;
+  }
+
+  // Validate canvas dimensions
+  if (boxWidth <= 0 || boxHeight <= 0 || isNaN(boxWidth) || isNaN(boxHeight)) {
+    throw new Error(`Invalid overlay dimensions: ${boxWidth}x${boxHeight} for text "${rawText.slice(0, 40)}"`);
+  }
+  const MAX_CANVAS_DIM = 4096;
+  if (boxWidth > MAX_CANVAS_DIM || boxHeight > MAX_CANVAS_DIM) {
+    throw new Error(`Overlay too large: ${boxWidth}x${boxHeight}px (max ${MAX_CANVAS_DIM}px)`);
   }
 
   console.log(`[overlay] "${rawText.slice(0, 50)}${rawText.length > 50 ? '...' : ''}" → ${lines.length} lines, box ${boxWidth}×${boxHeight}, fontSize=${fontSize}, emoji: ${emojiImg ? 'twemoji' : textAfterEmoji !== null ? 'monochrome' : 'none'}`);

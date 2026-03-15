@@ -34,7 +34,14 @@ export interface RenderJobItem {
 export interface RenderJobResult {
   results: RenderResultItem[];
   failed: number;
+  errors?: RenderErrorItem[];
   tokensUsed: number;
+}
+
+export interface RenderErrorItem {
+  adLabel: string;
+  videoName: string;
+  error: string;
 }
 
 export interface RenderResultItem {

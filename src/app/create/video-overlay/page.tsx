@@ -590,10 +590,11 @@ function HomeContent() {
         setResults(allResults);
         setRenderCurrent(totalCount);
         const failCount = jobResult?.failed || 0;
+        const errorDetails = (jobResult?.errors || []) as { adLabel?: string; videoName?: string; error: string }[];
         setRenderProgress(
           failCount === 0
             ? `Done! ${allResults.length} video${allResults.length !== 1 ? 's' : ''} rendered.`
-            : `Done with ${allResults.length} of ${totalCount} videos (${failCount} failed).`
+            : `Done with ${allResults.length} of ${totalCount} videos (${failCount} failed).${errorDetails.length > 0 ? '\n' + errorDetails.map((e) => `${e.adLabel || e.videoName}: ${e.error}`).join('\n') : ''}`
         );
         setRendering(false);
         renderAbortRef.current = null;
@@ -614,10 +615,11 @@ function HomeContent() {
       setResults(allResults);
       setRenderCurrent(totalCount);
       const failCount = data.failed || 0;
+      const errorDetails = (data.errors || []) as { adLabel?: string; videoName?: string; error: string }[];
       setRenderProgress(
         failCount === 0
           ? `Done! ${allResults.length} video${allResults.length !== 1 ? 's' : ''} rendered.`
-          : `Done with ${allResults.length} of ${totalCount} videos (${failCount} failed).`
+          : `Done with ${allResults.length} of ${totalCount} videos (${failCount} failed).${errorDetails.length > 0 ? '\n' + errorDetails.map((e) => `${e.adLabel || e.videoName}: ${e.error}`).join('\n') : ''}`
       );
     } catch (err: any) {
       if (err.name === 'AbortError') {
@@ -1011,7 +1013,7 @@ function HomeContent() {
               >
                 <div className="flex items-center justify-between gap-3">
                   <p
-                    className={`text-sm ${
+                    className={`text-sm whitespace-pre-line ${
                       renderProgress.startsWith('Error') || renderProgress.includes('failed')
                         ? 'text-red-300'
                         : rendering
