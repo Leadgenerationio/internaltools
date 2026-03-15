@@ -402,7 +402,11 @@ src/
    a. Render text to PNG via @napi-rs/canvas (supports emoji)
    b. Use PREVIEW_* scale constants (matching VideoPreview.tsx CSS) to size
       text, padding, border-radius, gaps, and fit-content box width
-   c. Calculate vertical stacking position (starting Y = 10% of output width)
+   c. Auto-scale font size for long text: if wrapped text exceeds 12 lines,
+      font size scales down (to a minimum of 50% of the base size). Text is
+      hard-capped at 20 lines with truncation ("..."). Canvas height is capped
+      at 50% of the video height to prevent overlays from dominating the frame.
+   d. Calculate vertical stacking position (starting Y = 10% of output width)
 3. Build FFmpeg command:
    a. Scale/crop input video to 1080×1920 (9:16)
    b. Chain overlay filters with enable='between(t,start,end)'
@@ -441,6 +445,9 @@ After the initial pipeline completes, `LongformResultItem` includes `scenes[]` (
 - **Replace** a scene with an uploaded clip (no token cost)
 - **Remove** scenes from the final output
 - **Re-assemble** the edited scenes into a new final video with captions (via `/api/longform/reassemble`)
+
+### Per-variant finalization
+The FinalizeStep sends one variant per request instead of all variants at once. Each variant is submitted individually to the `/api/longform/finalize` endpoint, and the UI shows per-variant progress (e.g. "Processing variant 2 of 3..."). This prevents HTTP timeout errors that occurred when 3+ variants were submitted in a single request (which could exceed the 4-minute `maxDuration` limit). Results accumulate as each variant completes — partial success is preserved if a later variant fails.
 
 ### Worker job routing
 The longform worker (`src/workers/longform-worker.ts`) handles 3 job types on a single BullMQ queue, routed by job name:
