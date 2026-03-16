@@ -55,6 +55,8 @@ export interface CaptionConfig {
   template: string;        // e.g. "Hormozi 2" — Submagic template name
   language: string;        // e.g. "en"
   magicZooms: boolean;
+  magicBrolls: boolean;
+  transitions: boolean;
   cleanAudio: boolean;
   fontSize?: number;       // px, e.g. 33
   position?: string;       // "bottom" | "center" | "top"
@@ -65,6 +67,8 @@ export const DEFAULT_CAPTION_CONFIG: CaptionConfig = {
   template: 'Hormozi 2',
   language: 'en',
   magicZooms: true,
+  magicBrolls: false,
+  transitions: false,
   cleanAudio: false,
   fontSize: 33,
   position: 'bottom',

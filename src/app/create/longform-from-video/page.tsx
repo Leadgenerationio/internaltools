@@ -54,6 +54,8 @@ function PageContent() {
     template: 'Hormozi 2',
     language: 'en',
     magicZooms: true,
+    magicBrolls: false,
+    transitions: false,
     cleanAudio: false,
   });
 
@@ -115,7 +117,7 @@ function PageContent() {
     setScenes([]);
     setFullTranscript('');
     setMusic(null);
-    setCaptionConfig({ enabled: true, template: 'Hormozi 2', language: 'en', magicZooms: true, cleanAudio: false });
+    setCaptionConfig({ enabled: true, template: 'Hormozi 2', language: 'en', magicZooms: true, magicBrolls: false, transitions: false, cleanAudio: false });
     setAspectRatio('9:16');
     setResults([]);
     localStorage.removeItem(STORAGE_KEY);

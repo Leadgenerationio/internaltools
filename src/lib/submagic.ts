@@ -74,8 +74,9 @@ export async function createProject(
       videoUrl,
       templateName: config.template,
       magicZooms: config.magicZooms,
-      magicBrolls: false, // we supply our own b-roll
+      magicBrolls: config.magicBrolls ?? false,
       cleanAudio: config.cleanAudio,
+      ...(config.transitions != null && { transitions: config.transitions }),
       ...(config.fontSize && { fontSize: config.fontSize }),
       ...(config.position && { position: config.position }),
       ...(dictionary && { dictionary: dictionary.slice(0, 100) }),
