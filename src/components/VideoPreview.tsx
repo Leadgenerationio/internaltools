@@ -156,6 +156,7 @@ export default function VideoPreview({ video, videos, activeIndex, onVideoChange
           className="w-full h-full object-cover"
           playsInline
           loop
+          muted
           onError={(e) => console.error('Video load error:', video.path, e)}
         />
 

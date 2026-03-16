@@ -1085,6 +1085,7 @@ function HomeContent() {
                         className="w-full rounded-lg mb-2 sm:mb-3 aspect-[9/16] object-cover bg-black"
                         controls
                         playsInline
+                        muted
                       />
                       <div className="space-y-1.5 sm:space-y-2">
                         <p className="text-[10px] sm:text-xs text-blue-400 font-medium truncate">{r.adLabel}</p>

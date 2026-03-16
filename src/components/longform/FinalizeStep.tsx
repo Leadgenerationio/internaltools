@@ -189,6 +189,7 @@ export default function FinalizeStep({
                 src={normalizeVideoUrl(r.videoUrl)}
                 className="w-full aspect-video bg-black"
                 controls
+                muted
               />
               <div className="p-4 space-y-3">
                 <div className="flex items-center justify-between">

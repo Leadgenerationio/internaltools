@@ -422,6 +422,7 @@ export default function VideoCutupPage() {
                 ref={videoRef}
                 src={video.path}
                 controls
+                muted
                 className="w-full max-h-[360px] mx-auto"
                 preload="metadata"
               />
