@@ -121,13 +121,22 @@ export default function SceneSlot({ scene, onUpdate, onSaveToLibrary }: Props) {
     if (libraryFiles.length > 0) return;
     setLoadingLibrary(true);
     try {
-      const res = await fetch('/api/media?limit=50');
+      const res = await fetch('/api/media?limit=50&aspect=9:16');
       if (res.ok) {
         const data = await res.json();
         setLibraryFiles(data.files || []);
       }
     } catch { /* ignore */ }
     setLoadingLibrary(false);
+  };
+
+  const handleDeleteFromLibrary = async (fileId: string) => {
+    try {
+      const res = await fetch(`/api/media/${fileId}`, { method: 'DELETE' });
+      if (res.ok) {
+        setLibraryFiles((prev) => prev.filter((f) => f.id !== fileId));
+      }
+    } catch { /* ignore */ }
   };
 
   const selectFromLibrary = (file: any) => {
@@ -292,29 +301,39 @@ export default function SceneSlot({ scene, onUpdate, onSaveToLibrary }: Props) {
                 {loadingLibrary ? (
                   <div className="text-xs text-gray-500 text-center py-4">Loading...</div>
                 ) : libraryFiles.length === 0 ? (
-                  <div className="text-xs text-gray-500 text-center py-4">No videos in library</div>
+                  <div className="text-xs text-gray-500 text-center py-4">No 9:16 videos in library</div>
                 ) : (
                   <div className="grid grid-cols-3 gap-2">
                     {libraryFiles.map((f) => (
-                      <button
-                        key={f.id}
-                        onClick={() => selectFromLibrary(f)}
-                        className="bg-gray-900 rounded-lg overflow-hidden hover:ring-2 hover:ring-blue-500 transition-all"
-                      >
-                        {f.thumbnailUrl ? (
-                          <img src={normalizeVideoUrl(f.thumbnailUrl)} alt="" className="w-full aspect-video object-cover" />
-                        ) : f.publicUrl ? (
-                          <video
-                            src={normalizeVideoUrl(f.publicUrl)}
-                            className="w-full aspect-video object-cover bg-gray-800"
-                            preload="metadata"
-                            muted
-                          />
-                        ) : (
-                          <div className="w-full aspect-video bg-gray-800 flex items-center justify-center text-xs text-gray-500">No preview</div>
-                        )}
-                        <div className="px-1.5 py-1 truncate text-xs text-gray-400">{f.originalName || 'Video'}</div>
-                      </button>
+                      <div key={f.id} className="relative group">
+                        <button
+                          onClick={() => selectFromLibrary(f)}
+                          className="w-full bg-gray-900 rounded-lg overflow-hidden hover:ring-2 hover:ring-blue-500 transition-all text-left"
+                        >
+                          {f.thumbnailUrl ? (
+                            <img src={normalizeVideoUrl(f.thumbnailUrl)} alt="" className="w-full aspect-video object-cover" />
+                          ) : f.publicUrl ? (
+                            <video
+                              src={normalizeVideoUrl(f.publicUrl)}
+                              className="w-full aspect-video object-cover bg-gray-800"
+                              preload="metadata"
+                              muted
+                            />
+                          ) : (
+                            <div className="w-full aspect-video bg-gray-800 flex items-center justify-center text-xs text-gray-500">No preview</div>
+                          )}
+                          <div className="px-1.5 py-1 truncate text-xs text-gray-400">{f.originalName || 'Video'}</div>
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDeleteFromLibrary(f.id); }}
+                          className="absolute top-1 right-1 w-5 h-5 bg-red-600 hover:bg-red-500 rounded-full items-center justify-center hidden group-hover:flex transition-colors"
+                          title="Delete"
+                        >
+                          <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
                     ))}
                   </div>
                 )}
