@@ -49,6 +49,14 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 │  │ │      │ │ preview)   │ │ library) │                    │      │
 │  │ └──────┘ └────────────┘ └──────────┘                    │      │
 │  └──────────────────────────────────────────────────────────┘      │
+│  ┌── /create/avatar-video ─────────────────────────────────────────┐  │
+│  │ ┌──────┐ ┌──────┐ ┌───────┐ ┌──────┐ ┌────────┐ ┌──────┐    │  │
+│  │ │Create│→│Edit &│→│Product│→│Script│→│Generate│→│ Done │    │  │
+│  │ │Avatar│ │Save  │ │(opt)  │ │&Voice│ │ Video  │ │      │    │  │
+│  │ │(AI/  │ │      │ │       │ │(11L) │ │(queue) │ │      │    │  │
+│  │ │Lib)  │ │      │ │       │ │      │ │        │ │      │    │  │
+│  │ └──────┘ └──────┘ └───────┘ └──────┘ └────────┘ └──────┘    │  │
+│  └────────────────────────────────────────────────────────────────┘  │
 │       │              │              │              │                    │
 └───────┼──────────────┼──────────────┼──────────────┼────────────────────┘
         │              │              │              │
@@ -78,6 +86,7 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
   - PasswordResetTokens (DB-backed, replaces in-memory Map)
   - ProcessedWebhookEvents (Stripe idempotency deduplication)
   - SpendAlertLogs (budget threshold tracking, replaces in-memory Set)
+  - Avatars (AI-generated avatar images, company-scoped)
 ```
 
 ## Tech Stack
@@ -609,6 +618,12 @@ When `REDIS_URL` is not configured, all operations fall back to synchronous in-r
 | `/api/upload-music` | POST | Upload music (max 50MB, validated formats) | default | required |
 | `/api/render` | POST | Batch FFmpeg render (1 token/output video) — enqueues BullMQ job if Redis available | 300s | required + token deduction |
 | `/api/download-zip` | POST | Bundle rendered videos into a ZIP file | default | required |
+| `/api/avatar/generate-image` | POST | Generate avatar image via kie.ai Nano Banana 2 (2 tokens) | 120s | required + token deduction |
+| `/api/avatar/save` | POST | Save avatar to library (FREE, 0 tokens) | default | required |
+| `/api/avatar/library` | GET | List company's saved avatars (paginated) | default | required |
+| `/api/avatar/library/[id]` | DELETE | Delete avatar from library | default | required |
+| `/api/avatar/generate-voiceover` | POST | Generate voiceover via ElevenLabs TTS (2 tokens) | 60s | required + token deduction |
+| `/api/avatar/generate-video` | POST | Enqueue avatar video generation via BullMQ (10 tokens) | 300s | required + token deduction |
 | `/api/log` | POST | Ingest client-side logs | default | public |
 | `/api/logs` | GET | Retrieve recent log lines | default | required |
 

@@ -9,6 +9,7 @@ import { startRenderWorker } from './render-worker';
 import { startVideoGenWorker } from './video-gen-worker';
 import { startEmailWorker } from './email-worker';
 import { startLongformWorker } from './longform-worker';
+import { startAvatarWorker } from './avatar-worker';
 
 console.log('[Workers] Starting all workers...');
 
@@ -16,8 +17,9 @@ const renderWorker = startRenderWorker();
 const videoGenWorker = startVideoGenWorker();
 const emailWorker = startEmailWorker();
 const longformWorker = startLongformWorker();
+const avatarWorker = startAvatarWorker();
 
-if (!renderWorker && !videoGenWorker && !emailWorker && !longformWorker) {
+if (!renderWorker && !videoGenWorker && !emailWorker && !longformWorker && !avatarWorker) {
   console.error('[Workers] No workers started — is REDIS_URL configured?');
   process.exit(1);
 }
@@ -30,6 +32,7 @@ async function shutdown(signal: string) {
   if (videoGenWorker) closePromises.push(videoGenWorker.close());
   if (emailWorker) closePromises.push(emailWorker.close());
   if (longformWorker) closePromises.push(longformWorker.close());
+  if (avatarWorker) closePromises.push(avatarWorker.close());
 
   try {
     await Promise.allSettled(closePromises);
