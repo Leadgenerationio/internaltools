@@ -97,7 +97,11 @@ async function getPublicUrl(localPath: string): Promise<string | null> {
   try {
     const { uploadFile } = await import('@/lib/storage');
     const storagePath = `longform/${path.basename(localPath)}`;
-    const publicUrl = await uploadFile(localPath, storagePath);
+    // uploadFile deletes the source file when cloud storage is active,
+    // so upload a copy to preserve the original for later pipeline steps
+    const tmpCopy = localPath + '.submagic.tmp';
+    await fs.copyFile(localPath, tmpCopy);
+    const publicUrl = await uploadFile(tmpCopy, storagePath);
     return publicUrl || null;
   } catch {
     return null;

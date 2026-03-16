@@ -160,7 +160,11 @@ export async function POST(request: NextRequest) {
       try {
         const { uploadFile } = await import('@/lib/storage');
         const storagePath = `longform/${path.basename(rawPath)}`;
-        const publicUrl = await uploadFile(rawPath, storagePath);
+        // uploadFile deletes the source file when cloud storage is active,
+        // so upload a copy to preserve assembled.mp4 for the final copy step
+        const uploadCopy = rawPath + '.submagic.tmp';
+        await fs.copyFile(rawPath, uploadCopy);
+        const publicUrl = await uploadFile(uploadCopy, storagePath);
         if (publicUrl) {
           const captionedPath = path.join(tempDir, 'captioned.mp4');
           await captionVideo(publicUrl, captionedPath, captionConfig, 'Longform From Video');
