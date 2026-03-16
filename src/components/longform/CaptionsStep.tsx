@@ -26,6 +26,7 @@ const LANGUAGES = [
 
 export default function CaptionsStep({ captionConfig, onConfigChange, onNext }: Props) {
   const [templates, setTemplates] = useState<string[]>([]);
+  const [presets, setPresets] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -34,9 +35,13 @@ export default function CaptionsStep({ captionConfig, onConfigChange, onNext }: 
     fetch('/api/longform/caption-templates')
       .then((r) => r.json())
       .then((data) => {
-        // API returns string[] — normalize in case of objects
         const raw = data.templates || [];
-        setTemplates(raw.map((t: any) => typeof t === 'string' ? t : t.name || String(t)));
+        const allTemplates: string[] = raw.map((t: any) => typeof t === 'string' ? t : t.name || String(t));
+        const presetNames: string[] = data.presets || [];
+        setPresets(presetNames);
+        // Exclude presets from the main template list so they aren't shown twice
+        const presetSet = new Set(presetNames.map((p) => p.toLowerCase()));
+        setTemplates(allTemplates.filter((t) => !presetSet.has(t.toLowerCase())));
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -76,9 +81,31 @@ export default function CaptionsStep({ captionConfig, onConfigChange, onNext }: 
 
       {captionConfig.enabled && (
         <div className="space-y-4">
+          {/* My Presets section */}
+          {presets.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">My Presets</label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {presets.map((name) => (
+                  <button
+                    key={name}
+                    onClick={() => update({ template: name })}
+                    className={`px-3 py-3 rounded-lg border text-sm font-medium text-left transition-colors ${
+                      captionConfig.template === name
+                        ? 'border-green-500 bg-green-600/10 text-green-400'
+                        : 'border-green-800/50 text-gray-300 hover:text-white hover:border-green-600/60 bg-green-900/10'
+                    }`}
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Template selection */}
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Caption Template</label>
+            <label className="block text-sm font-medium text-gray-300 mb-2">All Templates</label>
             {loading ? (
               <div className="text-sm text-gray-500">Loading templates...</div>
             ) : (
