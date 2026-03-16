@@ -7,6 +7,7 @@ import Link from 'next/link';
 import UserMenu from '@/components/UserMenu';
 
 type WizardStep = 'upload' | 'review' | 'done';
+type CutMode = 'auto' | 'manual';
 
 const STEPS: { id: WizardStep; label: string }[] = [
   { id: 'upload', label: 'Upload' },
@@ -52,6 +53,7 @@ export default function VideoCutupPage() {
   }, [status, router]);
 
   const [step, setStep] = useState<WizardStep>('upload');
+  const [cutMode, setCutMode] = useState<CutMode>('auto');
 
   // Upload state
   const [video, setVideo] = useState<UploadedFile | null>(null);
@@ -63,7 +65,11 @@ export default function VideoCutupPage() {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
-  const [threshold, setThreshold] = useState(0.3);
+
+  // Manual cut state
+  const [cutPoints, setCutPoints] = useState<number[]>([]);
+  const [currentTime, setCurrentTime] = useState(0);
+  const manualVideoRef = useRef<HTMLVideoElement>(null);
 
   // Splitting state
   const [splitting, setSplitting] = useState(false);
@@ -123,9 +129,9 @@ export default function VideoCutupPage() {
     }
   }, [handleUpload]);
 
-  // ── Analyze ───────────────────────────────────────────────────────────────
+  // ── Auto Analyze ────────────────────────────────────────────────────────
 
-  const handleAnalyze = useCallback(async () => {
+  const handleAutoAnalyze = useCallback(async () => {
     if (!video) return;
     setAnalyzing(true);
     setAnalyzeError(null);
@@ -135,7 +141,7 @@ export default function VideoCutupPage() {
       const res = await fetch('/api/video-cutup/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ videoPath: video.path, threshold }),
+        body: JSON.stringify({ videoPath: video.path, threshold: 0.1 }), // Always high sensitivity
       });
 
       if (!res.ok) {
@@ -155,7 +161,50 @@ export default function VideoCutupPage() {
     } finally {
       setAnalyzing(false);
     }
-  }, [video, threshold]);
+  }, [video]);
+
+  // ── Manual Cut ──────────────────────────────────────────────────────────
+
+  const handleManualTimeUpdate = () => {
+    if (manualVideoRef.current) {
+      setCurrentTime(manualVideoRef.current.currentTime);
+    }
+  };
+
+  const addCutPoint = () => {
+    if (!video) return;
+    const time = manualVideoRef.current?.currentTime ?? 0;
+    // Avoid duplicate cuts too close together (<0.5s)
+    if (cutPoints.some((cp) => Math.abs(cp - time) < 0.5)) return;
+    setCutPoints((prev) => [...prev, time].sort((a, b) => a - b));
+  };
+
+  const removeCutPoint = (index: number) => {
+    setCutPoints((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleManualProceed = () => {
+    if (!video || cutPoints.length === 0) return;
+
+    // Build segments from cut points
+    const points = [0, ...cutPoints, video.duration];
+    const segs: Segment[] = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      const start = points[i];
+      const end = points[i + 1];
+      if (end - start < 0.3) continue; // Skip tiny segments
+      segs.push({
+        index: segs.length,
+        startTime: start,
+        endTime: end,
+        duration: end - start,
+        thumbnailUrl: '',
+        selected: true,
+      });
+    }
+    setSegments(segs);
+    setStep('review');
+  };
 
   // ── Split & Save ──────────────────────────────────────────────────────────
 
@@ -242,6 +291,20 @@ export default function VideoCutupPage() {
     return `${mins}:${String(secs).padStart(2, '0')}.${ms}`;
   };
 
+  // ── Reset ─────────────────────────────────────────────────────────────────
+
+  const resetAll = () => {
+    setStep('upload');
+    setVideo(null);
+    setSegments([]);
+    setSavedClips([]);
+    setFailedCount(0);
+    setPreviewSegment(null);
+    setCutPoints([]);
+    setAnalyzeError(null);
+    setSplitError(null);
+  };
+
   // ── Loading ───────────────────────────────────────────────────────────────
 
   if (status === 'loading' || status === 'unauthenticated') {
@@ -291,7 +354,7 @@ export default function VideoCutupPage() {
           <div className="space-y-6">
             <div>
               <h2 className="text-2xl font-bold text-white mb-1">Video Cut Up</h2>
-              <p className="text-gray-400 text-sm">Upload a video and we'll automatically detect scenes. Pick the clips you want to save to your media library.</p>
+              <p className="text-gray-400 text-sm">Upload a video, then auto-detect or manually cut scenes. Clips are saved to your media library.</p>
             </div>
 
             {/* Drop zone */}
@@ -334,9 +397,9 @@ export default function VideoCutupPage() {
               </div>
             )}
 
-            {/* Uploaded video preview */}
+            {/* Uploaded video — mode selection */}
             {video && (
-              <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-5">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     {video.thumbnail && (
@@ -350,55 +413,126 @@ export default function VideoCutupPage() {
                     </div>
                   </div>
                   <button
-                    onClick={() => { setVideo(null); setSegments([]); setAnalyzeError(null); }}
+                    onClick={() => { setVideo(null); setSegments([]); setCutPoints([]); setAnalyzeError(null); }}
                     className="text-gray-500 hover:text-gray-300 transition-colors text-sm"
                   >
                     Remove
                   </button>
                 </div>
 
-                {/* Sensitivity slider */}
-                <div>
-                  <label className="text-sm text-gray-400">
-                    Scene Detection Sensitivity: <span className="text-white font-medium">{threshold < 0.25 ? 'High' : threshold < 0.45 ? 'Medium' : 'Low'}</span>
-                  </label>
-                  <p className="text-xs text-gray-500 mb-2">Higher sensitivity = more cuts detected</p>
-                  <input
-                    type="range"
-                    min="0.1"
-                    max="0.7"
-                    step="0.05"
-                    value={threshold}
-                    onChange={(e) => setThreshold(Number(e.target.value))}
-                    className="w-full accent-blue-500"
-                    style={{ direction: 'rtl' }}
-                  />
-                  <div className="flex justify-between text-xs text-gray-600 mt-1">
-                    <span>More cuts</span>
-                    <span>Fewer cuts</span>
-                  </div>
+                {/* Mode toggle */}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setCutMode('auto')}
+                    className={`flex-1 px-4 py-3 rounded-xl border text-sm font-medium text-left transition-colors ${
+                      cutMode === 'auto'
+                        ? 'border-blue-600 bg-blue-600/10 text-blue-400'
+                        : 'border-gray-700 text-gray-400 hover:border-gray-600'
+                    }`}
+                  >
+                    <div className="font-medium">Auto Detect</div>
+                    <div className="text-xs text-gray-500 mt-0.5">High sensitivity scene detection</div>
+                  </button>
+                  <button
+                    onClick={() => setCutMode('manual')}
+                    className={`flex-1 px-4 py-3 rounded-xl border text-sm font-medium text-left transition-colors ${
+                      cutMode === 'manual'
+                        ? 'border-blue-600 bg-blue-600/10 text-blue-400'
+                        : 'border-gray-700 text-gray-400 hover:border-gray-600'
+                    }`}
+                  >
+                    <div className="font-medium">Manual Cut</div>
+                    <div className="text-xs text-gray-500 mt-0.5">Play video and press cut where you want</div>
+                  </button>
                 </div>
 
-                {analyzeError && (
-                  <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-4 py-3 rounded-lg">
-                    {analyzeError}
-                  </div>
+                {/* Auto mode */}
+                {cutMode === 'auto' && (
+                  <>
+                    {analyzeError && (
+                      <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm px-4 py-3 rounded-lg">
+                        {analyzeError}
+                      </div>
+                    )}
+                    <button
+                      onClick={handleAutoAnalyze}
+                      disabled={analyzing}
+                      className="w-full sm:w-auto px-8 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+                    >
+                      {analyzing ? (
+                        <span className="flex items-center justify-center gap-2">
+                          <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          Detecting Scenes...
+                        </span>
+                      ) : (
+                        'Detect Scenes'
+                      )}
+                    </button>
+                  </>
                 )}
 
-                <button
-                  onClick={handleAnalyze}
-                  disabled={analyzing}
-                  className="w-full sm:w-auto px-8 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
-                >
-                  {analyzing ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Detecting Scenes...
-                    </span>
-                  ) : (
-                    'Detect Scenes'
-                  )}
-                </button>
+                {/* Manual mode */}
+                {cutMode === 'manual' && (
+                  <div className="space-y-4">
+                    <div className="bg-black rounded-xl overflow-hidden">
+                      <video
+                        ref={manualVideoRef}
+                        src={video.path}
+                        controls
+                        muted
+                        className="w-full max-h-[320px] mx-auto"
+                        preload="metadata"
+                        onTimeUpdate={handleManualTimeUpdate}
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={addCutPoint}
+                        className="px-6 py-2.5 bg-red-600 hover:bg-red-500 text-white font-medium rounded-lg transition-colors flex items-center gap-2"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M7.848 8.25l1.536.887M7.848 8.25a3 3 0 11-5.196-3 3 3 0 015.196 3zm1.536.887a2.165 2.165 0 011.083 1.839c.005.351.054.695.14 1.024M9.384 9.137l2.077 1.199M7.848 15.75l1.536-.887m-1.536.887a3 3 0 11-5.196 3 3 3 0 015.196-3zm1.536-.887a2.165 2.165 0 001.083-1.838c.005-.352.054-.695.14-1.025m-1.223 2.863l2.077-1.199m0-3.328a4.323 4.323 0 012.068-1.379l5.325-1.628a4.5 4.5 0 012.48-.044l.803.215-7.794 4.5m-2.882-1.664A4.331 4.331 0 0010.607 12m3.736 0l7.794 4.5-.802.215a4.5 4.5 0 01-2.48-.043l-5.326-1.629a4.324 4.324 0 01-2.068-1.379M14.343 12l-2.882 1.664" />
+                        </svg>
+                        Cut at {formatTime(currentTime)}
+                      </button>
+                      <span className="text-sm text-gray-500">{cutPoints.length} cut{cutPoints.length !== 1 ? 's' : ''} added</span>
+                    </div>
+
+                    {/* Cut points list */}
+                    {cutPoints.length > 0 && (
+                      <div className="space-y-1.5">
+                        <label className="text-sm text-gray-400 font-medium">Cut Points</label>
+                        <div className="flex flex-wrap gap-2">
+                          {cutPoints.map((cp, i) => (
+                            <div
+                              key={i}
+                              className="flex items-center gap-1.5 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5"
+                            >
+                              <span className="text-sm text-white">{formatTime(cp)}</span>
+                              <button
+                                onClick={() => removeCutPoint(i)}
+                                className="text-gray-500 hover:text-red-400 transition-colors"
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <button
+                      onClick={handleManualProceed}
+                      disabled={cutPoints.length === 0}
+                      className="w-full sm:w-auto px-8 py-3 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors"
+                    >
+                      Review {cutPoints.length + 1} Clip{cutPoints.length !== 0 ? 's' : ''}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -412,7 +546,7 @@ export default function VideoCutupPage() {
             <div>
               <h2 className="text-2xl font-bold text-white mb-1">Review Clips</h2>
               <p className="text-gray-400 text-sm">
-                {segments.length} scene{segments.length !== 1 ? 's' : ''} detected in <span className="text-white">{video.originalName}</span>. Select which clips to save.
+                {segments.length} clip{segments.length !== 1 ? 's' : ''} from <span className="text-white">{video.originalName}</span>. Select which to save.
               </p>
             </div>
 
@@ -464,7 +598,6 @@ export default function VideoCutupPage() {
                       : 'border-gray-700 opacity-50 hover:opacity-75'
                   }`}
                 >
-                  {/* Thumbnail / click to toggle */}
                   <button
                     onClick={() => toggleSegment(seg.index)}
                     className="w-full text-left"
@@ -487,7 +620,6 @@ export default function VideoCutupPage() {
                     </div>
                   </button>
 
-                  {/* Preview button */}
                   <button
                     onClick={(e) => { e.stopPropagation(); handlePreview(seg); }}
                     className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/60 hover:bg-black/80 flex items-center justify-center text-white opacity-0 group-hover:opacity-100 transition-opacity"
@@ -496,7 +628,6 @@ export default function VideoCutupPage() {
                     <svg className="w-3.5 h-3.5 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
                   </button>
 
-                  {/* Selection checkbox */}
                   {seg.selected && (
                     <div className="absolute top-2 left-2 w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center">
                       <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
@@ -574,14 +705,7 @@ export default function VideoCutupPage() {
 
             <div className="flex gap-3">
               <button
-                onClick={() => {
-                  setStep('upload');
-                  setVideo(null);
-                  setSegments([]);
-                  setSavedClips([]);
-                  setFailedCount(0);
-                  setPreviewSegment(null);
-                }}
+                onClick={resetAll}
                 className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors"
               >
                 Cut Another Video
