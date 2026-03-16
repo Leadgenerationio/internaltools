@@ -56,6 +56,19 @@ const AD_MODELS: AdModel[] = [
     tag: 'New',
   },
   {
+    id: 'avatar-video',
+    name: 'Avatar Video Creator',
+    description: 'Create AI avatar videos with lip-sync. Generate an avatar, add your script and voiceover, and produce talking-head video ads.',
+    href: '/create/avatar-video',
+    icon: (
+      <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+      </svg>
+    ),
+    available: true,
+    tag: 'New',
+  },
+  {
     id: 'video-cutup',
     name: 'Video Cut Up',
     description: 'Upload a video, auto-detect scenes, and save the clips you want to your media library. Free — no tokens needed.',
