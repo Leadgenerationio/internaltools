@@ -171,8 +171,6 @@ export async function downloadResult(
   const fsMod = await import('fs');
   const fsp = await import('fs/promises');
   const pathMod = await import('path');
-  const { pipeline } = await import('stream/promises');
-  const { Readable } = await import('stream');
 
   await fsp.mkdir(pathMod.dirname(outputPath), { recursive: true });
 
@@ -187,10 +185,24 @@ export async function downloadResult(
     if (!res.ok) throw new Error(`Submagic download failed (${res.status})`);
     if (!res.body) throw new Error('Submagic download returned empty body');
 
-    // Stream to disk instead of buffering entire video in memory
-    const nodeStream = Readable.fromWeb(res.body as any);
-    const writeStream = fsMod.createWriteStream(outputPath);
-    await pipeline(nodeStream, writeStream);
+    // Write to disk — try streaming first, fall back to buffer
+    let written = false;
+    try {
+      const { Readable } = await import('stream');
+      if (typeof Readable.fromWeb === 'function') {
+        const { pipeline } = await import('stream/promises');
+        const nodeStream = Readable.fromWeb(res.body as any);
+        const writeStream = fsMod.createWriteStream(outputPath);
+        await pipeline(nodeStream, writeStream);
+        written = true;
+      }
+    } catch { /* Readable.fromWeb not available in this runtime */ }
+
+    if (!written) {
+      // Fallback: buffer then write (works in all Node.js versions / Next.js standalone)
+      const buffer = Buffer.from(await res.arrayBuffer());
+      await fsp.writeFile(outputPath, buffer);
+    }
 
     // Validate the downloaded file
     const stat = await fsp.stat(outputPath);
