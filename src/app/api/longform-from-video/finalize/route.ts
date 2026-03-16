@@ -156,23 +156,36 @@ export async function POST(request: NextRequest) {
     // Captions via Submagic (optional)
     let finalPath = rawPath;
     let captioned = false;
+    let captionWarning: string | undefined;
     if (captionConfig?.enabled && process.env.SUBMAGIC_API_KEY) {
       try {
-        const { uploadFile } = await import('@/lib/storage');
-        const storagePath = `longform/${path.basename(rawPath)}`;
-        // uploadFile deletes the source file when cloud storage is active,
-        // so upload a copy to preserve assembled.mp4 for the final copy step
-        const uploadCopy = rawPath + '.submagic.tmp';
-        await fs.copyFile(rawPath, uploadCopy);
-        const publicUrl = await uploadFile(uploadCopy, storagePath);
-        if (publicUrl) {
-          const captionedPath = path.join(tempDir, 'captioned.mp4');
-          await captionVideo(publicUrl, captionedPath, captionConfig, 'Longform From Video');
-          finalPath = captionedPath;
-          captioned = true;
+        const { isCloudStorage, uploadFile } = await import('@/lib/storage');
+        if (!isCloudStorage) {
+          captionWarning = 'Captions require cloud storage (S3) — Submagic needs a publicly accessible URL. Configure S3_BUCKET and S3_PUBLIC_URL.';
+          console.warn(`[longform-from-video] ${captionWarning}`);
+        } else {
+          const storagePath = `longform/${path.basename(rawPath)}`;
+          // uploadFile deletes the source file when cloud storage is active,
+          // so upload a copy to preserve assembled.mp4 for the final copy step
+          const uploadCopy = rawPath + '.submagic.tmp';
+          await fs.copyFile(rawPath, uploadCopy);
+          const publicUrl = await uploadFile(uploadCopy, storagePath);
+
+          if (!publicUrl || !publicUrl.startsWith('http')) {
+            captionWarning = `Captions skipped: S3_PUBLIC_URL not configured — Submagic needs an absolute URL (got: ${publicUrl?.slice(0, 80)})`;
+            console.warn(`[longform-from-video] ${captionWarning}`);
+          } else {
+            console.log(`[longform-from-video] Sending to Submagic: ${publicUrl.slice(0, 120)}`);
+            const captionedPath = path.join(tempDir, 'captioned.mp4');
+            await captionVideo(publicUrl, captionedPath, captionConfig, 'Longform From Video');
+            finalPath = captionedPath;
+            captioned = true;
+            console.log('[longform-from-video] Submagic captioning complete');
+          }
         }
       } catch (err: any) {
-        console.warn('[longform-from-video] Captioning failed:', err.message);
+        captionWarning = `Captioning failed: ${err.message}`;
+        console.error('[longform-from-video] Captioning failed:', err.message);
       }
     }
 
@@ -185,7 +198,9 @@ export async function POST(request: NextRequest) {
     try {
       const { isCloudStorage, uploadFile } = await import('@/lib/storage');
       if (isCloudStorage) {
-        await uploadFile(outputDest, `outputs/${outputFilename}`);
+        const tmpCopy = outputDest + '.s3upload.tmp';
+        await fs.copyFile(outputDest, tmpCopy);
+        await uploadFile(tmpCopy, `outputs/${outputFilename}`);
       }
     } catch { /* local fallback */ }
 
@@ -199,6 +214,7 @@ export async function POST(request: NextRequest) {
         durationSeconds: duration,
       }],
       failed: 0,
+      ...(captionWarning && { warning: captionWarning }),
     });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Finalize failed' }, { status: 500 });

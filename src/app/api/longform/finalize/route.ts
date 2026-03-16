@@ -329,7 +329,11 @@ async function downloadFile(url: string, label: string): Promise<Buffer> {
 
 async function getPublicUrl(localPath: string): Promise<string | null> {
   try {
-    const { uploadFile } = await import('@/lib/storage');
+    const { isCloudStorage, uploadFile } = await import('@/lib/storage');
+    if (!isCloudStorage) {
+      console.warn('[longform] getPublicUrl: cloud storage not configured, captions require S3');
+      return null;
+    }
     const path = require('path');
     const fs = require('fs/promises');
     const storagePath = `longform/${path.basename(localPath)}`;
@@ -338,8 +342,14 @@ async function getPublicUrl(localPath: string): Promise<string | null> {
     const tmpCopy = localPath + '.submagic.tmp';
     await fs.copyFile(localPath, tmpCopy);
     const publicUrl = await uploadFile(tmpCopy, storagePath);
+    // Submagic requires an absolute HTTP URL
+    if (publicUrl && !publicUrl.startsWith('http')) {
+      console.warn(`[longform] getPublicUrl: S3_PUBLIC_URL not set, got relative URL: ${publicUrl.slice(0, 80)}`);
+      return null;
+    }
     return publicUrl || null;
-  } catch {
+  } catch (err: any) {
+    console.error('[longform] getPublicUrl failed:', err.message);
     return null;
   }
 }

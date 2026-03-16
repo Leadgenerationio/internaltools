@@ -95,15 +95,25 @@ async function uploadToApp(localPath: string, filename: string): Promise<void> {
 
 async function getPublicUrl(localPath: string): Promise<string | null> {
   try {
-    const { uploadFile } = await import('@/lib/storage');
+    const { isCloudStorage, uploadFile } = await import('@/lib/storage');
+    if (!isCloudStorage) {
+      logger.warn('[Longform] getPublicUrl: cloud storage not configured, captions require S3');
+      return null;
+    }
     const storagePath = `longform/${path.basename(localPath)}`;
     // uploadFile deletes the source file when cloud storage is active,
     // so upload a copy to preserve the original for later pipeline steps
     const tmpCopy = localPath + '.submagic.tmp';
     await fs.copyFile(localPath, tmpCopy);
     const publicUrl = await uploadFile(tmpCopy, storagePath);
+    // Submagic requires an absolute HTTP URL
+    if (publicUrl && !publicUrl.startsWith('http')) {
+      logger.warn(`[Longform] getPublicUrl: S3_PUBLIC_URL not set, got relative URL: ${publicUrl.slice(0, 80)}`);
+      return null;
+    }
     return publicUrl || null;
-  } catch {
+  } catch (err: any) {
+    logger.error('[Longform] getPublicUrl failed:', { error: err.message });
     return null;
   }
 }

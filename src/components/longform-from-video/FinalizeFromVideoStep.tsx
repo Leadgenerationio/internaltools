@@ -55,6 +55,7 @@ export default function FinalizeFromVideoStep({
 }: Props) {
   const [producing, setProducing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   const [progressMsg, setProgressMsg] = useState('');
   const [progressPct, setProgressPct] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -123,6 +124,11 @@ export default function FinalizeFromVideoStep({
         // Sync path
         onResults(data.videos);
       }
+
+      // Show captioning warnings
+      if (data.warning) {
+        setWarning(data.warning);
+      }
     } catch (err: any) {
       if (err.name === 'AbortError') {
         setError('Cancelled');
@@ -157,6 +163,11 @@ export default function FinalizeFromVideoStep({
           <h2 className="text-2xl font-bold mb-1">Your Video Is Ready</h2>
           <p className="text-gray-400 text-sm">Video produced successfully.</p>
         </div>
+        {warning && (
+          <div className="bg-yellow-900/30 border border-yellow-700 rounded-lg px-4 py-3 text-yellow-300 text-sm">
+            {warning}
+          </div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
           {results.map((r, idx) => (
             <div key={idx} className="bg-gray-800/60 rounded-xl overflow-hidden border border-gray-700/50">
