@@ -118,10 +118,8 @@ export async function POST(request: NextRequest) {
           const clipPath = path.join(tempDir, `broll_${i}.mp4`);
           const res = await fetch(resolveUrl(scene.clipUrl));
           if (res.ok && res.body) {
-            const { Readable } = await import('stream');
-            const { pipeline } = await import('stream/promises');
-            const fsMod = await import('fs');
-            await pipeline(Readable.fromWeb(res.body as any), fsMod.createWriteStream(clipPath));
+            const buffer = Buffer.from(await res.arrayBuffer());
+            await fs.writeFile(clipPath, buffer);
             clipPaths.push(clipPath);
           } else {
             throw new Error(`Failed to download b-roll for scene ${i}`);
