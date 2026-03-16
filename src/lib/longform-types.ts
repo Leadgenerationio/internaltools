@@ -60,7 +60,7 @@ export interface CaptionConfig {
 
 export const DEFAULT_CAPTION_CONFIG: CaptionConfig = {
   enabled: true,
-  template: 'Kendrick Pre-Set',
+  template: 'Kendrick',
   language: 'en',
   magicZooms: true,
   cleanAudio: false,
