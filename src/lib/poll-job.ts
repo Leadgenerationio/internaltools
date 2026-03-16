@@ -26,7 +26,7 @@ const LONGFORM_MAX_POLL_MS = 45 * 60 * 1000; // 45 minutes for longform (multi-v
  */
 export async function pollJob(
   jobId: string,
-  type: 'render' | 'video-gen' | 'longform',
+  type: 'render' | 'video-gen' | 'longform' | 'avatar',
   options: {
     onProgress?: (progress: number, state: JobState) => void;
     signal?: AbortSignal;

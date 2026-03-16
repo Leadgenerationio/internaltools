@@ -59,6 +59,23 @@ export function getLongformQueue(): Queue | null {
 }
 
 /**
+ * Get the avatar queue. Returns null if Redis unavailable.
+ * Each queue gets its own dedicated Redis connection (BullMQ requirement).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let avatarQueue: Queue<any> | null = null;
+
+export function getAvatarQueue(): Queue | null {
+  if (avatarQueue) return avatarQueue;
+
+  const connection = createRedisConnection();
+  if (!connection) return null;
+
+  avatarQueue = new Queue('avatar', { connection: connection as any });
+  return avatarQueue;
+}
+
+/**
  * Check if background job processing is available.
  */
 export function isQueueAvailable(): boolean {

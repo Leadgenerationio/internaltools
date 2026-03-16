@@ -93,6 +93,7 @@ Built for producing Facebook/Meta ad content at scale — users create accounts 
 | Overlay rendering | @napi-rs/canvas | Text-to-PNG with emoji support |
 | AI copy generation | Anthropic SDK (Claude Sonnet) | TOFU/MOFU/BOFU ad scripts |
 | AI video generation | kie.ai REST API (Seedance 1.5, Kling 2.6, Veo 3.1 Fast/Quality, Sora 2/Pro) | Optional AI background videos + longform b-roll (user-selectable model with dynamic token pricing). Automatic model fallback on capacity/overload errors: veo3_fast → seedance-1.5-pro → kling-2.6 (`src/lib/kie-api.ts`) |
+| AI image generation | kie.ai REST API (Nano Banana 2) | Avatar image generation and product angle grids (`src/lib/kie-image-api.ts`) |
 | Voiceover | ElevenLabs TTS API | Text-to-speech for longform video scripts |
 | Captioning | Submagic API | Auto-captions for longform video — applied during reassemble/finalize step only (deferred captioning), not during initial generation. Triggers POST /projects/{id}/export when status=completed but no downloadUrl, streams downloads (3-min timeout), checks directUrl fallback. |
 | Background jobs | BullMQ + Redis (ioredis) | Async render + video gen + longform pipeline, survives page refresh |
@@ -373,12 +374,14 @@ src/
 │   ├── redis.ts                      # ioredis singleton (lazy, graceful fallback)
 │   ├── rate-limit.ts                 # Redis sorted-set sliding window rate limiter
 │   ├── cache.ts                      # Redis-backed TTL cache (company info, unread counts)
-│   ├── queue.ts                      # BullMQ queue setup (renderQueue, videoGenQueue, longformQueue)
-│   ├── job-types.ts                  # Type-safe job payloads (RenderJobData, VideoGenJobData, LongformJobData, JobStatus)
+│   ├── queue.ts                      # BullMQ queue setup (renderQueue, videoGenQueue, longformQueue, avatarQueue)
+│   ├── job-types.ts                  # Type-safe job payloads (RenderJobData, VideoGenJobData, LongformJobData, AvatarImageGenData, JobStatus)
 │   ├── email-queue.ts                # BullMQ email queue with fallback to direct send
 │   ├── poll-job.ts                   # Client-side job polling with exponential backoff (render/video-gen max 20min, longform max 45min)
 │   ├── longform-types.ts             # Types for the longform video pipeline (LongformScene, LongformSceneRegenData, LongformReassembleData)
 │   ├── kie-api.ts                    # Shared kie.ai API helpers (submit, poll, download, model fallback — used by video-gen + longform)
+│   ├── kie-image-api.ts              # kie.ai image generation (Nano Banana 2) — avatar images + product angle grids
+│   ├── avatar-types.ts               # Types for avatar video creator (AvatarWizardStep, AvatarVideoState, AvatarItem, ProductAngle)
 │   ├── elevenlabs.ts                 # ElevenLabs TTS client (text-to-speech)
 │   ├── submagic.ts                   # Submagic captioning client (sole caption provider for longform video). Triggers export when status=completed but no downloadUrl, streams downloads via Readable.fromWeb + pipeline (3-min timeout), checks directUrl fallback.
 │   ├── path-utils.ts                 # Shared utility: extractPublicPath() converts any URL format (CDN, S3, Supabase, /api/files, relative) to a public-relative file path. Consolidates 4 previously duplicated implementations.
@@ -390,7 +393,7 @@ src/
 │   ├── longform-worker.ts            # Longform pipeline processor — handles 3 job types on one queue: longform-video (full pipeline, no captions), longform-scene-regen (single scene), longform-reassemble (re-stitch + caption via Submagic). Concurrency: 1. Uploads to S3 when configured.
 │   └── email-worker.ts              # Email job processor (3 retries, exponential backoff)
 ├── prisma/
-│   ├── schema.prisma                 # Data models: Company, User, Session, ApiUsage, SupportTicket, TicketMessage, AdminAuditLog, Notification, ProjectTemplate, PasswordResetToken, ProcessedWebhookEvent, SpendAlertLog
+│   ├── schema.prisma                 # Data models: Company, User, Session, ApiUsage, SupportTicket, TicketMessage, AdminAuditLog, Notification, ProjectTemplate, PasswordResetToken, ProcessedWebhookEvent, SpendAlertLog, Avatar
 │   └── migrations/                   # Database migrations
 └── auth.config.ts                    # NextAuth v5 configuration
 ```
@@ -506,9 +509,9 @@ Job completed → results shown
 ```
 
 ### Key files
-- `src/lib/queue.ts` — Queue factory (renderQueue, videoGenQueue, longformQueue)
-- `src/lib/job-types.ts` — Type-safe job payloads (RenderJobData, VideoGenJobData, LongformJobData, JobStatus)
-- `src/lib/poll-job.ts` — Client-side polling utility with exponential backoff (render/video-gen max 20min, longform max 45min)
+- `src/lib/queue.ts` — Queue factory (renderQueue, videoGenQueue, longformQueue, avatarQueue)
+- `src/lib/job-types.ts` — Type-safe job payloads (RenderJobData, VideoGenJobData, LongformJobData, AvatarImageGenData/AvatarProductGridData/AvatarVideoGenData, JobStatus)
+- `src/lib/poll-job.ts` — Client-side polling utility with exponential backoff (render/video-gen/avatar max 20min, longform max 45min)
 - `src/workers/index.ts` — Worker entry point
 - `src/workers/render-worker.ts` — Render job processor
 - `src/workers/video-gen-worker.ts` — Video gen job processor

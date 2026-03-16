@@ -41,6 +41,7 @@ model Company {
   tokenTopups        TokenTopup[]
   supportTickets     SupportTicket[]
   adminAuditLogs     AdminAuditLog[] @relation("AuditTargetCompany")
+  avatars            Avatar[]
 
   @@index([slug])
 }
@@ -79,6 +80,7 @@ model User {
   notifications      Notification[]
   supportTickets     SupportTicket[]
   ticketMessages     TicketMessage[]
+  avatars            Avatar[]
 
   @@index([companyId])
   @@index([email])
@@ -530,4 +532,23 @@ model ProjectTemplate {
 
   @@index([companyId])
   @@index([isSystem])
+}
+
+// ─── Avatars ────────────────────────────────────────────────
+
+model Avatar {
+  id           String   @id @default(cuid())
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  prompt       String?
+  imageUrl     String
+  thumbnailUrl String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([userId])
 }

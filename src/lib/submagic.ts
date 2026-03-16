@@ -76,9 +76,6 @@ export async function createProject(
       magicZooms: config.magicZooms,
       magicBrolls: config.magicBrolls ?? false,
       cleanAudio: config.cleanAudio,
-      ...(config.transitions != null && { transitions: config.transitions }),
-      ...(config.fontSize && { fontSize: config.fontSize }),
-      ...(config.position && { position: config.position }),
       ...(dictionary && { dictionary: dictionary.slice(0, 100) }),
     }),
   });

@@ -29,6 +29,14 @@ export const TOKEN_COSTS = {
   LONGFORM_SCRIPTS: 0,
   /** Longform voiceover generation (per script) — new wizard flow */
   LONGFORM_VOICEOVER: 2,
+  /** Avatar image generation (Nano Banana 2) */
+  AVATAR_IMAGE: 2,
+  /** Product angle grid (9 images batch) */
+  AVATAR_PRODUCT_GRID: 5,
+  /** Avatar voiceover (ElevenLabs TTS) */
+  AVATAR_VOICEOVER: 2,
+  /** Avatar video generation (Creatify Aurora) */
+  AVATAR_VIDEO: 10,
 } as const;
 
 export type TokenOperation = keyof typeof TOKEN_COSTS;

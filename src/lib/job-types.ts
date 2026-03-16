@@ -201,16 +201,60 @@ export interface LongformFromVideoFinalizeResult {
   failed: number;
 }
 
+// ─── Avatar Jobs ────────────────────────────────────────────────────────────
+
+export interface AvatarImageGenData {
+  companyId: string;
+  userId: string;
+  prompt: string;
+  referenceImageUrls?: string[];
+  tokenCost: number;
+}
+
+export interface AvatarImageGenResult {
+  imageUrl: string;
+  filename: string;
+  tokensUsed: number;
+}
+
+export interface AvatarProductGridData {
+  companyId: string;
+  userId: string;
+  productImageUrl: string;
+  tokenCost: number;
+}
+
+export interface AvatarProductGridResult {
+  angles: Array<{ url: string; label: string }>;
+  failed: number;
+  tokensUsed: number;
+}
+
+export interface AvatarVideoGenData {
+  companyId: string;
+  userId: string;
+  avatarImageUrl: string;
+  voiceoverUrl: string;
+  productAngles?: string[];
+  tokenCost: number;
+}
+
+export interface AvatarVideoGenResult {
+  videoUrl: string;
+  durationSeconds: number;
+  tokensUsed: number;
+}
+
 // ─── Job Status (returned by /api/jobs/[id]) ─────────────────────────────────
 
-export type JobType = 'render' | 'video-gen' | 'longform';
+export type JobType = 'render' | 'video-gen' | 'longform' | 'avatar';
 
 export interface JobStatus {
   id: string;
   type: JobType;
   state: 'waiting' | 'active' | 'completed' | 'failed';
   progress: number; // 0-100
-  result?: RenderJobResult | VideoGenJobResult | LongformJobResult | LongformFinalizeResult;
+  result?: RenderJobResult | VideoGenJobResult | LongformJobResult | LongformFinalizeResult | AvatarImageGenResult | AvatarProductGridResult | AvatarVideoGenResult;
   error?: string;
   createdAt: number; // timestamp ms
 }
