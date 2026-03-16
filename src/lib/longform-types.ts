@@ -56,6 +56,8 @@ export interface CaptionConfig {
   language: string;        // e.g. "en"
   magicZooms: boolean;
   cleanAudio: boolean;
+  fontSize?: number;       // px, e.g. 33
+  position?: string;       // "bottom" | "center" | "top"
 }
 
 export const DEFAULT_CAPTION_CONFIG: CaptionConfig = {
@@ -64,6 +66,8 @@ export const DEFAULT_CAPTION_CONFIG: CaptionConfig = {
   language: 'en',
   magicZooms: true,
   cleanAudio: false,
+  fontSize: 33,
+  position: 'bottom',
 };
 
 // ─── Scene (individual b-roll clip) ─────────────────────────────────────────

@@ -76,6 +76,8 @@ export async function createProject(
       magicZooms: config.magicZooms,
       magicBrolls: false, // we supply our own b-roll
       cleanAudio: config.cleanAudio,
+      ...(config.fontSize && { fontSize: config.fontSize }),
+      ...(config.position && { position: config.position }),
       ...(dictionary && { dictionary: dictionary.slice(0, 100) }),
     }),
   });

@@ -127,6 +127,36 @@ export default function CaptionsStep({ captionConfig, onConfigChange, onNext }: 
             )}
           </div>
 
+          {/* Font Size & Position */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Font Size</label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min={16}
+                  max={60}
+                  value={captionConfig.fontSize || 33}
+                  onChange={(e) => update({ fontSize: parseInt(e.target.value) })}
+                  className="flex-1 accent-blue-600"
+                />
+                <span className="text-sm text-gray-400 w-12 text-right">{captionConfig.fontSize || 33}px</span>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Position</label>
+              <select
+                value={captionConfig.position || 'bottom'}
+                onChange={(e) => update({ position: e.target.value })}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-white"
+              >
+                <option value="bottom">Bottom</option>
+                <option value="center">Center</option>
+                <option value="top">Top</option>
+              </select>
+            </div>
+          </div>
+
           {/* Language */}
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">Caption Language</label>
