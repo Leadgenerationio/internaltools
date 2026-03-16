@@ -51,7 +51,7 @@ function PageContent() {
   // Step 4: Captions
   const [captionConfig, setCaptionConfig] = useState<CaptionConfig>({
     enabled: true,
-    template: 'Hormozi 3',
+    template: 'Kendrick Pre-Set',
     language: 'en',
     magicZooms: true,
     cleanAudio: false,
@@ -115,7 +115,7 @@ function PageContent() {
     setScenes([]);
     setFullTranscript('');
     setMusic(null);
-    setCaptionConfig({ enabled: true, template: 'Hormozi 3', language: 'en', magicZooms: true, cleanAudio: false });
+    setCaptionConfig({ enabled: true, template: 'Kendrick Pre-Set', language: 'en', magicZooms: true, cleanAudio: false });
     setAspectRatio('9:16');
     setResults([]);
     localStorage.removeItem(STORAGE_KEY);

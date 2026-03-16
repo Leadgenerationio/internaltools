@@ -60,7 +60,7 @@ export interface CaptionConfig {
 
 export const DEFAULT_CAPTION_CONFIG: CaptionConfig = {
   enabled: true,
-  template: 'Hormozi 2',
+  template: 'Kendrick Pre-Set',
   language: 'en',
   magicZooms: true,
   cleanAudio: false,

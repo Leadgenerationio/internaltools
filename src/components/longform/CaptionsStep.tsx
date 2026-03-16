@@ -24,21 +24,6 @@ const LANGUAGES = [
   { code: 'zh', label: 'Chinese' },
 ];
 
-interface Preset {
-  name: string;
-  desc: string;
-  template: string;
-  magicZooms: boolean;
-  cleanAudio: boolean;
-}
-
-const PRESETS: Preset[] = [
-  { name: 'Hormozi Bold', desc: 'High-energy captions with zooms — best for UGC & talking head', template: 'Hormozi 3', magicZooms: true, cleanAudio: false },
-  { name: 'Clean & Minimal', desc: 'Subtle captions, no zooms — best for professional / corporate', template: 'Hormozi 2', magicZooms: false, cleanAudio: true },
-  { name: 'Social Viral', desc: 'Eye-catching captions with zooms + clean audio', template: 'Hormozi 3', magicZooms: true, cleanAudio: true },
-  { name: 'Podcast Style', desc: 'Simple captions, clean audio — best for interviews & podcasts', template: 'Hormozi 1', magicZooms: false, cleanAudio: true },
-];
-
 export default function CaptionsStep({ captionConfig, onConfigChange, onNext }: Props) {
   const [templates, setTemplates] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -91,40 +76,6 @@ export default function CaptionsStep({ captionConfig, onConfigChange, onNext }: 
 
       {captionConfig.enabled && (
         <div className="space-y-4">
-          {/* Presets */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Quick Presets</label>
-            <div className="grid grid-cols-2 gap-3">
-              {PRESETS.map((preset) => {
-                const isActive =
-                  captionConfig.template === preset.template &&
-                  captionConfig.magicZooms === preset.magicZooms &&
-                  captionConfig.cleanAudio === preset.cleanAudio;
-                return (
-                  <button
-                    key={preset.name}
-                    onClick={() => update({ template: preset.template, magicZooms: preset.magicZooms, cleanAudio: preset.cleanAudio })}
-                    className={`px-4 py-3 rounded-xl border text-left transition-colors ${
-                      isActive
-                        ? 'border-blue-600 bg-blue-600/10'
-                        : 'border-gray-700 hover:border-gray-600'
-                    }`}
-                  >
-                    <div className="font-medium text-sm">{preset.name}</div>
-                    <div className="text-xs text-gray-500 mt-0.5">{preset.desc}</div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Divider */}
-          <div className="flex items-center gap-3">
-            <div className="flex-1 border-t border-gray-700" />
-            <span className="text-xs text-gray-500">or customise</span>
-            <div className="flex-1 border-t border-gray-700" />
-          </div>
-
           {/* Template selection */}
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">Caption Template</label>
