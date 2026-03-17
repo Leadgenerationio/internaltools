@@ -1,8 +1,11 @@
 'use client';
 
 import { useState, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import type { CaptionConfig, LongformResultItem } from '@/lib/longform-types';
 import type { MusicTrack } from '@/lib/types';
+
+const GoogleDriveButton = dynamic(() => import('@/components/GoogleDriveButton'), { ssr: false });
 
 function normalizeVideoUrl(url: string): string {
   if (!url) return url;
@@ -193,6 +196,9 @@ export default function FinalizeFromVideoStep({
                 >
                   Download
                 </button>
+                <GoogleDriveButton
+                  files={[{ url: normalizeVideoUrl(r.videoUrl), name: `longform_from_video.mp4` }]}
+                />
               </div>
             </div>
           ))}
