@@ -230,6 +230,7 @@ model StorageFile {
   width        Int?
   height       Int?
   thumbnailUrl String?
+  tag          String?  // b-roll, talking-head, avatar, voiceover, music, clip, etc.
 
   projectVideos   ProjectVideo[]
   projectMusic    ProjectMusic[]
@@ -238,6 +239,7 @@ model StorageFile {
   @@unique([companyId, storagePath])
   @@index([companyId])
   @@index([companyId, mimeType])
+  @@index([companyId, tag])
 }
 
 // ─── API Cost Tracking ──────────────────────────────────────

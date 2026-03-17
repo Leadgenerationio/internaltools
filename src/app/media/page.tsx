@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import UserMenu from '@/components/UserMenu';
 
-type Category = 'all' | 'videos' | 'images' | 'audio';
+type Tab = 'all' | 'b-roll' | 'talking-heads' | 'avatars' | 'images' | 'audio';
 
 interface MediaFile {
   id: string;
@@ -19,6 +19,7 @@ interface MediaFile {
   mimeType: string | null;
   createdAt: string;
   sizeBytes: number | null;
+  tag: string | null;
 }
 
 interface AvatarItem {
@@ -29,11 +30,25 @@ interface AvatarItem {
   createdAt: string;
 }
 
-const CATEGORIES: { id: Category; label: string; icon: string }[] = [
-  { id: 'all', label: 'All Media', icon: 'grid' },
-  { id: 'videos', label: 'Videos', icon: 'video' },
-  { id: 'images', label: 'Images', icon: 'image' },
-  { id: 'audio', label: 'Audio', icon: 'audio' },
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'all', label: 'All Media' },
+  { id: 'b-roll', label: 'B-Roll' },
+  { id: 'talking-heads', label: 'Talking Heads' },
+  { id: 'avatars', label: 'Avatars' },
+  { id: 'images', label: 'Images' },
+  { id: 'audio', label: 'Audio' },
+];
+
+const TAG_OPTIONS = [
+  { value: '', label: 'No tag' },
+  { value: 'b-roll', label: 'B-Roll' },
+  { value: 'talking-head', label: 'Talking Head' },
+  { value: 'avatar', label: 'Avatar' },
+  { value: 'voiceover', label: 'Voiceover' },
+  { value: 'music', label: 'Music' },
+  { value: 'clip', label: 'Clip' },
+  { value: 'product', label: 'Product' },
+  { value: 'ad', label: 'Ad Output' },
 ];
 
 function formatBytes(bytes: number): string {
@@ -43,7 +58,7 @@ function formatBytes(bytes: number): string {
 }
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
 
 function normalizeUrl(url: string): string {
@@ -57,6 +72,20 @@ function normalizeUrl(url: string): string {
   return url;
 }
 
+function getTagColor(tag: string | null): string {
+  switch (tag) {
+    case 'b-roll': return 'bg-purple-600/80 text-purple-100';
+    case 'talking-head': return 'bg-cyan-600/80 text-cyan-100';
+    case 'avatar': return 'bg-blue-600/80 text-blue-100';
+    case 'voiceover': return 'bg-orange-600/80 text-orange-100';
+    case 'music': return 'bg-pink-600/80 text-pink-100';
+    case 'clip': return 'bg-yellow-600/80 text-yellow-100';
+    case 'product': return 'bg-green-600/80 text-green-100';
+    case 'ad': return 'bg-red-600/80 text-red-100';
+    default: return 'bg-gray-700 text-gray-300';
+  }
+}
+
 export default function MediaLibraryPage() {
   const { status } = useSession();
   const router = useRouter();
@@ -65,7 +94,7 @@ export default function MediaLibraryPage() {
     if (status === 'unauthenticated') router.replace('/login');
   }, [status, router]);
 
-  const [category, setCategory] = useState<Category>('all');
+  const [tab, setTab] = useState<Tab>('all');
   const [search, setSearch] = useState('');
   const [files, setFiles] = useState<MediaFile[]>([]);
   const [avatars, setAvatars] = useState<AvatarItem[]>([]);
@@ -74,14 +103,29 @@ export default function MediaLibraryPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [deleting, setDeleting] = useState<Set<string>>(new Set());
-  const [showAvatars, setShowAvatars] = useState(false);
-  const [deletingAvatar, setDeletingAvatar] = useState<Set<string>>(new Set());
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editTag, setEditTag] = useState('');
 
   const fetchFiles = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ page: String(page), limit: '24', category });
+      const params = new URLSearchParams({ page: String(page), limit: '24' });
       if (search.trim()) params.set('search', search.trim());
+
+      if (tab === 'b-roll') {
+        params.set('category', 'videos');
+        params.set('tag', 'b-roll');
+      } else if (tab === 'talking-heads') {
+        params.set('category', 'videos');
+        params.set('tag', 'talking-head');
+      } else if (tab === 'images') {
+        params.set('category', 'images');
+      } else if (tab === 'audio') {
+        params.set('category', 'audio');
+      }
+      // 'all' and 'avatars' don't set category/tag
+
       const res = await fetch(`/api/media?${params}`);
       if (res.ok) {
         const data = await res.json();
@@ -91,9 +135,10 @@ export default function MediaLibraryPage() {
       }
     } catch { /* ignore */ }
     finally { setLoading(false); }
-  }, [page, category, search]);
+  }, [page, tab, search]);
 
   const fetchAvatars = useCallback(async () => {
+    setLoading(true);
     try {
       const res = await fetch('/api/avatar/library?limit=50');
       if (res.ok) {
@@ -101,20 +146,16 @@ export default function MediaLibraryPage() {
         setAvatars(data.avatars || []);
       }
     } catch { /* ignore */ }
+    finally { setLoading(false); }
   }, []);
 
   useEffect(() => {
-    if (status === 'authenticated') {
-      if (showAvatars) {
-        fetchAvatars();
-      } else {
-        fetchFiles();
-      }
-    }
-  }, [status, showAvatars, fetchFiles, fetchAvatars]);
+    if (status !== 'authenticated') return;
+    if (tab === 'avatars') fetchAvatars();
+    else fetchFiles();
+  }, [status, tab, fetchFiles, fetchAvatars]);
 
-  // Reset page when category/search changes
-  useEffect(() => { setPage(1); }, [category, search]);
+  useEffect(() => { setPage(1); }, [tab, search]);
 
   const handleDelete = async (id: string) => {
     setDeleting((prev) => new Set(prev).add(id));
@@ -125,25 +166,42 @@ export default function MediaLibraryPage() {
         setTotal((prev) => prev - 1);
       }
     } catch { /* ignore */ }
-    finally {
-      setDeleting((prev) => { const n = new Set(prev); n.delete(id); return n; });
-    }
+    finally { setDeleting((prev) => { const n = new Set(prev); n.delete(id); return n; }); }
   };
 
   const handleDeleteAvatar = async (id: string) => {
-    setDeletingAvatar((prev) => new Set(prev).add(id));
+    setDeleting((prev) => new Set(prev).add(id));
     try {
       const res = await fetch(`/api/avatar/library/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setAvatars((prev) => prev.filter((a) => a.id !== id));
-      }
+      if (res.ok) setAvatars((prev) => prev.filter((a) => a.id !== id));
     } catch { /* ignore */ }
-    finally {
-      setDeletingAvatar((prev) => { const n = new Set(prev); n.delete(id); return n; });
-    }
+    finally { setDeleting((prev) => { const n = new Set(prev); n.delete(id); return n; }); }
   };
 
-  const getFileIcon = (mimeType: string | null) => {
+  const startEditing = (file: MediaFile) => {
+    setEditing(file.id);
+    setEditName(file.originalName || '');
+    setEditTag(file.tag || '');
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    try {
+      const res = await fetch(`/api/media/${editing}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: editName, tag: editTag }),
+      });
+      if (res.ok) {
+        setFiles((prev) => prev.map((f) =>
+          f.id === editing ? { ...f, originalName: editName, tag: editTag || null } : f
+        ));
+      }
+    } catch { /* ignore */ }
+    setEditing(null);
+  };
+
+  const getFileType = (mimeType: string | null) => {
     if (mimeType?.startsWith('video/')) return 'video';
     if (mimeType?.startsWith('image/')) return 'image';
     if (mimeType?.startsWith('audio/')) return 'audio';
@@ -168,109 +226,65 @@ export default function MediaLibraryPage() {
       </header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
-        {/* Page header */}
+        {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl font-bold text-white">Media Library</h1>
-            <p className="text-sm text-gray-400 mt-0.5">All your videos, images, avatars, and audio in one place.</p>
+            <p className="text-sm text-gray-400 mt-0.5">Organise your b-roll, talking heads, avatars, and more.</p>
           </div>
-          <div className="flex items-center gap-3">
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by name..."
-              className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 w-48 sm:w-64"
-            />
-          </div>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search..."
+            className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 w-48 sm:w-56"
+          />
         </div>
 
-        {/* Category tabs */}
-        <div className="flex gap-2 mb-6 overflow-x-auto pb-1">
-          <button
-            onClick={() => { setShowAvatars(true); }}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors shrink-0 flex items-center gap-2 ${
-              showAvatars ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-            }`}
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-            </svg>
-            Avatars
-          </button>
-          {CATEGORIES.map((cat) => (
+        {/* Tabs */}
+        <div className="flex gap-1.5 mb-6 overflow-x-auto pb-1">
+          {TABS.map((t) => (
             <button
-              key={cat.id}
-              onClick={() => { setShowAvatars(false); setCategory(cat.id); }}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors shrink-0 flex items-center gap-2 ${
-                !showAvatars && category === cat.id ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors shrink-0 ${
+                tab === t.id ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
               }`}
             >
-              {cat.id === 'all' && (
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25a2.25 2.25 0 0 1-2.25-2.25v-2.25Z" />
-                </svg>
-              )}
-              {cat.id === 'videos' && (
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
-                </svg>
-              )}
-              {cat.id === 'images' && (
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0 0 22.5 18.75V5.25A2.25 2.25 0 0 0 20.25 3H3.75A2.25 2.25 0 0 0 1.5 5.25v13.5A2.25 2.25 0 0 0 3.75 21Z" />
-                </svg>
-              )}
-              {cat.id === 'audio' && (
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" />
-                </svg>
-              )}
-              {cat.label}
+              {t.label}
             </button>
           ))}
         </div>
 
-        {/* Avatars view */}
-        {showAvatars && (
+        {/* Avatar grid */}
+        {tab === 'avatars' && (
           <div>
             <div className="flex items-center justify-between mb-4">
               <p className="text-sm text-gray-400">{avatars.length} avatar{avatars.length !== 1 ? 's' : ''}</p>
-              <Link href="/create/avatar-video" className="text-sm text-blue-400 hover:text-blue-300 transition-colors">
-                Create New Avatar
-              </Link>
+              <Link href="/create/avatar-video" className="text-sm text-blue-400 hover:text-blue-300">+ Create Avatar</Link>
             </div>
-
-            {avatars.length === 0 ? (
-              <div className="text-center py-16">
-                <svg className="w-12 h-12 mx-auto text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-                </svg>
-                <p className="text-gray-400">No avatars yet.</p>
-                <Link href="/create/avatar-video" className="text-sm text-blue-400 hover:text-blue-300 mt-2 inline-block">
-                  Create your first avatar
-                </Link>
+            {loading ? (
+              <div className="flex items-center justify-center py-16 text-gray-400">
+                <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mr-2" /> Loading...
+              </div>
+            ) : avatars.length === 0 ? (
+              <div className="text-center py-16 text-gray-500">
+                <p>No avatars yet.</p>
+                <Link href="/create/avatar-video" className="text-sm text-blue-400 mt-2 inline-block">Create your first avatar</Link>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                {avatars.map((avatar) => (
-                  <div key={avatar.id} className={`group relative bg-gray-900 border border-gray-800 rounded-xl overflow-hidden hover:border-gray-600 transition-colors ${deletingAvatar.has(avatar.id) ? 'opacity-50' : ''}`}>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                {avatars.map((a) => (
+                  <div key={a.id} className={`group relative bg-gray-900 border border-gray-800 rounded-xl overflow-hidden hover:border-gray-600 transition-colors ${deleting.has(a.id) ? 'opacity-50' : ''}`}>
                     <div className="aspect-square bg-gray-800">
-                      <img src={normalizeUrl(avatar.imageUrl)} alt={avatar.name} className="w-full h-full object-cover" />
+                      <img src={normalizeUrl(a.imageUrl)} alt={a.name} className="w-full h-full object-cover" />
                     </div>
-                    <div className="p-3">
-                      <p className="text-sm text-white font-medium truncate">{avatar.name}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">{formatDate(avatar.createdAt)}</p>
+                    <div className="p-2.5">
+                      <p className="text-sm text-white font-medium truncate">{a.name}</p>
+                      <p className="text-xs text-gray-500">{formatDate(a.createdAt)}</p>
                     </div>
-                    <button
-                      onClick={() => handleDeleteAvatar(avatar.id)}
-                      disabled={deletingAvatar.has(avatar.id)}
-                      className="absolute top-2 right-2 w-7 h-7 bg-red-600/80 hover:bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                      title="Delete avatar"
-                    >
-                      <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
+                    <button onClick={() => handleDeleteAvatar(a.id)} className="absolute top-1.5 right-1.5 w-6 h-6 bg-red-600/80 hover:bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                     </button>
                   </div>
                 ))}
@@ -279,8 +293,8 @@ export default function MediaLibraryPage() {
           </div>
         )}
 
-        {/* Files view */}
-        {!showAvatars && (
+        {/* File grid */}
+        {tab !== 'avatars' && (
           <div>
             <div className="flex items-center justify-between mb-4">
               <p className="text-sm text-gray-400">{total} item{total !== 1 ? 's' : ''}</p>
@@ -288,22 +302,19 @@ export default function MediaLibraryPage() {
 
             {loading ? (
               <div className="flex items-center justify-center py-16 text-gray-400">
-                <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mr-3" />
-                Loading...
+                <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mr-2" /> Loading...
               </div>
             ) : files.length === 0 ? (
-              <div className="text-center py-16">
-                <svg className="w-12 h-12 mx-auto text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6Z" />
-                </svg>
-                <p className="text-gray-400">{search ? 'No results found.' : 'No media files yet.'}</p>
-                <p className="text-xs text-gray-500 mt-1">Upload or generate content to build your library.</p>
+              <div className="text-center py-16 text-gray-500">
+                <p>{search ? 'No results found.' : tab === 'b-roll' ? 'No b-roll tagged yet. Edit any video to tag it as b-roll.' : tab === 'talking-heads' ? 'No talking head videos yet. Create one in the Avatar Video Creator.' : 'No media files yet.'}</p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
                 {files.map((file) => {
-                  const type = getFileIcon(file.mimeType);
+                  const type = getFileType(file.mimeType);
                   const isDeleting = deleting.has(file.id);
+                  const isEditing = editing === file.id;
+
                   return (
                     <div key={file.id} className={`group relative bg-gray-900 border border-gray-800 rounded-xl overflow-hidden hover:border-gray-600 transition-colors ${isDeleting ? 'opacity-50' : ''}`}>
                       {/* Preview */}
@@ -314,67 +325,72 @@ export default function MediaLibraryPage() {
                           <video src={normalizeUrl(file.publicUrl)} className="w-full h-full object-cover" preload="metadata" muted />
                         ) : type === 'image' ? (
                           <img src={normalizeUrl(file.publicUrl)} alt="" className="w-full h-full object-cover" />
-                        ) : type === 'audio' ? (
+                        ) : (
                           <div className="w-full h-full flex items-center justify-center">
-                            <svg className="w-10 h-10 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <svg className="w-8 h-8 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" />
                             </svg>
                           </div>
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center">
-                            <svg className="w-10 h-10 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-                            </svg>
-                          </div>
                         )}
-
-                        {/* Type badge */}
-                        <div className="absolute bottom-1.5 left-1.5">
-                          <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
-                            type === 'video' ? 'bg-purple-600/80 text-purple-100'
-                            : type === 'image' ? 'bg-green-600/80 text-green-100'
-                            : type === 'audio' ? 'bg-orange-600/80 text-orange-100'
-                            : 'bg-gray-700 text-gray-300'
-                          }`}>
-                            {type === 'video' ? 'VIDEO' : type === 'image' ? 'IMAGE' : type === 'audio' ? 'AUDIO' : 'FILE'}
+                        {/* Tag badge */}
+                        {file.tag && (
+                          <span className={`absolute top-1.5 left-1.5 text-[10px] font-medium px-1.5 py-0.5 rounded ${getTagColor(file.tag)}`}>
+                            {TAG_OPTIONS.find((o) => o.value === file.tag)?.label || file.tag}
                           </span>
-                        </div>
-
-                        {/* Duration badge for video/audio */}
+                        )}
+                        {/* Duration */}
                         {file.duration != null && (
-                          <div className="absolute bottom-1.5 right-1.5">
-                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-black/70 text-white">
-                              {file.duration.toFixed(1)}s
-                            </span>
-                          </div>
+                          <span className="absolute bottom-1.5 right-1.5 text-[10px] font-medium px-1.5 py-0.5 rounded bg-black/70 text-white">
+                            {file.duration.toFixed(1)}s
+                          </span>
                         )}
                       </div>
 
-                      {/* Info */}
-                      <div className="p-3">
-                        <p className="text-sm text-white truncate">{file.originalName || 'Untitled'}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          {file.width && file.height && (
-                            <span className="text-xs text-gray-500">{file.width}x{file.height}</span>
-                          )}
-                          {file.sizeBytes && (
-                            <span className="text-xs text-gray-500">{formatBytes(Number(file.sizeBytes))}</span>
-                          )}
+                      {/* Info / Edit mode */}
+                      {isEditing ? (
+                        <div className="p-2 space-y-2">
+                          <input
+                            type="text"
+                            value={editName}
+                            onChange={(e) => setEditName(e.target.value)}
+                            className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            autoFocus
+                          />
+                          <select
+                            value={editTag}
+                            onChange={(e) => setEditTag(e.target.value)}
+                            className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs text-white"
+                          >
+                            {TAG_OPTIONS.map((o) => (
+                              <option key={o.value} value={o.value}>{o.label}</option>
+                            ))}
+                          </select>
+                          <div className="flex gap-1">
+                            <button onClick={saveEdit} className="flex-1 px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded font-medium">Save</button>
+                            <button onClick={() => setEditing(null)} className="flex-1 px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded">Cancel</button>
+                          </div>
                         </div>
-                        <p className="text-xs text-gray-600 mt-0.5">{formatDate(file.createdAt)}</p>
-                      </div>
+                      ) : (
+                        <div className="p-2.5">
+                          <p className="text-xs text-white truncate">{file.originalName || 'Untitled'}</p>
+                          <p className="text-xs text-gray-600 mt-0.5">
+                            {file.width && file.height ? `${file.width}x${file.height}` : ''}
+                            {file.sizeBytes ? ` · ${formatBytes(Number(file.sizeBytes))}` : ''}
+                          </p>
+                        </div>
+                      )}
 
-                      {/* Delete button on hover */}
-                      <button
-                        onClick={() => handleDelete(file.id)}
-                        disabled={isDeleting}
-                        className="absolute top-2 right-2 w-7 h-7 bg-red-600/80 hover:bg-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="Delete"
-                      >
-                        <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
+                      {/* Hover actions */}
+                      {!isEditing && (
+                        <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => startEditing(file)} className="w-6 h-6 bg-gray-700/90 hover:bg-blue-600 rounded-full flex items-center justify-center" title="Edit">
+                            <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Z" /></svg>
+                          </button>
+                          <button onClick={() => handleDelete(file.id)} className="w-6 h-6 bg-gray-700/90 hover:bg-red-600 rounded-full flex items-center justify-center" title="Delete">
+                            <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -384,23 +400,9 @@ export default function MediaLibraryPage() {
             {/* Pagination */}
             {totalPages > 1 && (
               <div className="flex items-center justify-center gap-2 mt-8">
-                <button
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                  className="px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 disabled:opacity-50 hover:bg-gray-700 transition-colors"
-                >
-                  Previous
-                </button>
-                <span className="text-sm text-gray-400">
-                  Page {page} of {totalPages}
-                </span>
-                <button
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages}
-                  className="px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 disabled:opacity-50 hover:bg-gray-700 transition-colors"
-                >
-                  Next
-                </button>
+                <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 disabled:opacity-50 hover:bg-gray-700">Previous</button>
+                <span className="text-sm text-gray-400">Page {page} of {totalPages}</span>
+                <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 disabled:opacity-50 hover:bg-gray-700">Next</button>
               </div>
             )}
           </div>

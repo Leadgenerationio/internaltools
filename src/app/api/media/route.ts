@@ -13,6 +13,7 @@ export async function GET(request: NextRequest) {
   const skip = (page - 1) * limit;
   const aspect = searchParams.get('aspect') || null;
   const category = searchParams.get('category') || 'all'; // all, videos, images, audio
+  const tag = searchParams.get('tag') || null; // b-roll, talking-head, etc.
   const search = searchParams.get('search') || null;
 
   const where: any = { companyId };
@@ -25,7 +26,11 @@ export async function GET(request: NextRequest) {
   } else if (category === 'audio') {
     where.mimeType = { startsWith: 'audio/' };
   }
-  // 'all' = no mimeType filter
+
+  // Tag filter
+  if (tag) {
+    where.tag = tag;
+  }
 
   // Search filter
   if (search) {
@@ -58,7 +63,7 @@ export async function GET(request: NextRequest) {
           take: limit,
           select: {
             id: true, publicUrl: true, originalName: true, duration: true,
-            width: true, height: true, thumbnailUrl: true, mimeType: true, createdAt: true, sizeBytes: true,
+            width: true, height: true, thumbnailUrl: true, mimeType: true, createdAt: true, sizeBytes: true, tag: true,
           },
         }),
         prisma.storageFile.count({ where }),
