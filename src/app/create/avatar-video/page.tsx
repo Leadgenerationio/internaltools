@@ -92,6 +92,9 @@ export default function AvatarVideoPage() {
   const [savingToLibrary, setSavingToLibrary] = useState(false);
   const [savedToLibrary, setSavedToLibrary] = useState(false);
   const [libraryError, setLibraryError] = useState<string | null>(null);
+  const cropContainerRef = useRef<HTMLDivElement>(null);
+  const isDraggingCrop = useRef(false);
+  const dragStartRef = useRef<{ x: number; y: number; startPosX: number; startPosY: number }>({ x: 0, y: 0, startPosX: 0.5, startPosY: 0.5 });
 
   // ─── Fetch voices on mount ────────────────────────────────────────────────
   useEffect(() => {
@@ -298,6 +301,33 @@ export default function AvatarVideoPage() {
 
   const handleCancelGeneration = useCallback(() => {
     abortRef.current?.abort();
+  }, []);
+
+  // ─── Step 6: Crop drag handlers ─────────────────────────────────────────
+  const handleCropMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingCrop.current = true;
+    dragStartRef.current = { x: e.clientX, y: e.clientY, startPosX: cropPosX, startPosY: cropPosY };
+  }, [cropPosX, cropPosY]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDraggingCrop.current || !cropContainerRef.current) return;
+      const rect = cropContainerRef.current.getBoundingClientRect();
+      const dx = (e.clientX - dragStartRef.current.x) / rect.width;
+      const dy = (e.clientY - dragStartRef.current.y) / rect.height;
+      // Invert: dragging crop window right means content shifts left = lower posX
+      setCropPosX(Math.max(0, Math.min(1, dragStartRef.current.startPosX - dx * 2)));
+      setCropPosY(Math.max(0, Math.min(1, dragStartRef.current.startPosY - dy * 2)));
+      setCroppedVideoUrl(null);
+    };
+    const handleMouseUp = () => { isDraggingCrop.current = false; };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
   }, []);
 
   // ─── Step 6: Crop video ──────────────────────────────────────────────────
@@ -902,98 +932,138 @@ export default function AvatarVideoPage() {
               <p className="text-gray-400 text-sm">Your avatar video has been generated successfully.</p>
             </div>
 
-            {/* Video preview */}
-            {(croppedVideoUrl || finalVideoUrl) && (
-              <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-                <video
-                  controls
-                  className="w-full max-h-[500px] mx-auto"
-                  src={croppedVideoUrl || finalVideoUrl!}
-                  key={croppedVideoUrl || finalVideoUrl}
+            {/* Video preview with crop overlay */}
+            {finalVideoUrl && !croppedVideoUrl && (
+              <div className="space-y-4">
+                {/* Aspect ratio selector */}
+                <div className="flex gap-2">
+                  {([
+                    { value: '9:16' as const, label: '9:16', desc: 'Reels / TikTok' },
+                    { value: '16:9' as const, label: '16:9', desc: 'YouTube / Landscape' },
+                    { value: '1:1' as const, label: '1:1', desc: 'Instagram / Square' },
+                  ] as const).map((ar) => (
+                    <button
+                      key={ar.value}
+                      onClick={() => { setCropAspect(ar.value); setCroppedVideoUrl(null); }}
+                      className={`flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors border ${
+                        cropAspect === ar.value
+                          ? 'bg-blue-600/20 border-blue-500 text-blue-300'
+                          : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'
+                      }`}
+                    >
+                      <div>{ar.label}</div>
+                      <div className="text-[10px] opacity-60 mt-0.5">{ar.desc}</div>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Visual crop preview */}
+                <div
+                  ref={cropContainerRef}
+                  className="relative bg-black rounded-xl overflow-hidden select-none"
+                  style={{ cursor: 'grab' }}
                 >
-                  Your browser does not support the video element.
-                </video>
+                  <video
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    className="w-full"
+                    src={finalVideoUrl}
+                  />
+                  {/* Dark overlay with transparent crop window */}
+                  {(() => {
+                    // Calculate crop window dimensions relative to video
+                    const arMap: Record<string, number> = { '9:16': 9/16, '16:9': 16/9, '1:1': 1 };
+                    const targetAR = arMap[cropAspect] || 9/16;
+                    // Assume source is roughly square-ish (Creatify Aurora output)
+                    // The crop window shows what will be kept
+                    const srcAR = 1; // Will be close to 1:1 from Creatify
+                    let cropW: number, cropH: number;
+                    if (srcAR > targetAR) {
+                      cropH = 100; cropW = (targetAR / srcAR) * 100;
+                    } else {
+                      cropW = 100; cropH = (srcAR / targetAR) * 100;
+                    }
+                    // Position based on posX/posY
+                    const left = (100 - cropW) * cropPosX;
+                    const top = (100 - cropH) * cropPosY;
+
+                    return (
+                      <>
+                        {/* Top dark band */}
+                        <div className="absolute inset-x-0 top-0 bg-black/60 pointer-events-none" style={{ height: `${top}%` }} />
+                        {/* Bottom dark band */}
+                        <div className="absolute inset-x-0 bottom-0 bg-black/60 pointer-events-none" style={{ height: `${100 - top - cropH}%` }} />
+                        {/* Left dark band */}
+                        <div className="absolute bg-black/60 pointer-events-none" style={{ left: 0, top: `${top}%`, width: `${left}%`, height: `${cropH}%` }} />
+                        {/* Right dark band */}
+                        <div className="absolute bg-black/60 pointer-events-none" style={{ right: 0, top: `${top}%`, width: `${100 - left - cropW}%`, height: `${cropH}%` }} />
+                        {/* Crop frame border */}
+                        <div
+                          className="absolute border-2 border-blue-400 rounded-sm"
+                          style={{ left: `${left}%`, top: `${top}%`, width: `${cropW}%`, height: `${cropH}%` }}
+                          onMouseDown={handleCropMouseDown}
+                        >
+                          {/* Corner handles */}
+                          {['top-0 left-0', 'top-0 right-0', 'bottom-0 left-0', 'bottom-0 right-0', 'top-0 left-1/2 -translate-x-1/2', 'bottom-0 left-1/2 -translate-x-1/2', 'top-1/2 left-0 -translate-y-1/2', 'top-1/2 right-0 -translate-y-1/2'].map((pos, i) => (
+                            <div key={i} className={`absolute ${pos} w-3 h-3 bg-blue-400 rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none`} style={{ ...(i < 4 ? {} : {}) }} />
+                          ))}
+                          {/* Center move icon */}
+                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <svg className="w-8 h-8 text-blue-400/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                            </svg>
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+                <p className="text-xs text-gray-500 text-center mt-2">Drag the crop area to position it. Dark areas will be removed.</p>
+
+                {cropError && (
+                  <div className="bg-red-900/30 border border-red-800 rounded-lg px-4 py-2 text-sm text-red-300">{cropError}</div>
+                )}
+
+                <button
+                  onClick={handleCrop}
+                  disabled={cropping}
+                  className="w-full px-5 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  {cropping && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  {cropping ? 'Cropping...' : `Crop to ${cropAspect}`}
+                </button>
               </div>
             )}
 
-            {/* ── Crop Tool ── */}
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
-              <h3 className="text-sm font-medium text-white">Crop & Resize</h3>
-
-              {/* Aspect ratio selector */}
-              <div className="flex gap-2">
-                {([
-                  { value: '9:16' as const, label: '9:16', desc: 'Reels / TikTok' },
-                  { value: '16:9' as const, label: '16:9', desc: 'YouTube / Landscape' },
-                  { value: '1:1' as const, label: '1:1', desc: 'Instagram / Square' },
-                ] as const).map((ar) => (
+            {/* Cropped result */}
+            {croppedVideoUrl && (
+              <div className="space-y-3">
+                <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+                  <video
+                    controls
+                    className="w-full max-h-[500px] mx-auto"
+                    src={croppedVideoUrl}
+                    key={croppedVideoUrl}
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-green-400 flex items-center gap-1.5">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                    </svg>
+                    Cropped to {cropAspect}
+                  </p>
                   <button
-                    key={ar.value}
-                    onClick={() => { setCropAspect(ar.value); setCroppedVideoUrl(null); }}
-                    className={`flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors border ${
-                      cropAspect === ar.value
-                        ? 'bg-blue-600/20 border-blue-500 text-blue-300'
-                        : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'
-                    }`}
+                    onClick={() => setCroppedVideoUrl(null)}
+                    className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
                   >
-                    <div>{ar.label}</div>
-                    <div className="text-[10px] opacity-60 mt-0.5">{ar.desc}</div>
+                    Re-crop
                   </button>
-                ))}
-              </div>
-
-              {/* Position sliders */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1.5">
-                    Horizontal Position
-                    <span className="float-right text-gray-600">{cropPosX === 0 ? 'Left' : cropPosX === 1 ? 'Right' : cropPosX === 0.5 ? 'Center' : `${Math.round(cropPosX * 100)}%`}</span>
-                  </label>
-                  <input
-                    type="range"
-                    min={0} max={1} step={0.01}
-                    value={cropPosX}
-                    onChange={(e) => { setCropPosX(parseFloat(e.target.value)); setCroppedVideoUrl(null); }}
-                    className="w-full accent-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-400 mb-1.5">
-                    Vertical Position
-                    <span className="float-right text-gray-600">{cropPosY === 0 ? 'Top' : cropPosY === 1 ? 'Bottom' : cropPosY === 0.5 ? 'Center' : `${Math.round(cropPosY * 100)}%`}</span>
-                  </label>
-                  <input
-                    type="range"
-                    min={0} max={1} step={0.01}
-                    value={cropPosY}
-                    onChange={(e) => { setCropPosY(parseFloat(e.target.value)); setCroppedVideoUrl(null); }}
-                    className="w-full accent-blue-500"
-                  />
                 </div>
               </div>
-
-              {cropError && (
-                <div className="bg-red-900/30 border border-red-800 rounded-lg px-4 py-2 text-sm text-red-300">{cropError}</div>
-              )}
-
-              <button
-                onClick={handleCrop}
-                disabled={cropping}
-                className="w-full px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
-              >
-                {cropping && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-                {cropping ? 'Cropping...' : croppedVideoUrl ? 'Re-crop Video' : 'Crop Video'}
-              </button>
-
-              {croppedVideoUrl && (
-                <p className="text-xs text-green-400 flex items-center gap-1.5">
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-                  </svg>
-                  Cropped to {cropAspect}
-                </p>
-              )}
-            </div>
+            )}
 
             {/* ── Action Buttons ── */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
