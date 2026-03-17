@@ -21,7 +21,7 @@ import type { AvatarVideoGenData, AvatarVideoGenResult } from '@/lib/job-types';
 const execFileAsync = promisify(execFile);
 const KIE_API_BASE = 'https://api.kie.ai/api/v1';
 const POLL_INTERVAL_MS = 10_000;
-const MAX_POLL_TIME_MS = 10 * 60 * 1000; // 10 min per chunk
+const MAX_POLL_TIME_MS = 20 * 60 * 1000; // 20 min per chunk
 const CHUNK_MAX_SECONDS = 14; // InfiniteTalk limit is 15s, use 14s for safety
 const OUTPUT_DIR = path.join(process.cwd(), 'public', 'outputs');
 
