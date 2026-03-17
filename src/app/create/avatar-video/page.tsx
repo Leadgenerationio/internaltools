@@ -4,8 +4,11 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import UserMenu from '@/components/UserMenu';
 import type { AvatarWizardStep, AvatarItem } from '@/lib/avatar-types';
+
+const GoogleDriveButton = dynamic(() => import('@/components/GoogleDriveButton'), { ssr: false });
 
 const STEPS: { id: AvatarWizardStep; label: string }[] = [
   { id: 'create', label: 'Create Avatar' },
@@ -77,6 +80,15 @@ export default function AvatarVideoPage() {
 
   // Step 6: Done
   const [finalVideoUrl, setFinalVideoUrl] = useState<string | null>(null);
+  const [cropAspect, setCropAspect] = useState<'9:16' | '16:9' | '1:1'>('9:16');
+  const [cropPosX, setCropPosX] = useState(0.5);
+  const [cropPosY, setCropPosY] = useState(0.5);
+  const [cropping, setCropping] = useState(false);
+  const [croppedVideoUrl, setCroppedVideoUrl] = useState<string | null>(null);
+  const [cropError, setCropError] = useState<string | null>(null);
+  const [savingToLibrary, setSavingToLibrary] = useState(false);
+  const [savedToLibrary, setSavedToLibrary] = useState(false);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
 
   // ─── Fetch voices on mount ────────────────────────────────────────────────
   useEffect(() => {
@@ -258,6 +270,60 @@ export default function AvatarVideoPage() {
   const handleCancelGeneration = useCallback(() => {
     abortRef.current?.abort();
   }, []);
+
+  // ─── Step 6: Crop video ──────────────────────────────────────────────────
+  const handleCrop = useCallback(async () => {
+    const sourceUrl = finalVideoUrl;
+    if (!sourceUrl) return;
+    setCropping(true);
+    setCropError(null);
+
+    try {
+      const res = await fetch('/api/avatar/crop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoUrl: sourceUrl,
+          aspectRatio: cropAspect,
+          posX: cropPosX,
+          posY: cropPosY,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Crop failed');
+      setCroppedVideoUrl(data.videoUrl);
+    } catch (err: any) {
+      setCropError(err.message);
+    } finally {
+      setCropping(false);
+    }
+  }, [finalVideoUrl, cropAspect, cropPosX, cropPosY]);
+
+  // ─── Step 6: Save to media library ─────────────────────────────────────────
+  const handleSaveToLibrary = useCallback(async () => {
+    const videoToSave = croppedVideoUrl || finalVideoUrl;
+    if (!videoToSave) return;
+    setSavingToLibrary(true);
+    setLibraryError(null);
+
+    try {
+      const res = await fetch('/api/avatar/save-to-library', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoUrl: videoToSave,
+          name: avatarName || 'Avatar Video',
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to save');
+      setSavedToLibrary(true);
+    } catch (err: any) {
+      setLibraryError(err.message);
+    } finally {
+      setSavingToLibrary(false);
+    }
+  }, [croppedVideoUrl, finalVideoUrl, avatarName]);
 
   // ─── Cleanup audio on unmount ─────────────────────────────────────────────
   useEffect(() => {
@@ -782,28 +848,169 @@ export default function AvatarVideoPage() {
               <p className="text-gray-400 text-sm">Your avatar video has been generated successfully.</p>
             </div>
 
-            {finalVideoUrl && (
+            {/* Video preview */}
+            {(croppedVideoUrl || finalVideoUrl) && (
               <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
                 <video
                   controls
-                  className="w-full max-h-[500px]"
-                  src={finalVideoUrl}
+                  className="w-full max-h-[500px] mx-auto"
+                  src={croppedVideoUrl || finalVideoUrl!}
+                  key={croppedVideoUrl || finalVideoUrl}
                 >
                   Your browser does not support the video element.
                 </video>
               </div>
             )}
 
-            <div className="flex gap-3">
-              {finalVideoUrl && (
-                <a
-                  href={finalVideoUrl}
-                  download
-                  className="flex-1 px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors text-center"
-                >
-                  Download Video
-                </a>
+            {/* ── Crop Tool ── */}
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+              <h3 className="text-sm font-medium text-white">Crop & Resize</h3>
+
+              {/* Aspect ratio selector */}
+              <div className="flex gap-2">
+                {([
+                  { value: '9:16' as const, label: '9:16', desc: 'Reels / TikTok' },
+                  { value: '16:9' as const, label: '16:9', desc: 'YouTube / Landscape' },
+                  { value: '1:1' as const, label: '1:1', desc: 'Instagram / Square' },
+                ] as const).map((ar) => (
+                  <button
+                    key={ar.value}
+                    onClick={() => { setCropAspect(ar.value); setCroppedVideoUrl(null); }}
+                    className={`flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors border ${
+                      cropAspect === ar.value
+                        ? 'bg-blue-600/20 border-blue-500 text-blue-300'
+                        : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'
+                    }`}
+                  >
+                    <div>{ar.label}</div>
+                    <div className="text-[10px] opacity-60 mt-0.5">{ar.desc}</div>
+                  </button>
+                ))}
+              </div>
+
+              {/* Position sliders */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1.5">
+                    Horizontal Position
+                    <span className="float-right text-gray-600">{cropPosX === 0 ? 'Left' : cropPosX === 1 ? 'Right' : cropPosX === 0.5 ? 'Center' : `${Math.round(cropPosX * 100)}%`}</span>
+                  </label>
+                  <input
+                    type="range"
+                    min={0} max={1} step={0.01}
+                    value={cropPosX}
+                    onChange={(e) => { setCropPosX(parseFloat(e.target.value)); setCroppedVideoUrl(null); }}
+                    className="w-full accent-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1.5">
+                    Vertical Position
+                    <span className="float-right text-gray-600">{cropPosY === 0 ? 'Top' : cropPosY === 1 ? 'Bottom' : cropPosY === 0.5 ? 'Center' : `${Math.round(cropPosY * 100)}%`}</span>
+                  </label>
+                  <input
+                    type="range"
+                    min={0} max={1} step={0.01}
+                    value={cropPosY}
+                    onChange={(e) => { setCropPosY(parseFloat(e.target.value)); setCroppedVideoUrl(null); }}
+                    className="w-full accent-blue-500"
+                  />
+                </div>
+              </div>
+
+              {cropError && (
+                <div className="bg-red-900/30 border border-red-800 rounded-lg px-4 py-2 text-sm text-red-300">{cropError}</div>
               )}
+
+              <button
+                onClick={handleCrop}
+                disabled={cropping}
+                className="w-full px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+              >
+                {cropping && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                {cropping ? 'Cropping...' : croppedVideoUrl ? 'Re-crop Video' : 'Crop Video'}
+              </button>
+
+              {croppedVideoUrl && (
+                <p className="text-xs text-green-400 flex items-center gap-1.5">
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                  </svg>
+                  Cropped to {cropAspect}
+                </p>
+              )}
+            </div>
+
+            {/* ── Action Buttons ── */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Download */}
+              <a
+                href={croppedVideoUrl || finalVideoUrl || '#'}
+                download
+                className="px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors text-center flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                </svg>
+                Download Video
+              </a>
+
+              {/* Save to Library */}
+              <button
+                onClick={handleSaveToLibrary}
+                disabled={savingToLibrary || savedToLibrary}
+                className={`px-5 py-2.5 font-medium rounded-lg transition-colors flex items-center justify-center gap-2 ${
+                  savedToLibrary
+                    ? 'bg-green-600/20 border border-green-600 text-green-400'
+                    : 'bg-gray-700 hover:bg-gray-600 text-white border border-gray-600'
+                }`}
+              >
+                {savingToLibrary ? (
+                  <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Saving...</>
+                ) : savedToLibrary ? (
+                  <><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg> Saved to Library</>
+                ) : (
+                  <><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" /></svg> Save to Library</>
+                )}
+              </button>
+            </div>
+
+            {libraryError && (
+              <div className="bg-red-900/30 border border-red-800 rounded-lg px-4 py-2 text-sm text-red-300">{libraryError}</div>
+            )}
+
+            {/* Google Drive export */}
+            <div>
+              <GoogleDriveButton
+                files={(croppedVideoUrl || finalVideoUrl) ? [{
+                  url: croppedVideoUrl || finalVideoUrl!,
+                  name: `${avatarName || 'avatar-video'}${croppedVideoUrl ? `-${cropAspect.replace(':', 'x')}` : ''}.mp4`,
+                }] : []}
+                disabled={!finalVideoUrl}
+              />
+            </div>
+
+            {/* ── Use in other tools ── */}
+            <div className="border-t border-gray-800 pt-4 space-y-3">
+              <h3 className="text-sm font-medium text-gray-400">Use this video in</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Link
+                  href={`/create/longform-video?avatarVideoUrl=${encodeURIComponent(croppedVideoUrl || finalVideoUrl || '')}&avatarName=${encodeURIComponent(avatarName || 'Avatar Video')}`}
+                  className="px-5 py-3 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-600/50 text-purple-300 font-medium rounded-lg transition-colors text-center text-sm"
+                >
+                  Create Longform Ad
+                </Link>
+                <Link
+                  href={`/create/video-overlay?videoUrl=${encodeURIComponent(croppedVideoUrl || finalVideoUrl || '')}`}
+                  className="px-5 py-3 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-600/50 text-blue-300 font-medium rounded-lg transition-colors text-center text-sm"
+                >
+                  Add Text Overlay
+                </Link>
+              </div>
+            </div>
+
+            {/* ── Bottom actions ── */}
+            <div className="flex gap-3 pt-2">
               <button
                 onClick={() => {
                   setStep('create');
@@ -816,7 +1023,9 @@ export default function AvatarVideoPage() {
                   setVoiceoverUrl(null);
                   setVoiceoverDuration(null);
                   setFinalVideoUrl(null);
+                  setCroppedVideoUrl(null);
                   setSaved(false);
+                  setSavedToLibrary(false);
                   setVideoError(null);
                   setVideoProgress(0);
                 }}
@@ -824,14 +1033,13 @@ export default function AvatarVideoPage() {
               >
                 Create Another
               </button>
+              <Link
+                href="/"
+                className="flex-1 px-5 py-2.5 bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium rounded-lg transition-colors text-center"
+              >
+                Back to Home
+              </Link>
             </div>
-
-            <Link
-              href="/"
-              className="block text-center text-sm text-gray-500 hover:text-gray-300 transition-colors"
-            >
-              Back to Home
-            </Link>
           </div>
         )}
       </div>
