@@ -11,51 +11,42 @@ export async function GET(request: NextRequest) {
   const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
   const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '50', 10)));
   const skip = (page - 1) * limit;
-  const aspectRatio = searchParams.get('aspect') || null; // e.g. '9:16'
+  const aspect = searchParams.get('aspect') || null;
+  const category = searchParams.get('category') || 'all'; // all, videos, images, audio
+  const search = searchParams.get('search') || null;
 
-  // Build where clause
-  const where: any = {
-    companyId,
-    mimeType: { startsWith: 'video/' },
-  };
+  const where: any = { companyId };
 
-  // Filter by aspect ratio if requested
-  if (aspectRatio === '9:16') {
-    // Portrait: height > width
-    where.width = { gt: 0 };
-    where.height = { gt: 0 };
-    // Prisma doesn't support column comparison, so we filter in JS below
+  // Category filter
+  if (category === 'videos') {
+    where.mimeType = { startsWith: 'video/' };
+  } else if (category === 'images') {
+    where.mimeType = { startsWith: 'image/' };
+  } else if (category === 'audio') {
+    where.mimeType = { startsWith: 'audio/' };
+  }
+  // 'all' = no mimeType filter
+
+  // Search filter
+  if (search) {
+    where.originalName = { contains: search, mode: 'insensitive' };
   }
 
   try {
     let files;
     let total;
 
-    if (aspectRatio === '9:16') {
-      // Fetch all matching videos, then filter for portrait aspect ratio
+    if (aspect === '9:16') {
+      // Portrait filter requires JS-side comparison
       const allFiles = await prisma.storageFile.findMany({
-        where: {
-          companyId,
-          mimeType: { startsWith: 'video/' },
-          width: { gt: 0 },
-          height: { gt: 0 },
-        },
+        where: { ...where, width: { gt: 0 }, height: { gt: 0 } },
         orderBy: { createdAt: 'desc' },
         select: {
-          id: true,
-          publicUrl: true,
-          originalName: true,
-          duration: true,
-          width: true,
-          height: true,
-          thumbnailUrl: true,
-          mimeType: true,
-          createdAt: true,
+          id: true, publicUrl: true, originalName: true, duration: true,
+          width: true, height: true, thumbnailUrl: true, mimeType: true, createdAt: true, sizeBytes: true,
         },
       });
-
-      // Portrait = height > width (covers 9:16, 4:5, etc.)
-      const portrait = allFiles.filter((f: { height: number | null; width: number | null }) => f.height! > f.width!);
+      const portrait = allFiles.filter((f: any) => f.height > f.width);
       total = portrait.length;
       files = portrait.slice(skip, skip + limit);
     } else {
@@ -66,15 +57,8 @@ export async function GET(request: NextRequest) {
           skip,
           take: limit,
           select: {
-            id: true,
-            publicUrl: true,
-            originalName: true,
-            duration: true,
-            width: true,
-            height: true,
-            thumbnailUrl: true,
-            mimeType: true,
-            createdAt: true,
+            id: true, publicUrl: true, originalName: true, duration: true,
+            width: true, height: true, thumbnailUrl: true, mimeType: true, createdAt: true, sizeBytes: true,
           },
         }),
         prisma.storageFile.count({ where }),
@@ -83,12 +67,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       files,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Failed to load media' }, { status: 500 });
