@@ -461,6 +461,12 @@ function HomeContent() {
     }
   };
 
+  const handlePasteScript = (pastedAds: GeneratedAd[], newBrief: AdBrief) => {
+    setBrief(newBrief);
+    setAds(pastedAds);
+    setStep('review');
+  };
+
   const handleRegenerateAd = async (adId: string) => {
     if (!brief) return;
     const ad = ads.find((a) => a.id === adId);
@@ -761,7 +767,7 @@ function HomeContent() {
         {step === 'brief' && (
           <div className="max-w-2xl mx-auto">
             <OnboardingChecklist onNavigate={setStep} />
-            <AdBriefForm onGenerate={handleGenerate} generating={generating} initialBrief={brief} />
+            <AdBriefForm onGenerate={handleGenerate} onPasteScript={handlePasteScript} generating={generating} initialBrief={brief} />
             {/* Save as Template button — only show when brief has content */}
             {brief && brief.productService && (
               <div className="mt-4 flex justify-center">

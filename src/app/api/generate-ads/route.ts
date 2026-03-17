@@ -26,11 +26,23 @@ Funnel stages:
 
 function buildBriefContext(brief: AdBrief): string {
   let ctx = `**Product/Service:** ${brief.productService}\n`;
-  if (brief.targetAudience) ctx += `**Target Audience:** ${brief.targetAudience}\n`;
-  if (brief.sellingPoints) ctx += `**Key Selling Points:** ${brief.sellingPoints}\n`;
-  if (brief.adExamples) ctx += `**Examples of Ads That Have Worked:** ${brief.adExamples}\n`;
-  if (brief.toneStyle) ctx += `**Tone & Style:** ${brief.toneStyle}\n`;
-  if (brief.additionalContext) ctx += `**Additional Context:** ${brief.additionalContext}\n`;
+
+  // New simplified brief field (takes priority over legacy fields)
+  if (brief.brief?.trim()) {
+    ctx += `**Brief:** ${brief.brief}\n`;
+  } else {
+    // Legacy fields (backward compat with saved projects)
+    if (brief.targetAudience) ctx += `**Target Audience:** ${brief.targetAudience}\n`;
+    if (brief.sellingPoints) ctx += `**Key Selling Points:** ${brief.sellingPoints}\n`;
+    if (brief.adExamples) ctx += `**Examples of Ads That Have Worked:** ${brief.adExamples}\n`;
+    if (brief.toneStyle) ctx += `**Tone & Style:** ${brief.toneStyle}\n`;
+    if (brief.additionalContext) ctx += `**Additional Context:** ${brief.additionalContext}\n`;
+  }
+
+  if (brief.exclusions?.trim()) {
+    ctx += `**Exclusions (DO NOT include these):** ${brief.exclusions}\n`;
+  }
+
   if (brief.addEmojis) {
     ctx += `**Emojis:** YES — start every text box with a single relevant emoji (e.g. "☀️ Save on energy bills")\n`;
   } else {

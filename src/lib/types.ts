@@ -64,6 +64,13 @@ export const DEFAULT_TEXT_STYLE: TextStyle = {
 
 export interface AdBrief {
   productService: string;
+  /** Freeform brief — audience, selling points, tone, examples, context (simplified form) */
+  brief?: string;
+  /** Things to exclude or avoid in the ad copy */
+  exclusions?: string;
+  /** User-pasted script (skips AI generation) */
+  pastedScript?: string;
+  // Legacy fields (still supported for backward compat with saved projects)
   targetAudience: string;
   sellingPoints: string;
   adExamples: string;
