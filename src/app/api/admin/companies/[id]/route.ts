@@ -88,6 +88,39 @@ export async function GET(
   }
 }
 
+// DELETE /api/admin/companies/[id] — Delete a company and all its data
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const adminResult = await getSuperAdminContext();
+  if (adminResult.error) return adminResult.error;
+  const { userId } = adminResult.auth;
+
+  const { id } = await params;
+
+  try {
+    const company = await prisma.company.findUnique({ where: { id }, select: { id: true, name: true } });
+    if (!company) {
+      return NextResponse.json({ error: 'Company not found' }, { status: 404 });
+    }
+
+    await prisma.company.delete({ where: { id } });
+
+    await logAdminAction({
+      adminUserId: userId,
+      action: 'SUSPEND' as any,
+      targetCompanyId: id,
+      details: { deleted: true, companyName: company.name },
+    }).catch(() => {});
+
+    return NextResponse.json({ success: true, deleted: company.name });
+  } catch (error: any) {
+    console.error('Admin company delete error:', error);
+    return NextResponse.json({ error: 'Failed to delete company' }, { status: 500 });
+  }
+}
+
 // PUT /api/admin/companies/[id] — Update company (plan, suspension, token balance)
 export async function PUT(
   request: NextRequest,
