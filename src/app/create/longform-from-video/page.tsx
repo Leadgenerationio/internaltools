@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useRef, useEffect, Suspense } from 'react';
+import Link from 'next/link';
+import UserMenu from '@/components/UserMenu';
 import MusicStep from '@/components/longform/MusicStep';
 import CaptionsStep from '@/components/longform/CaptionsStep';
 import UploadProcessStep from '@/components/longform-from-video/UploadProcessStep';
@@ -125,6 +127,14 @@ function PageContent() {
 
   return (
     <div className="min-h-screen bg-gray-950 text-white">
+      {/* Header */}
+      <header className="border-b border-gray-800 px-4 py-3">
+        <div className="max-w-6xl mx-auto flex items-center justify-between">
+          <Link href="/" className="text-lg sm:text-xl font-bold text-white hover:text-blue-400 transition-colors">Ad Maker</Link>
+          <UserMenu />
+        </div>
+      </header>
+
       {/* Step bar */}
       <div className="border-b border-gray-800 bg-gray-900/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-4 py-3">
