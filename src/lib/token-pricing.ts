@@ -35,7 +35,7 @@ export const TOKEN_COSTS = {
   AVATAR_PRODUCT_GRID: 5,
   /** Avatar voiceover (ElevenLabs TTS) */
   AVATAR_VOICEOVER: 2,
-  /** Avatar video generation (Creatify Aurora) */
+  /** Avatar video generation — Creatify Aurora lip-sync (20 credits per 15s on Creatify side) */
   AVATAR_VIDEO: 10,
 } as const;
 
