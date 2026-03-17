@@ -10,8 +10,12 @@ import { Worker, Job } from 'bullmq';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import { promisify } from 'util';
+import { execFile } from 'child_process';
 import { createRedisConnection } from '@/lib/redis';
 import { logger } from '@/lib/logger';
+
+const execFileAsync = promisify(execFile);
 import { refundTokens } from '@/lib/token-balance';
 import { fileUrl } from '@/lib/file-url';
 import type { AvatarVideoGenData, AvatarVideoGenResult } from '@/lib/job-types';
@@ -41,6 +45,19 @@ async function downloadToFile(url: string, outputPath: string): Promise<void> {
   if (!res.ok) throw new Error(`Download failed (${res.status})`);
   const buffer = Buffer.from(await res.arrayBuffer());
   await fs.writeFile(outputPath, buffer);
+}
+
+/** Crop/scale video to 9:16 (1080x1920) for reels. Centers the subject. */
+async function cropToReels(inputPath: string, outputPath: string): Promise<void> {
+  // Scale so the shorter dimension fills the target, then center-crop
+  await execFileAsync('ffmpeg', [
+    '-y', '-i', inputPath,
+    '-vf', 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920',
+    '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+    '-c:a', 'aac', '-b:a', '128k',
+    '-movflags', '+faststart',
+    outputPath,
+  ]);
 }
 
 // ─── Creatify Aurora API ──────────────────────────────────────────────────────
@@ -150,13 +167,21 @@ async function processAvatarVideo(job: Job<AvatarVideoGenData>): Promise<AvatarV
     await job.updateProgress(85);
 
     // 4. Download the output video
+    const rawFilename = `avatar_raw_${crypto.randomUUID()}.mp4`;
+    const rawPath = path.join(OUTPUT_DIR, rawFilename);
+    logger.info(`[Avatar] Downloading output video`);
+    await downloadToFile(videoUrl, rawPath);
+    await job.updateProgress(87);
+
+    // 5. Crop to 9:16 reels format (1080x1920)
     const outputFilename = `avatar_video_${crypto.randomUUID()}.mp4`;
     const outputPath = path.join(OUTPUT_DIR, outputFilename);
-    logger.info(`[Avatar] Downloading output video`);
-    await downloadToFile(videoUrl, outputPath);
-    await job.updateProgress(90);
+    logger.info(`[Avatar] Cropping to 9:16 reels format`);
+    await cropToReels(rawPath, outputPath);
+    await fs.unlink(rawPath).catch(() => {}); // clean up raw file
+    await job.updateProgress(92);
 
-    // 5. Upload to S3
+    // 6. Upload to S3
     try {
       const { isCloudStorage, uploadFile } = await import('@/lib/storage');
       if (isCloudStorage) {
@@ -166,7 +191,7 @@ async function processAvatarVideo(job: Job<AvatarVideoGenData>): Promise<AvatarV
       }
     } catch { /* local fallback */ }
 
-    // 6. Verify output
+    // 7. Verify output
     const stat = await fs.stat(outputPath);
     if (stat.size < 1000) {
       throw new Error('Output video file is too small — likely corrupt');
