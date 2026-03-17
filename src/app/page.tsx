@@ -30,19 +30,6 @@ const AD_MODELS: AdModel[] = [
     available: true,
   },
   {
-    id: 'longform-video',
-    name: 'Longform Video',
-    description: 'Generate full video ads from a brief — AI scripts, voiceover, b-roll clips, and animated captions. No footage needed.',
-    href: '/create/longform-video',
-    icon: (
-      <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-2.625 0V5.625m0 12.75v-12.75A1.125 1.125 0 0 1 4.5 4.5h15a1.125 1.125 0 0 1 1.125 1.125v12.75m-18 0h18m0 0a1.125 1.125 0 0 1-1.125 1.125m1.125-1.125v-12.75A1.125 1.125 0 0 0 19.5 4.5h-15a1.125 1.125 0 0 0-1.125 1.125m17.25 12.75h-1.5c-.621 0-1.125-.504-1.125-1.125" />
-      </svg>
-    ),
-    available: true,
-    tag: 'New',
-  },
-  {
     id: 'longform-from-video',
     name: 'Longform From Video Made Already',
     description: 'Upload your video with audio, add b-roll, captions & music. Original audio is preserved — perfect for enhancing talking-head content.',
