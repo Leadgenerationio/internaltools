@@ -50,14 +50,30 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid aspect ratio. Use 9:16, 16:9, or 1:1' }, { status: 400 });
   }
 
-  // Resolve video to local file path
-  const publicPath = extractPublicPath(videoUrl);
-  const localPath = path.join(process.cwd(), 'public', publicPath);
+  // Resolve video to local file path, or use URL directly for remote files
+  let inputPath: string;
+  let tempDownload: string | null = null;
 
-  try {
-    await fs.access(localPath);
-  } catch {
-    return NextResponse.json({ error: 'Video file not found' }, { status: 404 });
+  if (videoUrl.startsWith('http://') || videoUrl.startsWith('https://')) {
+    // Remote URL — download to temp file (FFmpeg can be flaky with HTTP input + seeking)
+    const tmpFilename = `crop_input_${crypto.randomUUID()}.mp4`;
+    tempDownload = path.join(OUTPUT_DIR, tmpFilename);
+    await fs.mkdir(OUTPUT_DIR, { recursive: true });
+    const dlRes = await fetch(videoUrl);
+    if (!dlRes.ok) {
+      return NextResponse.json({ error: `Failed to download video (${dlRes.status})` }, { status: 400 });
+    }
+    const buffer = Buffer.from(await dlRes.arrayBuffer());
+    await fs.writeFile(tempDownload, buffer);
+    inputPath = tempDownload;
+  } else {
+    const publicPath = extractPublicPath(videoUrl);
+    inputPath = path.join(process.cwd(), 'public', publicPath);
+    try {
+      await fs.access(inputPath);
+    } catch {
+      return NextResponse.json({ error: 'Video file not found' }, { status: 404 });
+    }
   }
 
   try {
@@ -66,7 +82,7 @@ export async function POST(request: NextRequest) {
     // Get source video dimensions
     const { stdout: probeOut } = await execFileAsync('ffprobe', [
       '-v', 'quiet', '-print_format', 'json',
-      '-show_streams', localPath,
+      '-show_streams', inputPath,
     ]);
     const streams = JSON.parse(probeOut).streams;
     const videoStream = streams?.find((s: any) => s.codec_type === 'video');
@@ -108,7 +124,7 @@ export async function POST(request: NextRequest) {
 
     // FFmpeg: crop then scale to exact target dimensions
     await execFileAsync('ffmpeg', [
-      '-y', '-i', localPath,
+      '-y', '-i', inputPath,
       '-vf', `crop=${cropW}:${cropH}:${cropX}:${cropY},scale=${target.w}:${target.h}`,
       '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
       '-c:a', 'aac', '-b:a', '128k',
@@ -151,5 +167,10 @@ export async function POST(request: NextRequest) {
   } catch (err: any) {
     console.error('Avatar crop error:', err);
     return NextResponse.json({ error: err.message || 'Failed to crop video' }, { status: 500 });
+  } finally {
+    // Clean up temp download
+    if (tempDownload) {
+      fs.unlink(tempDownload).catch(() => {});
+    }
   }
 }

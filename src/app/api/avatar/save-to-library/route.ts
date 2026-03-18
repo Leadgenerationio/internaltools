@@ -14,10 +14,12 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
+import crypto from 'crypto';
 
 const execFileAsync = promisify(execFile);
+const OUTPUT_DIR = path.join(process.cwd(), 'public', 'outputs');
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 interface RequestBody {
   videoUrl: string;
@@ -36,13 +38,31 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Video URL is required' }, { status: 400 });
   }
 
-  const publicPath = extractPublicPath(videoUrl);
-  const localPath = path.join(process.cwd(), 'public', publicPath);
+  // Resolve to local path, downloading remote files if needed
+  let localPath: string;
+  let storagePath: string;
+  let downloaded = false;
 
-  try {
-    await fs.access(localPath);
-  } catch {
-    return NextResponse.json({ error: 'Video file not found' }, { status: 404 });
+  if (videoUrl.startsWith('http://') || videoUrl.startsWith('https://')) {
+    // Remote URL — download to local outputs dir
+    await fs.mkdir(OUTPUT_DIR, { recursive: true });
+    const filename = `library_${crypto.randomUUID()}.mp4`;
+    localPath = path.join(OUTPUT_DIR, filename);
+    storagePath = `outputs/${filename}`;
+    const dlRes = await fetch(videoUrl);
+    if (!dlRes.ok) {
+      return NextResponse.json({ error: `Failed to download video (${dlRes.status})` }, { status: 400 });
+    }
+    await fs.writeFile(localPath, Buffer.from(await dlRes.arrayBuffer()));
+    downloaded = true;
+  } else {
+    storagePath = extractPublicPath(videoUrl);
+    localPath = path.join(process.cwd(), 'public', storagePath);
+    try {
+      await fs.access(localPath);
+    } catch {
+      return NextResponse.json({ error: 'Video file not found' }, { status: 404 });
+    }
   }
 
   try {
@@ -65,10 +85,22 @@ export async function POST(request: NextRequest) {
       duration = parseFloat(parsed.format?.duration) || 0;
     } catch { /* use defaults */ }
 
+    // Upload to S3 if downloaded and cloud storage is configured
+    if (downloaded) {
+      try {
+        const { isCloudStorage, uploadFile } = await import('@/lib/storage');
+        if (isCloudStorage) {
+          const tmpCopy = localPath + '.s3tmp';
+          await fs.copyFile(localPath, tmpCopy);
+          await uploadFile(tmpCopy, storagePath);
+        }
+      } catch { /* local fallback */ }
+    }
+
     const storageFileId = await saveToMediaLibrary({
       companyId,
-      storagePath: publicPath,
-      publicUrl: fileUrl(publicPath),
+      storagePath,
+      publicUrl: fileUrl(storagePath),
       sizeBytes: Number(stat.size),
       mimeType: 'video/mp4',
       originalName: name,
