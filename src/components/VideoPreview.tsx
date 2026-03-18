@@ -111,12 +111,7 @@ export default function VideoPreview({ video, videos, activeIndex, onVideoChange
                 }`}
                 title={v.originalName}
               >
-                <img
-                  src={v.thumbnail}
-                  alt={v.originalName}
-                  className="w-[40px] h-[56px] object-cover"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.insertAdjacentHTML('beforeend', `<video src="${v.path}" class="w-[40px] h-[56px] object-cover" muted preload="metadata"></video>`); }}
-                />
+                <video src={`${v.path}#t=0.1`} className="w-[40px] h-[56px] object-cover" muted preload="metadata" />
               </button>
             ))}
           </div>

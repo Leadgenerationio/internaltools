@@ -197,11 +197,7 @@ export default function VideoUploader({ videos, onUpload, uploading, setUploadin
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {videos.map((v) => (
             <div key={v.id} className="relative group bg-gray-800 rounded-lg overflow-hidden">
-              <img
-                src={v.thumbnail}
-                alt={v.originalName}
-                className="w-full h-24 object-cover"
-              />
+              <video src={`${v.path}#t=0.1`} className="w-full h-24 object-cover" muted preload="metadata" />
               <div className="p-2">
                 <p className="text-xs text-gray-300 truncate">{v.originalName}</p>
                 <p className="text-xs text-gray-500">{v.duration.toFixed(1)}s • {v.width}x{v.height}</p>

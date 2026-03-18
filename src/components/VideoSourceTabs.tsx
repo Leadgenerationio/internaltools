@@ -110,13 +110,7 @@ export default function VideoSourceTabs({
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {videos.map((v) => (
             <div key={v.id} className="relative group bg-gray-800 rounded-lg overflow-hidden">
-              <img
-                src={v.thumbnail}
-                alt={v.originalName}
-                className="w-full h-24 object-cover"
-                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).parentElement!.querySelector('video')!.style.display = 'block'; }}
-              />
-              <video src={v.path} className="w-full h-24 object-cover hidden" muted preload="metadata" />
+              <video src={`${v.path}#t=0.1`} className="w-full h-24 object-cover" muted preload="metadata" />
               <div className="p-2">
                 <p className="text-xs text-gray-300 truncate">{v.originalName}</p>
                 <p className="text-xs text-gray-500">{v.duration.toFixed(1)}s &bull; {v.width}x{v.height}</p>
