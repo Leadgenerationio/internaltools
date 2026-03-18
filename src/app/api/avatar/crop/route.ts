@@ -50,30 +50,46 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid aspect ratio. Use 9:16, 16:9, or 1:1' }, { status: 400 });
   }
 
-  // Resolve video to local file path, or use URL directly for remote files
+  // Resolve video to local file, downloading if necessary
   let inputPath: string;
   let tempDownload: string | null = null;
+  await fs.mkdir(OUTPUT_DIR, { recursive: true });
 
-  if (videoUrl.startsWith('http://') || videoUrl.startsWith('https://')) {
-    // Remote URL — download to temp file (FFmpeg can be flaky with HTTP input + seeking)
+  // Try local file first
+  const publicPath = extractPublicPath(videoUrl);
+  const localCandidate = path.join(process.cwd(), 'public', publicPath);
+  let localExists = false;
+  try { await fs.access(localCandidate); localExists = true; } catch {}
+
+  if (localExists) {
+    inputPath = localCandidate;
+  } else {
+    // Not local — download from URL (CDN, S3, or /api/files)
+    let downloadUrl = videoUrl;
+    if (!videoUrl.startsWith('http')) {
+      // Relative URL like /api/files?path=... — make absolute
+      const base = process.env.APP_URL
+        || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null)
+        || 'http://localhost:3000';
+      downloadUrl = `${base.replace(/\/+$/, '')}${videoUrl.startsWith('/') ? '' : '/'}${videoUrl}`;
+    }
+
     const tmpFilename = `crop_input_${crypto.randomUUID()}.mp4`;
     tempDownload = path.join(OUTPUT_DIR, tmpFilename);
-    await fs.mkdir(OUTPUT_DIR, { recursive: true });
-    const dlRes = await fetch(videoUrl);
+
+    // Pass auth for internal /api/files requests
+    const headers: Record<string, string> = {};
+    if (downloadUrl.includes('/api/files') && process.env.AUTH_SECRET) {
+      headers['Authorization'] = `Bearer ${process.env.AUTH_SECRET}`;
+    }
+
+    const dlRes = await fetch(downloadUrl, { headers });
     if (!dlRes.ok) {
-      return NextResponse.json({ error: `Failed to download video (${dlRes.status})` }, { status: 400 });
+      return NextResponse.json({ error: `Failed to fetch video (${dlRes.status})` }, { status: 400 });
     }
     const buffer = Buffer.from(await dlRes.arrayBuffer());
     await fs.writeFile(tempDownload, buffer);
     inputPath = tempDownload;
-  } else {
-    const publicPath = extractPublicPath(videoUrl);
-    inputPath = path.join(process.cwd(), 'public', publicPath);
-    try {
-      await fs.access(inputPath);
-    } catch {
-      return NextResponse.json({ error: 'Video file not found' }, { status: 404 });
-    }
   }
 
   try {

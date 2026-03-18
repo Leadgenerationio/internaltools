@@ -38,31 +38,44 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Video URL is required' }, { status: 400 });
   }
 
-  // Resolve to local path, downloading remote files if needed
+  // Resolve to local path, downloading if not available locally
   let localPath: string;
   let storagePath: string;
   let downloaded = false;
+  await fs.mkdir(OUTPUT_DIR, { recursive: true });
 
-  if (videoUrl.startsWith('http://') || videoUrl.startsWith('https://')) {
-    // Remote URL — download to local outputs dir
-    await fs.mkdir(OUTPUT_DIR, { recursive: true });
+  storagePath = extractPublicPath(videoUrl);
+  const localCandidate = path.join(process.cwd(), 'public', storagePath);
+  let localExists = false;
+  try { await fs.access(localCandidate); localExists = true; } catch {}
+
+  if (localExists) {
+    localPath = localCandidate;
+  } else {
+    // Not local — download from URL (CDN, S3, or /api/files)
+    let downloadUrl = videoUrl;
+    if (!videoUrl.startsWith('http')) {
+      const base = process.env.APP_URL
+        || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null)
+        || 'http://localhost:3000';
+      downloadUrl = `${base.replace(/\/+$/, '')}${videoUrl.startsWith('/') ? '' : '/'}${videoUrl}`;
+    }
+
     const filename = `library_${crypto.randomUUID()}.mp4`;
     localPath = path.join(OUTPUT_DIR, filename);
     storagePath = `outputs/${filename}`;
-    const dlRes = await fetch(videoUrl);
+
+    const headers: Record<string, string> = {};
+    if (downloadUrl.includes('/api/files') && process.env.AUTH_SECRET) {
+      headers['Authorization'] = `Bearer ${process.env.AUTH_SECRET}`;
+    }
+
+    const dlRes = await fetch(downloadUrl, { headers });
     if (!dlRes.ok) {
-      return NextResponse.json({ error: `Failed to download video (${dlRes.status})` }, { status: 400 });
+      return NextResponse.json({ error: `Failed to fetch video (${dlRes.status})` }, { status: 400 });
     }
     await fs.writeFile(localPath, Buffer.from(await dlRes.arrayBuffer()));
     downloaded = true;
-  } else {
-    storagePath = extractPublicPath(videoUrl);
-    localPath = path.join(process.cwd(), 'public', storagePath);
-    try {
-      await fs.access(localPath);
-    } catch {
-      return NextResponse.json({ error: 'Video file not found' }, { status: 404 });
-    }
   }
 
   try {
