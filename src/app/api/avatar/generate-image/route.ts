@@ -66,7 +66,30 @@ export async function POST(request: NextRequest) {
     const filename = `avatar_${crypto.randomUUID()}.png`;
     const outputPath = path.join(UPLOAD_DIR, filename);
 
-    const referenceUrls = referenceImageUrl ? [referenceImageUrl] : undefined;
+    // Resolve reference image to a public URL that kie.ai can access
+    let referenceUrls: string[] | undefined;
+    if (referenceImageUrl) {
+      let publicRefUrl = referenceImageUrl;
+      if (!referenceImageUrl.startsWith('http')) {
+        // Relative URL like /api/files?path=... — make absolute
+        const cdnUrl = process.env.CDN_URL || process.env.S3_PUBLIC_URL;
+        if (cdnUrl && referenceImageUrl.includes('/api/files')) {
+          // Extract path param and use CDN directly
+          try {
+            const u = new URL(referenceImageUrl, 'http://localhost');
+            const p = u.searchParams.get('path');
+            if (p) publicRefUrl = `${cdnUrl.replace(/\/+$/, '')}/${p}`;
+          } catch { /* fall through */ }
+        }
+        if (!publicRefUrl.startsWith('http')) {
+          const base = process.env.APP_URL
+            || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null)
+            || 'http://localhost:3000';
+          publicRefUrl = `${base.replace(/\/+$/, '')}${referenceImageUrl.startsWith('/') ? '' : '/'}${referenceImageUrl}`;
+        }
+      }
+      referenceUrls = [publicRefUrl];
+    }
     await generateAvatarImage(apiKey, prompt.trim(), outputPath, referenceUrls);
 
     // Upload to S3 if configured
