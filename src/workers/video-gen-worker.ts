@@ -262,6 +262,16 @@ async function generateSingleVideo(
       // Get video info
       const info = await getVideoInfo(filepath);
 
+      // Upload video to S3
+      try {
+        const { isCloudStorage, uploadFile } = await import('@/lib/storage');
+        if (isCloudStorage) {
+          const tmpVideo = filepath + '.s3tmp';
+          fs.copyFileSync(filepath, tmpVideo);
+          await uploadFile(tmpVideo, `uploads/${filename}`);
+        }
+      } catch { /* local fallback */ }
+
       // Generate thumbnail
       const thumbFilename = `${id}_thumb.jpg`;
       const thumbPath = path.join(UPLOAD_DIR, thumbFilename);
@@ -272,7 +282,16 @@ async function generateSingleVideo(
           '-vf', 'scale=180:-1',
           thumbPath,
         ]);
-      } catch { /* ignore */ }
+        // Upload thumbnail to S3
+        try {
+          const { isCloudStorage, uploadFile } = await import('@/lib/storage');
+          if (isCloudStorage) {
+            const tmpThumb = thumbPath + '.s3tmp';
+            fs.copyFileSync(thumbPath, tmpThumb);
+            await uploadFile(tmpThumb, `uploads/${thumbFilename}`);
+          }
+        } catch { /* local fallback */ }
+      } catch { /* ignore thumbnail errors */ }
 
       // Save to media library (fire-and-forget)
       const storagePath = `uploads/${filename}`;
